@@ -224,9 +224,9 @@
 
 - Date: 2026-09-01
 - Status: accepted
-- Context: a self-consistent subset derived manifest can be useful for smoke tests but cannot support formal temporal acceptance; the validation receipt also predates embedded `raw_input_audit` metadata.
+- Context: a self-consistent subset derived manifest can be useful for smoke tests but cannot support formal temporal acceptance. The validation receipt was regenerated after the audit was implemented and now embeds `raw_input_audit` metadata for all 240 raw-to-derived records.
 - Decision: formal evaluation independently requires 244 validation records, all 240 derived endpoints, exactly 238 causal T=3 windows, canonical `start_window=0`/no limit, and exact raw VGGT receipt identity/config/manifest coverage. It audits all per-record raw links and rejects training-sequence/cache overlap. Limited or non-holdout runs are labeled ineligible.
 - Rationale: matching derived policy alone does not prove that train and validation used the same frozen VGGT checkpoint/config or that missing windows were not selectively omitted.
-- Consequence: smoke fixtures may remain partial only behind an explicit non-holdout smoke flag; formal results fail closed. The raw cache producer now requires `available_windows == selected_windows` for canonical completeness.
+- Consequence: smoke fixtures may remain partial only behind an explicit non-holdout smoke flag; formal results fail closed. The raw cache producer now requires `available_windows == selected_windows` for canonical completeness, and the canonical validation-derived receipt cryptographically binds the complete raw receipt.
 - Revisit trigger: the cache schema directly embeds and cryptographically binds full raw lineage in every canonical derived receipt.
 - Evidence: `tests/test_evaluation.py`, `tests/test_derive_geometry_manifest.py`, `reports/m4/stage_b_eval_smoke.json`.

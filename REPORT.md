@@ -259,8 +259,15 @@ generation and is reproduced with:
 ```
 
 The canonical result, failure histogram, all-window/rejected-window diagnostic
-percentiles, and safe-zero audit are in
-`reports/m2/derive_geometry_val.json`.
+percentiles, safe-zero audit, and raw-input audit are in
+`reports/m2/derive_geometry_val.json`. The refreshed canonical derived receipt
+SHA-256 is
+`1e05c4e081620b9f634e9b3020779c6e4fdb7e21bf1df55365c3d4cde3d50620`;
+its unchanged 240-record manifest SHA-256 is
+`f9e34fa730e43013aa7b1e19b57b132bc929f9b6ffe72c4d7796cd67fa1cd594`.
+The embedded raw audit confirms 240/240 safe loads, finite tensors, exact FFS
+and VGGT identities, valid causal targets, and complete canonical raw-manifest
+coverage.
 
 The formal train raw VGGT cache subsequently completed all 2,779 causal
 windows. Its canonical receipt explicitly records
