@@ -1,19 +1,21 @@
 #!/usr/bin/env python3
-"""Evaluate bilinear FFS and the Stage-A T=1 spatial model.
+"""Evaluate Stage-A T=1 and Stage-B causal T=3 disparity reconstruction.
 
-The target is explicitly the trusted HR FFS teacher pseudo-GT.  This script
-does not report T=3, temporal, VGGT, epipolar, or paper-accuracy claims.
+Targets are explicitly trusted HR FFS teacher pseudo-GT. Stage B scores only
+the endpoint of strict three-frame causal windows and reports temporal/VGGT
+ablations without claiming epipolar refinement, paper GT, or paper accuracy.
 """
 
 from __future__ import annotations
 
 import argparse
+import copy
 import csv
 import json
 import sys
 import time
 from contextlib import nullcontext
-from dataclasses import asdict
+from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 
@@ -30,19 +32,45 @@ SRC_ROOT = PROJECT_ROOT / "src"
 if str(SRC_ROOT) not in sys.path:
     sys.path.insert(0, str(SRC_ROOT))
 
-from data.collate import collate_training_samples  # noqa: E402
-from data.training_dataset import CachedFFSTrainingDataset  # noqa: E402
+from data.cache_dataset import sha256_file  # noqa: E402
+from data.collate import (  # noqa: E402
+    collate_temporal_training_samples,
+    collate_training_samples,
+)
+from data.manifest import load_manifest  # noqa: E402
+from data.training_dataset import (  # noqa: E402
+    CachedFFSTrainingDataset,
+    build_causal_windows,
+)
+from data.temporal_training_dataset import CachedTemporalTrainingDataset  # noqa: E402
 from evaluation import (  # noqa: E402
     MethodMetricAccumulator,
     POINT_TO_PLANE_NOT_AVAILABLE,
     PSEUDO_GT_LABEL,
+    aggregate_metric_change,
     comparison_from_aggregates,
     compute_sample_metrics,
+    hr_temporal_metric,
+    hr_temporal_safe_mask,
     load_model_for_evaluation,
+    physical_disparity_clamp_min_zero,
     upsample_ffs_inputs_to_hr,
+    validate_checkpoint_lineage,
+    validate_spatial_checkpoint_binding,
+    validate_temporal_batch_causality,
 )
-from models.ffs_omega_tsr import count_trainable_parameters  # noqa: E402
-from train import DEFAULT_CONFIG, build_model, load_receipt_identity  # noqa: E402
+from models.ffs_omega_tsr import ModelOutput, count_trainable_parameters  # noqa: E402
+from metrics.disparity import MetricResult  # noqa: E402
+from metrics.temporal import temporal_disparity_error  # noqa: E402
+from train import (  # noqa: E402
+    DEFAULT_CONFIG,
+    TemporalTransport,
+    _reset_hidden_where_pose_invalid,
+    _temporal_step_batch,
+    build_model,
+    build_temporal_transport,
+    load_receipt_identity,
+)
 from utils.seed import seed_everything  # noqa: E402
 from utils.visualization import (  # noqa: E402
     grayscale_to_rgb_uint8,
@@ -61,6 +89,7 @@ EVALUATION_DEFAULTS: dict[str, Any] = {
         "pin_memory": True,
         "precision": "bf16",
         "limit": None,
+        "start": 0,
         "visualization_samples": 4,
         "low_confidence_threshold": 0.8,
         "boundary_gradient_threshold_px": 1.0,
@@ -72,12 +101,24 @@ EVALUATION_DEFAULTS: dict[str, Any] = {
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description=(
-            "Evaluate bilinear LR-FFS and Stage-A T=1 against trusted HR FFS "
-            "teacher pseudo-GT."
+            "Evaluate bilinear/T1 or causal T3/VGGT methods against trusted HR "
+            "FFS teacher pseudo-GT."
         )
     )
     parser.add_argument("--config", type=Path, required=True, help="YAML config path")
-    parser.add_argument("--checkpoint", type=Path, help="Stage-A training checkpoint")
+    parser.add_argument(
+        "--checkpoint",
+        type=Path,
+        help="Stage-A T1 or Stage-B T3 training checkpoint, matching the config",
+    )
+    parser.add_argument(
+        "--spatial-checkpoint",
+        type=Path,
+        help=(
+            "T1 checkpoint for Stage-B comparison; defaults to the exact Stage-A "
+            "initialization path recorded by the temporal checkpoint"
+        ),
+    )
     parser.add_argument("--manifest", type=Path, help="explicit validation JSONL manifest")
     parser.add_argument(
         "--observation-cache-root",
@@ -90,6 +131,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="validation HR FFS teacher cache root",
     )
     parser.add_argument(
+        "--derived-cache-root",
+        type=Path,
+        help="validation vggt-ffs-derived-geometry cache root for T=3",
+    )
+    parser.add_argument(
         "--output",
         "--output-dir",
         dest="output_dir",
@@ -100,6 +146,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--batch-size", type=int, help="evaluation batch size")
     parser.add_argument("--num-workers", type=int, help="DataLoader worker count")
     parser.add_argument("--limit", type=int, help="evaluate the first N records")
+    parser.add_argument(
+        "--start", type=int, help="zero-based deterministic record/window start"
+    )
     parser.add_argument(
         "--visualization-samples",
         type=int,
@@ -121,6 +170,14 @@ def build_parser() -> argparse.ArgumentParser:
         "--dry-run",
         action="store_true",
         help="resolve config and construct the model without loading data/checkpoint",
+    )
+    parser.add_argument(
+        "--allow-non-holdout-smoke",
+        action="store_true",
+        help=(
+            "allow a limited T3 pipeline smoke whose checkpoint trained on the "
+            "same validation artifacts; report is forcibly marked non-formal"
+        ),
     )
     parser.add_argument(
         "overrides",
@@ -180,10 +237,12 @@ def _update_cli_values(config: DictConfig, args: argparse.Namespace) -> None:
         "data.manifest_path": args.manifest,
         "data.observation_cache_root": args.observation_cache_root,
         "data.teacher_cache_root": args.teacher_cache_root,
+        "data.derived_geometry_cache_root": args.derived_cache_root,
         "eval.output_dir": args.output_dir,
         "eval.batch_size": args.batch_size,
         "eval.num_workers": args.num_workers,
         "eval.limit": args.limit,
+        "eval.start": args.start,
         "eval.visualization_samples": args.visualization_samples,
         "eval.crop_mode": args.crop_mode,
         "eval.fixed_crop_origin_hr_xy": args.crop_origin,
@@ -210,13 +269,28 @@ def _nonnegative_int(value: Any, name: str) -> int:
     return value
 
 
-def validate_evaluation_config(config: DictConfig) -> None:
-    """Validate Stage-A/x2 and deterministic evaluation settings."""
+def validate_evaluation_config(config: DictConfig) -> str:
+    """Validate x2 deterministic evaluation and return ``spatial``/``temporal``."""
 
-    if int(config.data.sequence_length) != 1:
-        raise ValueError("Stage-A evaluation is T=1; data.sequence_length must be 1")
+    sequence_length = int(config.data.sequence_length)
+    if sequence_length == 1:
+        stage = "spatial"
+    elif sequence_length == 3:
+        stage = "temporal"
+        if int(config.data.vggt_context_pairs) != 5:
+            raise ValueError("Stage-B evaluation requires five VGGT context pairs")
+        if not bool(config.vggt.causal):
+            raise ValueError("Stage-B evaluation forbids future VGGT frames")
+        if not bool(config.model.use_history) or not bool(
+            config.model.use_vggt_pose
+        ):
+            raise ValueError("Stage-B evaluation requires history and VGGT pose")
+        if bool(config.model.epipolar_refinement):
+            raise ValueError("Stage-B evaluation must not claim Stage-C epipolar output")
+    else:
+        raise ValueError("evaluation supports only T=1 spatial or causal T=3")
     if int(config.data.scale) != 2 or int(config.model.convex_scale) != 2:
-        raise ValueError("Stage-A evaluation is fixed to x2")
+        raise ValueError("first-round evaluation is fixed to x2")
     if list(config.model.rgb_channels) != [32, 64, 96]:
         raise ValueError("model.rgb_channels must be [32,64,96]")
     if str(config.eval.crop_mode) not in {"fixed", "full"}:
@@ -246,6 +320,7 @@ def validate_evaluation_config(config: DictConfig) -> None:
     _nonnegative_int(config.eval.visualization_samples, "eval.visualization_samples")
     if config.eval.limit is not None:
         _positive_int(config.eval.limit, "eval.limit")
+    _nonnegative_int(config.eval.start, "eval.start")
     threshold = float(config.eval.low_confidence_threshold)
     if not 0.0 <= threshold <= 1.0:
         raise ValueError("eval.low_confidence_threshold must be in [0,1]")
@@ -254,6 +329,7 @@ def validate_evaluation_config(config: DictConfig) -> None:
     _nonnegative_int(config.eval.boundary_radius_px, "eval.boundary_radius_px")
     if str(config.eval.precision).lower() not in {"bf16", "fp32"}:
         raise ValueError("eval.precision must be bf16 or fp32")
+    return stage
 
 
 def _required_path(config: DictConfig, key: str, *, directory: bool) -> Path:
@@ -288,6 +364,246 @@ def _move_batch(batch: dict[str, Any], device: torch.device) -> dict[str, Any]:
     }
 
 
+@dataclass(frozen=True, slots=True)
+class TemporalEndpointPredictions:
+    """Endpoint outputs from causal T=3 VGGT interventions."""
+
+    vggt_on: ModelOutput
+    source_mask_off: ModelOutput
+    no_vggt: ModelOutput
+    shared_transport: TemporalTransport
+    no_vggt_transport: TemporalTransport
+
+
+@dataclass(frozen=True, slots=True)
+class SpatialEndpointPrediction:
+    """T1 endpoint plus its independently measured temporal transport."""
+
+    output: ModelOutput
+    transport: TemporalTransport
+
+
+def _build_eval_transport(
+    *,
+    previous_output: ModelOutput,
+    previous_rgb_hr: Tensor,
+    current_rgb_hr: Tensor,
+    current_ffs_disparity_hr_px: Tensor,
+    current_ffs_confidence: Tensor,
+    batch: dict[str, Any],
+    time_index: int,
+    config: DictConfig,
+) -> TemporalTransport:
+    """Call the exact Stage-B training transport with evaluation config values."""
+
+    return build_temporal_transport(
+        previous_output=previous_output,
+        previous_rgb_hr=previous_rgb_hr,
+        current_rgb_hr=current_rgb_hr,
+        current_ffs_disparity_hr_px=current_ffs_disparity_hr_px,
+        current_ffs_confidence=current_ffs_confidence,
+        intrinsics_current_hr=batch["K_hr_sequence"][:, time_index],
+        baseline_current_m=batch["baseline_m_sequence"][:, time_index],
+        temporal_extrinsics_camera_from_world=batch[
+            "vggt_extrinsics_camera_from_world_metric_sequence"
+        ][:, time_index],
+        temporal_pose_valid=batch["temporal_pose_valid_sequence"][:, time_index],
+        scale=int(config.data.scale),
+        photometric_temperature=float(config.train.photometric_temperature),
+        disparity_temperature_hr_px=float(
+            config.train.disparity_temperature_hr_px
+        ),
+        reject_conflict_hr_px=float(config.train.history_conflict_hr_px),
+        photometric_threshold=float(config.train.temporal_photometric_threshold),
+        geometry_threshold_hr_px=float(
+            config.train.temporal_geometry_threshold_hr_px
+        ),
+    )
+
+
+def _history_model_kwargs(
+    transport: TemporalTransport | None, *, rgb_dtype: torch.dtype
+) -> dict[str, Tensor]:
+    if transport is None:
+        return {}
+    return {
+        "disparity_history_hr_px": transport.disparity_history_hr_px,
+        "confidence_history": transport.confidence_history,
+        "history_visibility": transport.visibility_mask.to(dtype=rgb_dtype),
+        "photometric_residual": transport.photometric_residual,
+        "fractional_offset_px": transport.fractional_offset_px,
+        "valid_history": transport.valid_history,
+    }
+
+
+def _run_spatial_endpoint(
+    model: torch.nn.Module,
+    batch: dict[str, Any],
+    *,
+    config: DictConfig,
+) -> SpatialEndpointPrediction:
+    """Run T1 independently at each time and return the final transition."""
+
+    previous_output: ModelOutput | None = None
+    previous_rgb_hr: Tensor | None = None
+    final_transport: TemporalTransport | None = None
+    output: ModelOutput | None = None
+    for time_index in range(3):
+        step = _temporal_step_batch(batch, time_index)
+        output = model(
+            step["rgb_hr"],
+            step["disparity_ffs_hr_px"],
+            step["confidence_ffs"],
+            valid_ffs=step["valid_ffs"],
+            hidden_state=None,
+        )
+        if time_index > 0:
+            assert previous_output is not None and previous_rgb_hr is not None
+            final_transport = _build_eval_transport(
+                previous_output=previous_output,
+                previous_rgb_hr=previous_rgb_hr,
+                current_rgb_hr=step["rgb_hr"],
+                current_ffs_disparity_hr_px=step["disparity_ffs_hr_px"],
+                current_ffs_confidence=step["confidence_ffs"],
+                batch=batch,
+                time_index=time_index,
+                config=config,
+            )
+        previous_output = output
+        previous_rgb_hr = step["rgb_hr"]
+    assert output is not None and final_transport is not None
+    return SpatialEndpointPrediction(output=output, transport=final_transport)
+
+
+def _run_temporal_endpoint_ablation(
+    model: torch.nn.Module,
+    batch: dict[str, Any],
+    *,
+    config: DictConfig,
+) -> TemporalEndpointPredictions:
+    """Unroll T=3 and isolate the VGGT source-mask intervention.
+
+    The source-mask diagnostic receives exactly the same z-buffer history and
+    poses as the primary branch and changes only ``valid_vggt`` to all-false.
+    Because VGGT channels still enter the geometry encoder, a third branch
+    supplies zero VGGT disparity/confidence and independently propagates its
+    own history. That third row is the actual no-VGGT prior ablation.
+    """
+
+    hidden_on: tuple[Tensor, ...] | None = None
+    hidden_mask_off: tuple[Tensor, ...] | None = None
+    hidden_no_vggt: tuple[Tensor, ...] | None = None
+    previous_on: ModelOutput | None = None
+    previous_no_vggt: ModelOutput | None = None
+    previous_rgb_hr: Tensor | None = None
+    transport: TemporalTransport | None = None
+    no_vggt_transport: TemporalTransport | None = None
+    output_on: ModelOutput | None = None
+    output_mask_off: ModelOutput | None = None
+    output_no_vggt: ModelOutput | None = None
+    for time_index in range(3):
+        step = _temporal_step_batch(batch, time_index)
+        pose_valid = batch["temporal_pose_valid_sequence"][:, time_index]
+        if time_index > 0:
+            assert previous_on is not None and previous_rgb_hr is not None
+            assert previous_no_vggt is not None
+            hidden_on = _reset_hidden_where_pose_invalid(hidden_on, pose_valid)
+            hidden_mask_off = _reset_hidden_where_pose_invalid(
+                hidden_mask_off, pose_valid
+            )
+            hidden_no_vggt = _reset_hidden_where_pose_invalid(
+                hidden_no_vggt, pose_valid
+            )
+            transport = _build_eval_transport(
+                previous_output=previous_on,
+                previous_rgb_hr=previous_rgb_hr,
+                current_rgb_hr=step["rgb_hr"],
+                current_ffs_disparity_hr_px=step["disparity_ffs_hr_px"],
+                current_ffs_confidence=step["confidence_ffs"],
+                batch=batch,
+                time_index=time_index,
+                config=config,
+            )
+            no_vggt_transport = _build_eval_transport(
+                previous_output=previous_no_vggt,
+                previous_rgb_hr=previous_rgb_hr,
+                current_rgb_hr=step["rgb_hr"],
+                current_ffs_disparity_hr_px=step["disparity_ffs_hr_px"],
+                current_ffs_confidence=step["confidence_ffs"],
+                batch=batch,
+                time_index=time_index,
+                config=config,
+            )
+        static_prior = batch["static_prior_valid_sequence"][:, time_index]
+        valid_vggt = batch["valid_vggt_sequence"][:, time_index] & static_prior.reshape(
+            -1, 1, 1, 1
+        )
+        history_kwargs = _history_model_kwargs(
+            transport, rgb_dtype=step["rgb_hr"].dtype
+        )
+        common_kwargs: dict[str, Any] = {
+            "disparity_vggt_hr_px": batch["disparity_vggt_hr_px_sequence"][
+                :, time_index
+            ],
+            "confidence_vggt": batch["confidence_vggt_sequence"][:, time_index],
+            "valid_ffs": step["valid_ffs"],
+            **history_kwargs,
+        }
+        output_on = model(
+            step["rgb_hr"],
+            step["disparity_ffs_hr_px"],
+            step["confidence_ffs"],
+            valid_vggt=valid_vggt,
+            hidden_state=hidden_on,
+            **common_kwargs,
+        )
+        output_mask_off = model(
+            step["rgb_hr"],
+            step["disparity_ffs_hr_px"],
+            step["confidence_ffs"],
+            valid_vggt=torch.zeros_like(valid_vggt),
+            hidden_state=hidden_mask_off,
+            **common_kwargs,
+        )
+        no_vggt_history_kwargs = _history_model_kwargs(
+            no_vggt_transport, rgb_dtype=step["rgb_hr"].dtype
+        )
+        zero_vggt = torch.zeros_like(
+            batch["disparity_vggt_hr_px_sequence"][:, time_index]
+        )
+        output_no_vggt = model(
+            step["rgb_hr"],
+            step["disparity_ffs_hr_px"],
+            step["confidence_ffs"],
+            disparity_vggt_hr_px=zero_vggt,
+            confidence_vggt=torch.zeros_like(zero_vggt),
+            valid_vggt=torch.zeros_like(valid_vggt),
+            valid_ffs=step["valid_ffs"],
+            hidden_state=hidden_no_vggt,
+            **no_vggt_history_kwargs,
+        )
+        hidden_on = output_on.hidden_state
+        hidden_mask_off = output_mask_off.hidden_state
+        hidden_no_vggt = output_no_vggt.hidden_state
+        previous_on = output_on
+        previous_no_vggt = output_no_vggt
+        previous_rgb_hr = step["rgb_hr"]
+    assert (
+        output_on is not None
+        and output_mask_off is not None
+        and output_no_vggt is not None
+        and transport is not None
+        and no_vggt_transport is not None
+    )
+    return TemporalEndpointPredictions(
+        vggt_on=output_on,
+        source_mask_off=output_mask_off,
+        no_vggt=output_no_vggt,
+        shared_transport=transport,
+        no_vggt_transport=no_vggt_transport,
+    )
+
+
 def _rgb_chw_to_uint8(rgb: Tensor) -> np.ndarray:
     array = (
         rgb.detach()
@@ -311,6 +627,13 @@ def _save_visualization(
     target_trusted_mask: Tensor,
     source_weights_lr: Tensor,
     uncertainty_hr: Tensor,
+    vggt_disparity_hr_px: Tensor | None = None,
+    vggt_valid_mask_hr: Tensor | None = None,
+    history_disparity_hr_px: Tensor | None = None,
+    history_valid_mask_hr: Tensor | None = None,
+    vggt_off_output_hr_px: Tensor | None = None,
+    no_vggt_output_hr_px: Tensor | None = None,
+    prediction_filename: str = "t1_disparity_hr_px.png",
 ) -> None:
     sample_root = root / sample_name
     target_mask = target_trusted_mask.to(dtype=torch.bool)
@@ -318,7 +641,7 @@ def _save_visualization(
     save_rgb_uint8(sample_root / "rgb.png", _rgb_chw_to_uint8(rgb_hr))
     for filename, value, mask in (
         ("bilinear_ffs_hr_px.png", baseline_hr_px, None),
-        ("t1_disparity_hr_px.png", output_hr_px, None),
+        (prediction_filename, output_hr_px, None),
         ("teacher_pseudo_gt_hr_px.png", target_hr_px, target_mask),
         ("absolute_error_hr_px.png", absolute_error, target_mask),
         ("uncertainty_variance.png", uncertainty_hr, None),
@@ -337,6 +660,30 @@ def _save_visualization(
         save_rgb_uint8(
             sample_root / f"source_weight_{source_name}.png",
             grayscale_to_rgb_uint8(source_hr, minimum=0.0, maximum=1.0),
+        )
+    if vggt_disparity_hr_px is not None:
+        save_rgb_uint8(
+            sample_root / "vggt_aligned_disparity_hr_px.png",
+            scalar_to_rgb_uint8(
+                vggt_disparity_hr_px, valid_mask=vggt_valid_mask_hr
+            ),
+        )
+    if history_disparity_hr_px is not None:
+        save_rgb_uint8(
+            sample_root / "zbuffer_history_disparity_hr_px.png",
+            scalar_to_rgb_uint8(
+                history_disparity_hr_px, valid_mask=history_valid_mask_hr
+            ),
+        )
+    if vggt_off_output_hr_px is not None:
+        save_rgb_uint8(
+            sample_root / "t3_vggt_source_off_hr_px.png",
+            scalar_to_rgb_uint8(vggt_off_output_hr_px),
+        )
+    if no_vggt_output_hr_px is not None:
+        save_rgb_uint8(
+            sample_root / "t3_no_vggt_prior_hr_px.png",
+            scalar_to_rgb_uint8(no_vggt_output_hr_px),
         )
 
 
@@ -360,14 +707,16 @@ def _write_csv(
         (
             "trusted_region_degradation_percent",
             "invalid_region_completeness_change_percent",
+            "temporal_error_change_vs_t1_percent",
+            "vggt_prior_effect_epe_change_percent",
+            "vggt_source_mask_ablation_change_percent",
         )
     )
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", encoding="utf-8", newline="") as handle:
         writer = csv.DictWriter(handle, fieldnames=fields)
         writer.writeheader()
-        for method_name in ("bilinear", "T1"):
-            method = methods[method_name]
+        for method_name, method in methods.items():
             row: dict[str, Any] = {
                 "method": method_name,
                 "target_type": PSEUDO_GT_LABEL,
@@ -392,11 +741,35 @@ def _write_csv(
                     else None
                 )
             else:
-                row["trusted_region_degradation_percent"] = comparisons[
+                # The flat fallback keeps Stage-A reports written by the
+                # original evaluator compatible while Stage-B uses explicit
+                # per-method comparison blocks.
+                versus_bilinear = comparisons.get(
+                    f"{method_name}_vs_bilinear", comparisons
+                )
+                row["trusted_region_degradation_percent"] = versus_bilinear[
                     "trusted_region_degradation"
                 ]["relative_change_percent"]
-                row["invalid_region_completeness_change_percent"] = comparisons[
+                row["invalid_region_completeness_change_percent"] = versus_bilinear[
                     "invalid_region_completeness_change"
+                ]["relative_change_percent"]
+            temporal_comparison = comparisons.get(
+                f"{method_name}_vs_T1_temporal"
+            )
+            if isinstance(temporal_comparison, dict):
+                row["temporal_error_change_vs_t1_percent"] = temporal_comparison[
+                    "relative_change_percent"
+                ]
+            vggt_comparison = comparisons.get(
+                f"{method_name}_vs_T3_vggt_source_mask"
+            )
+            if isinstance(vggt_comparison, dict):
+                row["vggt_source_mask_ablation_change_percent"] = vggt_comparison[
+                    "relative_change_percent"
+                ]
+            if method_name == "T3_VGGT":
+                row["vggt_prior_effect_epe_change_percent"] = comparisons[
+                    "T3_VGGT_vs_T3_prior_effect"
                 ]["relative_change_percent"]
             writer.writerow(row)
 
@@ -408,25 +781,331 @@ def _resolved_dict(config: DictConfig) -> dict[str, Any]:
     return value
 
 
+def _validate_formal_temporal_coverage(
+    dataset: CachedTemporalTrainingDataset,
+) -> dict[str, Any]:
+    """Require the complete formal derived endpoint set, never a subset cache."""
+
+    receipt_path = dataset.derived_cache_root / "run_receipt.json"
+    try:
+        receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ValueError(f"cannot read formal derived receipt {receipt_path}") from exc
+    if not isinstance(receipt, dict):
+        raise ValueError("formal derived receipt is not a mapping")
+    selection = receipt.get("selection")
+    counts = receipt.get("counts")
+    inputs = receipt.get("inputs")
+    if not all(isinstance(value, dict) for value in (selection, counts, inputs)):
+        raise ValueError("formal derived receipt coverage fields are missing")
+    if selection.get("start_window") != 0 or selection.get("limit") is not None:
+        raise ValueError("evaluation refuses a subset-derived cache receipt")
+    candidates = build_causal_windows(
+        dataset.records,
+        student_sequence_length=3,
+        vggt_context_pairs=5,
+    )
+    expected_endpoint_indices = {window.endpoint_index for window in candidates}
+    actual_endpoint_indices = set(dataset.derived_entries)
+    if actual_endpoint_indices != expected_endpoint_indices:
+        missing = sorted(expected_endpoint_indices - actual_endpoint_indices)
+        extra = sorted(actual_endpoint_indices - expected_endpoint_indices)
+        raise ValueError(
+            "derived endpoint coverage is incomplete or non-canonical: "
+            f"missing={missing[:8]}, extra={extra[:8]}"
+        )
+    derived_count = len(expected_endpoint_indices)
+    if (
+        selection.get("selected_windows") != derived_count
+        or counts.get("selected") != derived_count
+        or inputs.get("vggt_available_windows") != derived_count
+    ):
+        raise ValueError("derived receipt does not cover every formal VGGT endpoint")
+    raw_manifest_path_value = inputs.get("vggt_cache_manifest")
+    raw_manifest_sha256 = inputs.get("vggt_cache_manifest_sha256")
+    if not isinstance(raw_manifest_path_value, str) or not isinstance(
+        raw_manifest_sha256, str
+    ):
+        raise ValueError("derived receipt is not bound to the raw VGGT manifest")
+    raw_manifest_path = Path(raw_manifest_path_value).expanduser().resolve()
+    if not raw_manifest_path.is_file() or sha256_file(
+        raw_manifest_path
+    ) != raw_manifest_sha256:
+        raise ValueError("derived/raw VGGT cache-manifest SHA-256 mismatch")
+    expected_evaluable = [
+        window
+        for window in candidates
+        if all(index in expected_endpoint_indices for index in window.student_indices)
+    ]
+    expected_windows = [
+        (window.endpoint_index, window.student_indices) for window in expected_evaluable
+    ]
+    actual_windows = [
+        (window.endpoint_index, window.student_indices) for window in dataset.windows
+    ]
+    if actual_windows != expected_windows:
+        raise ValueError("temporal dataset window set is not the complete causal set")
+    return {
+        "manifest_records": len(dataset.records),
+        "derived_endpoint_records": derived_count,
+        "evaluable_t3_windows": len(expected_evaluable),
+        "derived_run_receipt_path": str(receipt_path.resolve()),
+        "derived_run_receipt_sha256": sha256_file(receipt_path),
+        "derived_cache_manifest_path": str(
+            (dataset.derived_cache_root / "cache_manifest.jsonl").resolve()
+        ),
+        "derived_cache_manifest_sha256": sha256_file(
+            dataset.derived_cache_root / "cache_manifest.jsonl"
+        ),
+        "raw_vggt_cache_manifest_path": str(raw_manifest_path),
+        "raw_vggt_cache_manifest_sha256": raw_manifest_sha256,
+    }
+
+
+def _materialize_checkpoint_cache_identities(
+    checkpoint_metadata: dict[str, Any],
+) -> dict[str, Any]:
+    """Recover legacy smoke identities from their exact bound receipts."""
+
+    config = checkpoint_metadata.get("training_config")
+    data = config.get("data") if isinstance(config, dict) else None
+    if not isinstance(data, dict):
+        return checkpoint_metadata
+    missing = [
+        name
+        for name in ("observation_cache_identity", "teacher_cache_identity")
+        if not isinstance(data.get(name), dict)
+    ]
+    if not missing:
+        return checkpoint_metadata
+    manifest_value = data.get("manifest_path")
+    observation_value = data.get("observation_cache_root")
+    teacher_value = data.get("teacher_cache_root")
+    if not all(
+        isinstance(value, str)
+        for value in (manifest_value, observation_value, teacher_value)
+    ):
+        return checkpoint_metadata
+    manifest_path = Path(manifest_value).expanduser().resolve()
+    recovered = {
+        "observation_cache_identity": load_receipt_identity(
+            observation_value,
+            expected_component="ffs-observation",
+            manifest_path=manifest_path,
+        ).to_dict(),
+        "teacher_cache_identity": load_receipt_identity(
+            teacher_value,
+            expected_component="ffs-teacher",
+            manifest_path=manifest_path,
+        ).to_dict(),
+    }
+    metadata = copy.deepcopy(checkpoint_metadata)
+    metadata["training_config"]["data"].update(recovered)
+    metadata["cache_identity_recovery"] = {
+        "status": "RECOVERED_FROM_EXACT_TRAINING_RECEIPTS",
+        "fields": missing,
+        "manifest_path": str(manifest_path),
+    }
+    return metadata
+
+
+def _validated_raw_vggt_receipt(
+    raw_vggt_root: Path,
+    *,
+    expected_manifest_sha256: str,
+) -> dict[str, Any]:
+    receipt_path = raw_vggt_root / "run_receipt.json"
+    try:
+        receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ValueError(f"cannot read raw VGGT receipt {receipt_path}") from exc
+    if not isinstance(receipt, dict) or receipt.get("schema_version") != 1:
+        raise ValueError("raw VGGT receipt schema is incompatible")
+    identity = receipt.get("identity")
+    config = receipt.get("config")
+    if not isinstance(identity, dict) or not isinstance(config, dict):
+        raise ValueError("raw VGGT receipt identity/config is missing")
+    required_identity = {
+        "component",
+        "upstream_commit",
+        "checkpoint_sha256",
+        "torch_version",
+        "cuda_version",
+        "config_sha256",
+    }
+    if set(identity) != required_identity or identity.get("component") != "vggt-omega":
+        raise ValueError("raw VGGT cache identity is malformed")
+    expected_view_order = [
+        label
+        for time_label in ("t-4", "t-3", "t-2", "t-1", "t")
+        for label in (f"L[{time_label}]", f"R[{time_label}]")
+    ]
+    if (
+        config.get("causal") is not True
+        or config.get("context_pairs") != 5
+        or config.get("current_left_view_index") != 8
+        or config.get("view_order") != expected_view_order
+    ):
+        raise ValueError("raw VGGT cache is not the strict causal five-pair layout")
+    selected = receipt.get("selected_windows")
+    available = receipt.get("available_windows")
+    written = receipt.get("written_records")
+    reused = receipt.get("reused_records")
+    if any(
+        isinstance(value, bool) or not isinstance(value, int) or value < 0
+        for value in (selected, available, written, reused)
+    ):
+        raise ValueError("raw VGGT receipt counts are malformed")
+    if selected != available or written + reused != selected:
+        raise ValueError("raw VGGT cache is incomplete")
+    if receipt.get("manifest_sha256") != expected_manifest_sha256:
+        raise ValueError("raw VGGT receipt is bound to a different manifest")
+    return {
+        "root": str(raw_vggt_root.resolve()),
+        "receipt_path": str(receipt_path.resolve()),
+        "receipt_sha256": sha256_file(receipt_path),
+        "identity": dict(identity),
+        "config": dict(config),
+        "selected_windows": selected,
+        "available_windows": available,
+        "manifest_sha256": expected_manifest_sha256,
+    }
+
+
+def _audit_temporal_holdout_and_raw_lineage(
+    *,
+    checkpoint_metadata: dict[str, Any],
+    dataset: CachedTemporalTrainingDataset,
+    evaluation_manifest_path: Path,
+    observation_identity: dict[str, Any],
+    allow_non_holdout_smoke: bool = False,
+) -> dict[str, Any]:
+    """Verify video isolation and raw VGGT identity through derived records."""
+
+    training_config = checkpoint_metadata.get("training_config")
+    if not isinstance(training_config, dict) or not isinstance(
+        training_config.get("data"), dict
+    ):
+        raise ValueError("temporal checkpoint data lineage is missing")
+    training_data = training_config["data"]
+    training_manifest_value = training_data.get("manifest_path")
+    if not isinstance(training_manifest_value, str):
+        raise ValueError("temporal checkpoint has no training manifest path")
+    training_manifest_path = Path(training_manifest_value).expanduser().resolve()
+    if not training_manifest_path.is_file():
+        raise FileNotFoundError(
+            f"training manifest provenance is unavailable: {training_manifest_path}"
+        )
+    same_manifest = training_manifest_path == evaluation_manifest_path.resolve()
+    if same_manifest and not allow_non_holdout_smoke:
+        raise ValueError("evaluation manifest is the temporal training manifest")
+    training_sequences = {
+        record.sequence_id for record in load_manifest(training_manifest_path)
+    }
+    evaluation_sequences = {record.sequence_id for record in dataset.records}
+    overlap = sorted(training_sequences & evaluation_sequences)
+    if overlap and not allow_non_holdout_smoke:
+        raise ValueError(f"training/evaluation sequences overlap: {overlap}")
+    for field_name, current_root in (
+        ("observation_cache_root", dataset.observation_cache_root),
+        ("teacher_cache_root", dataset.spatial_dataset.teacher_cache_root),
+    ):
+        saved_root = training_data.get(field_name)
+        if not isinstance(saved_root, str):
+            raise ValueError(f"checkpoint training {field_name} is missing")
+        if (
+            Path(saved_root).expanduser().resolve() == current_root
+            and not allow_non_holdout_smoke
+        ):
+            raise ValueError(f"evaluation reuses the training {field_name}")
+
+    saved_derived = training_data.get("derived_cache_lineage")
+    if not isinstance(saved_derived, dict) or not isinstance(
+        saved_derived.get("derived_cache_root"), str
+    ):
+        raise ValueError("checkpoint training derived-cache root is missing")
+    training_derived_root = Path(
+        saved_derived["derived_cache_root"]
+    ).expanduser().resolve()
+    training_raw_root = training_derived_root.parent / "vggt"
+    evaluation_raw_root = dataset.derived_cache_root.parent / "vggt"
+    training_raw = _validated_raw_vggt_receipt(
+        training_raw_root,
+        expected_manifest_sha256=sha256_file(training_manifest_path),
+    )
+    evaluation_raw = _validated_raw_vggt_receipt(
+        evaluation_raw_root,
+        expected_manifest_sha256=sha256_file(evaluation_manifest_path),
+    )
+    if training_raw["identity"] != evaluation_raw["identity"]:
+        raise ValueError("training/evaluation raw VGGT identities differ")
+    if training_raw["config"] != evaluation_raw["config"]:
+        raise ValueError("training/evaluation raw VGGT inference configs differ")
+
+    # mmap avoids paging dense tensor storage while auditing every formal
+    # derived record's raw-lineage metadata.
+    for entry in dataset.derived_entries.values():
+        if sha256_file(entry.cache_path) != entry.cache_sha256:
+            raise ValueError(
+                f"derived cache SHA-256 differs from its manifest: {entry.cache_path}"
+            )
+        payload = torch.load(
+            entry.cache_path, map_location="cpu", weights_only=True, mmap=True
+        )
+        metadata = payload.get("metadata") if isinstance(payload, dict) else None
+        source = metadata.get("source") if isinstance(metadata, dict) else None
+        linkage = source.get("linkage") if isinstance(source, dict) else None
+        if not isinstance(linkage, dict):
+            raise ValueError(f"derived raw linkage missing: {entry.cache_path}")
+        if linkage.get("vggt_raw_identity") != evaluation_raw["identity"]:
+            raise ValueError(
+                f"derived record uses a different raw VGGT identity: {entry.cache_path}"
+            )
+        if linkage.get("ffs_raw_identity") != observation_identity:
+            raise ValueError(
+                f"derived record uses a different raw FFS identity: {entry.cache_path}"
+            )
+    return {
+        "training_manifest_path": str(training_manifest_path),
+        "training_manifest_sha256": sha256_file(training_manifest_path),
+        "evaluation_manifest_path": str(evaluation_manifest_path.resolve()),
+        "evaluation_manifest_sha256": sha256_file(evaluation_manifest_path),
+        "training_sequences": sorted(training_sequences),
+        "evaluation_sequences": sorted(evaluation_sequences),
+        "sequence_overlap": overlap,
+        "same_manifest": same_manifest,
+        "formal_holdout": not same_manifest and not overlap,
+        "non_holdout_smoke_override": allow_non_holdout_smoke,
+        "training_raw_vggt": training_raw,
+        "evaluation_raw_vggt": evaluation_raw,
+        "audited_evaluation_derived_records": len(dataset.derived_entries),
+    }
+
+
 def run(args: argparse.Namespace) -> int:
     config = resolve_evaluation_config(args.config, args.overrides)
     _update_cli_values(config, args)
-    validate_evaluation_config(config)
+    stage = validate_evaluation_config(config)
+    stage_label = "T1_SPATIAL_ONLY" if stage == "spatial" else "T3_CAUSAL_STAGE_B"
     seed_everything(int(config.seed), deterministic=True)
     model = build_model(config)
     parameter_count = count_trainable_parameters(model)
     if parameter_count <= 0 or parameter_count >= 12_000_000:
-        raise ValueError(f"trainable parameter count must be in (0,12M), got {parameter_count}")
+        raise ValueError(
+            f"trainable parameter count must be in (0,12M), got {parameter_count}"
+        )
 
     if args.dry_run:
         print(
             json.dumps(
                 {
                     "status": "DRY_RUN",
-                    "stage": "T1_SPATIAL_ONLY",
+                    "stage": stage_label,
                     "target_type": PSEUDO_GT_LABEL,
                     "parameter_count": parameter_count,
                     "crop_mode": str(config.eval.crop_mode),
+                    "causal_endpoint_only": stage == "temporal",
+                    "future_frames_allowed": False,
                     "resolved_config": _resolved_dict(config),
                 },
                 indent=2,
@@ -438,6 +1117,13 @@ def run(args: argparse.Namespace) -> int:
 
     if args.checkpoint is None:
         raise ValueError("--checkpoint is required unless --dry-run is used")
+    if args.allow_non_holdout_smoke:
+        if stage != "temporal":
+            raise ValueError("--allow-non-holdout-smoke is only valid for Stage B")
+        if config.eval.limit is None or int(config.eval.limit) > 4:
+            raise ValueError(
+                "non-holdout smoke requires an explicit eval.limit in [1,4]"
+            )
     manifest_path = _required_path(config, "data.manifest_path", directory=False)
     observation_root = _required_path(
         config, "data.observation_cache_root", directory=True
@@ -467,29 +1153,65 @@ def run(args: argparse.Namespace) -> int:
     fixed_origin = (
         None if origin_value is None else tuple(int(value) for value in origin_value)
     )
-    dataset = CachedFFSTrainingDataset(
-        manifest_path=manifest_path,
-        observation_cache_root=observation_root,
-        teacher_cache_root=teacher_root,
-        observation_identity=observation_identity,
-        teacher_identity=teacher_identity,
-        crop_size_hr_hw=crop_size,
-        crop_mode="fixed",
-        fixed_crop_origin_hr_xy=fixed_origin,
-        spatial_scale=int(config.data.scale),
-        seed=int(config.seed),
-    )
+    derived_lineage: dict[str, Any] | None = None
+    formal_coverage: dict[str, int] | None = None
+    if stage == "spatial":
+        dataset: CachedFFSTrainingDataset | CachedTemporalTrainingDataset = (
+            CachedFFSTrainingDataset(
+                manifest_path=manifest_path,
+                observation_cache_root=observation_root,
+                teacher_cache_root=teacher_root,
+                observation_identity=observation_identity,
+                teacher_identity=teacher_identity,
+                crop_size_hr_hw=crop_size,
+                crop_mode="fixed",
+                fixed_crop_origin_hr_xy=fixed_origin,
+                spatial_scale=int(config.data.scale),
+                seed=int(config.seed),
+            )
+        )
+        collate_function = collate_training_samples
+    else:
+        derived_root = _required_path(
+            config, "data.derived_geometry_cache_root", directory=True
+        )
+        dataset = CachedTemporalTrainingDataset(
+            manifest_path=manifest_path,
+            observation_cache_root=observation_root,
+            teacher_cache_root=teacher_root,
+            derived_cache_root=derived_root,
+            observation_identity=observation_identity,
+            teacher_identity=teacher_identity,
+            crop_size_hr_hw=crop_size,
+            crop_mode="fixed",
+            fixed_crop_origin_hr_xy=fixed_origin,
+            spatial_scale=int(config.data.scale),
+            student_sequence_length=3,
+            vggt_context_pairs=5,
+            seed=int(config.seed),
+        )
+        formal_coverage = _validate_formal_temporal_coverage(dataset)
+        derived_lineage = dict(dataset.cache_lineage_summary)
+        collate_function = collate_temporal_training_samples
     if len(dataset) == 0:
         raise ValueError("validation dataset is empty")
+    start_index = int(config.eval.start)
+    if start_index >= len(dataset):
+        raise ValueError(
+            f"eval.start={start_index} is outside dataset length {len(dataset)}"
+        )
     requested_limit = config.eval.limit
+    available_count = len(dataset) - start_index
     sample_count = (
-        len(dataset)
+        available_count
         if requested_limit is None
-        else min(int(requested_limit), len(dataset))
+        else min(int(requested_limit), available_count)
     )
     if sample_count <= 0:
         raise ValueError("evaluation selects no validation records")
-    selected_dataset = Subset(dataset, range(sample_count))
+    selected_dataset = Subset(
+        dataset, range(start_index, start_index + sample_count)
+    )
     device = _resolve_device(args.device)
     pin_memory = bool(config.eval.pin_memory) and device.type == "cuda"
     loader = DataLoader(
@@ -499,21 +1221,98 @@ def run(args: argparse.Namespace) -> int:
         num_workers=int(config.eval.num_workers),
         persistent_workers=int(config.eval.num_workers) > 0,
         pin_memory=pin_memory,
-        collate_fn=collate_training_samples,
+        collate_fn=collate_function,
     )
 
     checkpoint_metadata = load_model_for_evaluation(
         args.checkpoint,
         model,
         expected_parameter_count=parameter_count,
+        require_full_training_state=True,
     )
+    checkpoint_metadata = _materialize_checkpoint_cache_identities(
+        checkpoint_metadata
+    )
+    checkpoint_lineage = validate_checkpoint_lineage(
+        checkpoint_metadata,
+        required_stage=stage,
+        observation_cache_identity=observation_identity.to_dict(),
+        teacher_cache_identity=teacher_identity.to_dict(),
+        derived_cache_lineage=derived_lineage,
+        evaluation_config=_resolved_dict(config) if stage == "temporal" else None,
+    )
+    holdout_raw_lineage: dict[str, Any] | None = None
+    if stage == "temporal":
+        assert isinstance(dataset, CachedTemporalTrainingDataset)
+        holdout_raw_lineage = _audit_temporal_holdout_and_raw_lineage(
+            checkpoint_metadata=checkpoint_metadata,
+            dataset=dataset,
+            evaluation_manifest_path=manifest_path,
+            observation_identity=observation_identity.to_dict(),
+            allow_non_holdout_smoke=args.allow_non_holdout_smoke,
+        )
+    spatial_model: torch.nn.Module | None = None
+    spatial_checkpoint_metadata: dict[str, Any] | None = None
+    spatial_checkpoint_lineage: dict[str, Any] | None = None
+    if stage == "temporal":
+        recorded_spatial_path = Path(
+            str(checkpoint_lineage["stage_a_initialization_path"])
+        ).expanduser()
+        spatial_checkpoint_path = (
+            args.spatial_checkpoint.expanduser().resolve()
+            if args.spatial_checkpoint is not None
+            else recorded_spatial_path.resolve()
+        )
+        if not spatial_checkpoint_path.is_file():
+            raise FileNotFoundError(
+                "Stage-A checkpoint from temporal lineage is unavailable; pass "
+                f"--spatial-checkpoint with the exact bound artifact: "
+                f"{spatial_checkpoint_path}"
+            )
+        spatial_model = build_model(config)
+        spatial_checkpoint_metadata = load_model_for_evaluation(
+            spatial_checkpoint_path,
+            spatial_model,
+            expected_parameter_count=parameter_count,
+            require_full_training_state=True,
+        )
+        spatial_checkpoint_metadata = _materialize_checkpoint_cache_identities(
+            spatial_checkpoint_metadata
+        )
+        validate_spatial_checkpoint_binding(
+            spatial_checkpoint_metadata, checkpoint_lineage
+        )
+        spatial_checkpoint_lineage = validate_checkpoint_lineage(
+            spatial_checkpoint_metadata,
+            required_stage="spatial",
+            observation_cache_identity=observation_identity.to_dict(),
+            teacher_cache_identity=teacher_identity.to_dict(),
+        )
+        spatial_model.to(device=device).eval()
     model.to(device=device).eval()
+    base_method_names = (
+        ("bilinear", "T1")
+        if stage == "spatial"
+        else (
+            "bilinear",
+            "T1",
+            "T3",
+            "T3_VGGT",
+            "T3_VGGT_mask_off",
+        )
+    )
+    method_names = tuple(
+        method_name
+        for base_name in base_method_names
+        for method_name in (base_name, f"{base_name}_clamp0")
+    )
     accumulators = {
-        "bilinear": MethodMetricAccumulator(),
-        "T1": MethodMetricAccumulator(),
+        method_name: MethodMetricAccumulator() for method_name in method_names
     }
     visualization_limit = min(int(config.eval.visualization_samples), sample_count)
     visualized = 0
+    endpoint_pose_valid_count = 0
+    endpoint_static_prior_valid_count = 0
     started = time.perf_counter()
 
     use_cuda_bf16 = (
@@ -521,17 +1320,45 @@ def run(args: argparse.Namespace) -> int:
     )
     with torch.inference_mode():
         for batch in loader:
+            if stage == "temporal":
+                validate_temporal_batch_causality(batch)
             batch = _move_batch(batch, device)
-            target = batch["teacher_disparity_hr_px"]
-            target_trusted = batch["teacher_trusted_mask"]
+            if stage == "spatial":
+                target = batch["teacher_disparity_hr_px"]
+                target_trusted = batch["teacher_trusted_mask"]
+                endpoint_rgb = batch["rgb_hr"]
+                endpoint_ffs_disparity = batch["observation_disparity_hr_px"]
+                endpoint_ffs_confidence = batch["observation_confidence"]
+                endpoint_ffs_valid = batch["observation_valid_mask"]
+                endpoint_ffs_trusted = batch["observation_trusted_mask"]
+            else:
+                target = batch["teacher_disparity_hr_px_sequence"][:, 2]
+                target_trusted = batch["teacher_trusted_mask_sequence"][:, 2]
+                endpoint_rgb = batch["rgb_hr_sequence"][:, 2]
+                endpoint_ffs_disparity = batch[
+                    "observation_disparity_hr_px_sequence"
+                ][:, 2]
+                endpoint_ffs_confidence = batch[
+                    "observation_confidence_sequence"
+                ][:, 2]
+                endpoint_ffs_valid = batch["observation_valid_mask_sequence"][:, 2]
+                endpoint_ffs_trusted = batch[
+                    "observation_trusted_mask_sequence"
+                ][:, 2]
+                endpoint_pose_valid_count += int(
+                    batch["temporal_pose_valid_sequence"][:, 2].sum().item()
+                )
+                endpoint_static_prior_valid_count += int(
+                    batch["static_prior_valid_sequence"][:, 2].sum().item()
+                )
             if not isinstance(target, Tensor) or not isinstance(target_trusted, Tensor):
                 raise ValueError("evaluation requires teacher disparity and trusted mask")
             output_size = tuple(int(value) for value in target.shape[-2:])
             baseline, confidence_hr, valid_hr, trusted_hr = upsample_ffs_inputs_to_hr(
-                batch["observation_disparity_hr_px"],
-                batch["observation_confidence"],
-                batch["observation_valid_mask"],
-                batch["observation_trusted_mask"],
+                endpoint_ffs_disparity,
+                endpoint_ffs_confidence,
+                endpoint_ffs_valid,
+                endpoint_ffs_trusted,
                 output_size_hw=output_size,
             )
             # Construct a fresh context manager per batch; this remains safe
@@ -542,16 +1369,136 @@ def run(args: argparse.Namespace) -> int:
                 else nullcontext()
             )
             with autocast_context:
-                model_output = model(
-                    batch["rgb_hr"],
-                    batch["observation_disparity_hr_px"],
-                    batch["observation_confidence"],
-                    valid_ffs=batch["observation_valid_mask"],
+                if stage == "spatial":
+                    model_output = model(
+                        endpoint_rgb,
+                        endpoint_ffs_disparity,
+                        endpoint_ffs_confidence,
+                        valid_ffs=endpoint_ffs_valid,
+                    )
+                    raw_predictions = {
+                        "bilinear": baseline.float(),
+                        "T1": model_output.disparity_hr_px.float(),
+                    }
+                    temporal_results: dict[str, MetricResult] = {}
+                    temporal_visualization: TemporalEndpointPredictions | None = None
+                else:
+                    assert spatial_model is not None
+                    spatial_endpoint = _run_spatial_endpoint(
+                        spatial_model, batch, config=config
+                    )
+                    temporal_visualization = _run_temporal_endpoint_ablation(
+                        model, batch, config=config
+                    )
+                    raw_predictions = {
+                        "bilinear": baseline.float(),
+                        "T1": spatial_endpoint.output.disparity_hr_px.float(),
+                        "T3": temporal_visualization.no_vggt.disparity_hr_px.float(),
+                        "T3_VGGT": (
+                            temporal_visualization.vggt_on.disparity_hr_px.float()
+                        ),
+                        "T3_VGGT_mask_off": (
+                            temporal_visualization.source_mask_off.disparity_hr_px.float()
+                        ),
+                    }
+                    t1_transport = spatial_endpoint.transport
+                    t3_transport = temporal_visualization.shared_transport
+                    no_vggt_transport = temporal_visualization.no_vggt_transport
+                    t1_safe = hr_temporal_safe_mask(
+                        raw_predictions["T1"],
+                        visibility_mask_hr=t1_transport.visibility_mask_hr,
+                        static_mask_hr=t1_transport.static_mask_hr,
+                        collision_mask_hr=t1_transport.collision_mask_hr,
+                        geometry_consistent_mask_hr=(
+                            t1_transport.geometry_consistent_mask_hr
+                        ),
+                        valid_history_hr=t1_transport.valid_history_hr,
+                    )
+                    t3_safe = hr_temporal_safe_mask(
+                        raw_predictions["T3_VGGT"],
+                        visibility_mask_hr=t3_transport.visibility_mask_hr,
+                        static_mask_hr=t3_transport.static_mask_hr,
+                        collision_mask_hr=t3_transport.collision_mask_hr,
+                        geometry_consistent_mask_hr=(
+                            t3_transport.geometry_consistent_mask_hr
+                        ),
+                        valid_history_hr=t3_transport.valid_history_hr,
+                    )
+                    no_vggt_safe = hr_temporal_safe_mask(
+                        raw_predictions["T3"],
+                        visibility_mask_hr=no_vggt_transport.visibility_mask_hr,
+                        static_mask_hr=no_vggt_transport.static_mask_hr,
+                        collision_mask_hr=no_vggt_transport.collision_mask_hr,
+                        geometry_consistent_mask_hr=(
+                            no_vggt_transport.geometry_consistent_mask_hr
+                        ),
+                        valid_history_hr=no_vggt_transport.valid_history_hr,
+                    )
+                    paired_t1_no_vggt = t1_safe & no_vggt_safe
+                    temporal_results = {
+                        "bilinear": MetricResult.invalid(),
+                        "T1": hr_temporal_metric(
+                            raw_predictions["T1"],
+                            t1_transport.disparity_history_loss_hr_px,
+                            visibility_mask_hr=t1_transport.visibility_mask_hr,
+                            static_mask_hr=t1_transport.static_mask_hr,
+                            collision_mask_hr=t1_transport.collision_mask_hr,
+                            geometry_consistent_mask_hr=(
+                                t1_transport.geometry_consistent_mask_hr
+                            ),
+                            valid_history_hr=t1_transport.valid_history_hr,
+                        ),
+                        "T3": hr_temporal_metric(
+                            raw_predictions["T3"],
+                            no_vggt_transport.disparity_history_loss_hr_px,
+                            visibility_mask_hr=no_vggt_transport.visibility_mask_hr,
+                            static_mask_hr=no_vggt_transport.static_mask_hr,
+                            collision_mask_hr=no_vggt_transport.collision_mask_hr,
+                            geometry_consistent_mask_hr=(
+                                no_vggt_transport.geometry_consistent_mask_hr
+                            ),
+                            valid_history_hr=no_vggt_transport.valid_history_hr,
+                        ),
+                        "T3_VGGT": hr_temporal_metric(
+                            raw_predictions["T3_VGGT"],
+                            t3_transport.disparity_history_loss_hr_px,
+                            visibility_mask_hr=t3_transport.visibility_mask_hr,
+                            static_mask_hr=t3_transport.static_mask_hr,
+                            collision_mask_hr=t3_transport.collision_mask_hr,
+                            geometry_consistent_mask_hr=(
+                                t3_transport.geometry_consistent_mask_hr
+                            ),
+                            valid_history_hr=t3_transport.valid_history_hr,
+                        ),
+                        "T3_VGGT_mask_off": temporal_disparity_error(
+                            raw_predictions["T3_VGGT_mask_off"],
+                            t3_transport.disparity_history_loss_hr_px,
+                            safe_mask=t3_safe,
+                        ),
+                    }
+                    paired_temporal_results = {
+                        "T1": temporal_disparity_error(
+                            raw_predictions["T1"],
+                            t1_transport.disparity_history_loss_hr_px,
+                            safe_mask=paired_t1_no_vggt,
+                        ),
+                        "T3": temporal_disparity_error(
+                            raw_predictions["T3"],
+                            no_vggt_transport.disparity_history_loss_hr_px,
+                            safe_mask=paired_t1_no_vggt,
+                        ),
+                        "T3_VGGT": MetricResult.invalid(),
+                        "T3_VGGT_mask_off": MetricResult.invalid(),
+                    }
+            predictions: dict[str, Tensor] = {}
+            for method_name, prediction in raw_predictions.items():
+                predictions[method_name] = prediction
+                # Physical output policy: negative disparities become zero.
+                # Never use epsilon here; zero remains invalid/unfilled and
+                # cannot fabricate hole completeness.
+                predictions[f"{method_name}_clamp0"] = (
+                    physical_disparity_clamp_min_zero(prediction)
                 )
-            predictions = {
-                "bilinear": baseline.float(),
-                "T1": model_output.disparity_hr_px.float(),
-            }
             for method_name, prediction in predictions.items():
                 sample_metrics = compute_sample_metrics(
                     prediction,
@@ -566,6 +1513,19 @@ def run(args: argparse.Namespace) -> int:
                     ),
                     boundary_radius_px=int(config.eval.boundary_radius_px),
                 )
+                if stage == "temporal":
+                    base_method_name = method_name.removesuffix("_clamp0")
+                    is_postprocessed = method_name.endswith("_clamp0")
+                    sample_metrics["temporal_disparity_error_native_px"] = (
+                        MetricResult.invalid()
+                        if is_postprocessed
+                        else temporal_results[base_method_name]
+                    )
+                    sample_metrics["temporal_disparity_error_paired_px"] = (
+                        MetricResult.invalid()
+                        if is_postprocessed or base_method_name == "bilinear"
+                        else paired_temporal_results[base_method_name]
+                    )
                 accumulators[method_name].update(sample_metrics)
 
             batch_size = target.shape[0]
@@ -573,33 +1533,142 @@ def run(args: argparse.Namespace) -> int:
                 if visualized >= visualization_limit:
                     break
                 sequence_id = str(batch["sequence_id"][item_index]).replace("/", "_")
-                frame_id = int(batch["frame_id"][item_index].item())
+                frame_id = int(
+                    batch["frame_id"][item_index].item()
+                    if stage == "spatial"
+                    else batch["frame_ids"][item_index, 2].item()
+                )
+                visualization_output = (
+                    model_output if stage == "spatial" else temporal_visualization.vggt_on
+                )
+                if stage == "temporal":
+                    assert temporal_visualization is not None
+                    vggt_lr = batch["disparity_vggt_hr_px_sequence"][item_index : item_index + 1, 2]
+                    vggt_valid_lr = batch["valid_vggt_sequence"][item_index : item_index + 1, 2]
+                    vggt_hr = functional.interpolate(
+                        vggt_lr,
+                        size=output_size,
+                        mode="bilinear",
+                        align_corners=False,
+                    )[0]
+                    vggt_valid_hr = functional.interpolate(
+                        vggt_valid_lr.float(), size=output_size, mode="nearest"
+                    )[0].bool()
+                    history_hr = (
+                        temporal_visualization.shared_transport
+                        .disparity_history_loss_hr_px[item_index]
+                    )
+                    history_valid_hr = temporal_visualization.shared_transport.valid_history_hr[
+                        item_index
+                    ]
+                else:
+                    vggt_hr = None
+                    vggt_valid_hr = None
+                    history_hr = None
+                    history_valid_hr = None
                 _save_visualization(
                     output_dir / "visualizations",
                     sample_name=f"{visualized:04d}_{sequence_id}_{frame_id}",
-                    rgb_hr=batch["rgb_hr"][item_index],
+                    rgb_hr=endpoint_rgb[item_index],
                     baseline_hr_px=baseline[item_index],
-                    output_hr_px=model_output.disparity_hr_px[item_index].float(),
+                    output_hr_px=visualization_output.disparity_hr_px[
+                        item_index
+                    ].float(),
                     target_hr_px=target[item_index].float(),
                     target_trusted_mask=target_trusted[item_index],
-                    source_weights_lr=model_output.source_weights[item_index].float(),
-                    uncertainty_hr=model_output.uncertainty[item_index].float(),
+                    source_weights_lr=visualization_output.source_weights[
+                        item_index
+                    ].float(),
+                    uncertainty_hr=visualization_output.uncertainty[item_index].float(),
+                    vggt_disparity_hr_px=vggt_hr,
+                    vggt_valid_mask_hr=vggt_valid_hr,
+                    history_disparity_hr_px=history_hr,
+                    history_valid_mask_hr=history_valid_hr,
+                    vggt_off_output_hr_px=(
+                        None
+                        if stage == "spatial"
+                        else temporal_visualization.source_mask_off.disparity_hr_px[
+                            item_index
+                        ].float()
+                    ),
+                    no_vggt_output_hr_px=(
+                        None
+                        if stage == "spatial"
+                        else temporal_visualization.no_vggt.disparity_hr_px[
+                            item_index
+                        ].float()
+                    ),
+                    prediction_filename=(
+                        "t1_disparity_hr_px.png"
+                        if stage == "spatial"
+                        else "t3_vggt_disparity_hr_px.png"
+                    ),
                 )
                 visualized += 1
 
     elapsed_seconds = time.perf_counter() - started
-    finalized = {
-        method: {name: result.to_dict() for name, result in accumulator.finalize().items()}
+    full_selection = start_index == 0 and sample_count == len(dataset)
+    aggregate_methods = {
+        method: accumulator.finalize()
         for method, accumulator in accumulators.items()
+    }
+    finalized = {
+        method: {name: result.to_dict() for name, result in metrics.items()}
+        for method, metrics in aggregate_methods.items()
     }
     for method in finalized.values():
         method["point_to_plane_error_m"] = dict(POINT_TO_PLANE_NOT_AVAILABLE)
-    comparisons = comparison_from_aggregates(
-        accumulators["bilinear"].finalize(), accumulators["T1"].finalize()
-    )
+    for method_name, method in finalized.items():
+        method["output_variant"] = (
+            {
+                "type": "PHYSICAL_CLAMP_MIN_ZERO",
+                "source_method": method_name.removesuffix("_clamp0"),
+                "epsilon_fill": False,
+            }
+            if method_name.endswith("_clamp0")
+            else {"type": "RAW_MODEL_OUTPUT", "source_method": method_name}
+        )
+    comparisons: dict[str, Any] = {}
+    for method_name in method_names:
+        if method_name == "bilinear":
+            continue
+        reference_name = (
+            "bilinear_clamp0"
+            if method_name.endswith("_clamp0")
+            and method_name != "bilinear_clamp0"
+            else "bilinear"
+        )
+        comparison = comparison_from_aggregates(
+            aggregate_methods[reference_name], aggregate_methods[method_name]
+        )
+        comparison["reference_method"] = reference_name
+        comparisons[f"{method_name}_vs_bilinear"] = comparison
+    if stage == "temporal":
+        for method_name in ("T3",):
+            comparisons[f"{method_name}_vs_T1_temporal"] = (
+                aggregate_metric_change(
+                    aggregate_methods["T1"],
+                    aggregate_methods[method_name],
+                    "temporal_disparity_error_paired_px",
+                )
+            )
+        comparisons["T3_VGGT_vs_T3_prior_effect"] = (
+            aggregate_metric_change(
+                aggregate_methods["T3"],
+                aggregate_methods["T3_VGGT"],
+                "epe_px",
+            )
+        )
+        comparisons["T3_VGGT_mask_off_vs_T3_vggt_source_mask"] = (
+            aggregate_metric_change(
+                aggregate_methods["T3_VGGT"],
+                aggregate_methods["T3_VGGT_mask_off"],
+                "epe_px",
+            )
+        )
     report = {
         "schema_version": 1,
-        "stage": "T1_SPATIAL_ONLY",
+        "stage": stage_label,
         "target": {
             "type": PSEUDO_GT_LABEL,
             "paper_accuracy": False,
@@ -608,10 +1677,49 @@ def run(args: argparse.Namespace) -> int:
                 "they are engineering validation only."
             ),
         },
+        "claims": {
+            "paper_accuracy": False,
+            "paper_gt": False,
+            "epipolar_refinement": False,
+            "temporal_future_frames": False,
+            "formal_holdout": (
+                None
+                if stage == "spatial"
+                else bool(
+                    holdout_raw_lineage
+                    and holdout_raw_lineage.get("formal_holdout")
+                )
+            ),
+            "acceptance_eligible": (
+                full_selection
+                and not args.allow_non_holdout_smoke
+                and (
+                    stage == "spatial"
+                    or bool(
+                        holdout_raw_lineage
+                        and holdout_raw_lineage.get("formal_holdout")
+                    )
+                )
+            ),
+            "full_validation_selection": full_selection,
+        },
+        "postprocess_contract": {
+            "raw_rows": list(base_method_names),
+            "physical_variant_suffix": "_clamp0",
+            "operation": "torch.clamp_min(disparity_hr_px, 0.0)",
+            "epsilon_fill": False,
+            "zero_semantics": "invalid and not complete",
+            "temporal_metrics_for_endpoint_only_variant": "NOT_AVAILABLE",
+            "acceptance_note": (
+                "Raw and physical variants are reported separately; the "
+                "physical variant never overwrites raw model output."
+            ),
+        },
         "methods": finalized,
         "comparisons": comparisons,
         "point_to_plane": dict(POINT_TO_PLANE_NOT_AVAILABLE),
         "records_evaluated": sample_count,
+        "selection_start": start_index,
         "visualizations_written": visualized,
         "elapsed_seconds": elapsed_seconds,
         "device": str(device),
@@ -619,11 +1727,57 @@ def run(args: argparse.Namespace) -> int:
         "hr_crop": None if full_resolution else list(crop_size or ()),
         "parameter_count": parameter_count,
         "checkpoint": checkpoint_metadata,
+        "checkpoint_lineage": checkpoint_lineage,
+        "spatial_checkpoint": spatial_checkpoint_metadata,
+        "spatial_checkpoint_lineage": spatial_checkpoint_lineage,
         "manifest_path": str(manifest_path),
         "cache_identities": {
             "observation": asdict(observation_identity),
             "teacher": asdict(teacher_identity),
         },
+        "derived_cache_lineage": derived_lineage,
+        "formal_temporal_coverage": formal_coverage,
+        "holdout_and_raw_lineage": holdout_raw_lineage,
+        "causal_contract": (
+            None
+            if stage == "spatial"
+            else {
+                "student_frames": 3,
+                "scored_time_index": 2,
+                "endpoint_only": True,
+                "shared_fixed_crop": True,
+                "each_student_time_has_endpoint_derived_geometry": True,
+                "future_frames": False,
+                "vggt_context_pairs": 5,
+                "temporal_metric_domain": (
+                    "HR z-buffer visible AND static AND non-collision AND "
+                    "geometry-consistent AND valid-history"
+                ),
+                "t3_vs_t1_temporal_comparison_domain": (
+                    "intersection of T1 and T3 strict HR safe masks"
+                ),
+                "endpoint_pose_valid_count": endpoint_pose_valid_count,
+                "endpoint_pose_rejected_count": (
+                    sample_count - endpoint_pose_valid_count
+                ),
+                "endpoint_static_prior_valid_count": (
+                    endpoint_static_prior_valid_count
+                ),
+                "acceptance_t3_method": (
+                    "T3: causal recurrent/history model with zero static VGGT "
+                    "prior channels and independently propagated history"
+                ),
+                "vggt_prior_method": "T3_VGGT",
+                "vggt_source_mask_diagnostic": (
+                    "same history and pose as T3_VGGT; only valid_vggt is "
+                    "false; raw VGGT geometry channels remain visible to the encoder"
+                ),
+                "no_vggt_ablation": (
+                    "The canonical T3 row zeros VGGT disparity/confidence/mask "
+                    "and independently unrolls hidden/history using unchanged poses"
+                ),
+            }
+        ),
         "resolved_config": _resolved_dict(config),
     }
     metrics_json = output_dir / "metrics.json"
@@ -635,10 +1789,18 @@ def run(args: argparse.Namespace) -> int:
     print(
         json.dumps(
             {
-                "status": "PASS",
-                "stage": "T1_SPATIAL_ONLY",
+                "status": (
+                    "NON_HOLDOUT_SMOKE_PASS"
+                    if args.allow_non_holdout_smoke
+                    else "PASS"
+                ),
+                "stage": stage_label,
                 "target_type": PSEUDO_GT_LABEL,
-                "records_evaluated": sample_count,
+                (
+                    "records_evaluated"
+                    if stage == "spatial"
+                    else "windows_evaluated"
+                ): sample_count,
                 "parameter_count": parameter_count,
                 "metrics_json": str(metrics_json),
                 "metrics_csv": str(output_dir / "metrics.csv"),

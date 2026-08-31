@@ -208,3 +208,40 @@ def test_batch_rejects_modified_future_window(tmp_path: Path) -> None:
             output_root=output_root,
             thresholds=_small_thresholds(),
         )
+
+
+def test_raw_canonical_receipt_must_cover_every_available_window(
+    tmp_path: Path,
+) -> None:
+    (
+        vggt_root,
+        ffs_root,
+        output_root,
+        _,
+        vggt_payload,
+        _,
+    ) = _prepare_single_window(tmp_path, previous_value=64, current_value=64)
+    # A self-consistent selected manifest is still not a complete canonical
+    # cache when the producer reports another available causal window.
+    (vggt_root / "run_receipt.json").write_text(
+        json.dumps(
+            {
+                "selected_windows": 1,
+                "written_records": 1,
+                "reused_records": 0,
+                "available_windows": 2,
+                "identity": vggt_payload["identity"],
+            },
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(CacheMismatchError, match="complete manifest coverage"):
+        derive_geometry_manifest(
+            vggt_root=vggt_root,
+            ffs_root=ffs_root,
+            output_root=output_root,
+            thresholds=_small_thresholds(),
+        )

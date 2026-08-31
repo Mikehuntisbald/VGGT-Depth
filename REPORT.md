@@ -329,26 +329,76 @@ only (`reports/m4/stage_b_training_smoke.json`). The independent local HR
 epipolar block adds 69,905 parameters and passes
 an RTX 5090 BF16 forward/backward smoke; it is not yet enabled in a formal run.
 
+### M4 — formal Stage-A spatial result
+
+The committed Stage-A run completed all 5,000 optimizer steps on the RTX 5090
+in 1,357.94 seconds (3.6821 steps/s). Peak CUDA allocation/reservation was
+3,414,233,600 / 3,925,868,544 bytes. The final checkpoint SHA-256 is
+`6bb7ff116236ea4bb86a010c03f14ba96fb69ac24fc0affdb01e7e561e90c254`
+and it records Git commit `3e0df0b543f5000d0bf8490740b5f34ad979e3b6`.
+The log has exactly 5,000 finite optimizer records. Evidence:
+`reports/m4/stage_a_training.json` and the ignored reproducibility artifacts
+under `outputs/ffs_omega_tsr_x2/stage_a/`.
+
+All 244 video-isolated validation frames were evaluated both at the fixed
+384×768 crop and at their full 800×1280 resolution. Against trusted HR FFS
+pseudo-GT, the full-resolution raw T1 model versus raw bilinear LR FFS gives:
+
+| Engineering metric | Bilinear | T1 | Relative change |
+|---|---:|---:|---:|
+| low-confidence EPE | 0.224465 px | 0.197538 px | **-11.9962%** |
+| invalid-region completeness | 0.082552 | 0.681310 | **+725.31%** |
+| trusted-region EPE | 0.100102 px | 0.095828 px | **-4.2694%** |
+| overall EPE | 0.168531 px | 0.152000 px | -9.8085% |
+| boundary EPE | 1.415507 px | 0.866139 px | -38.8106% |
+| Bad-1 | 1.4782% | 0.9330% | -36.884% |
+
+Thus the three Stage-A engineering gates pass on the complete held-out video:
+low-confidence EPE improves by at least 10%, completeness improves by at least
+15%, and the trusted region improves rather than degrading. The raw model has
+no NaN/Inf outputs but 3.7218% negative disparity, so the raw nonnegative-output
+gate fails. The declared physical postprocess `clamp_min(0)` reduces negative
+rate to zero and slightly improves EPE to 0.150757 px, but honestly reports the
+same 3.7218% as zero/invalid rather than injecting epsilon; it does not change
+the completeness numerator. Both raw and postprocessed rows remain in the
+machine report. This is a conditional engineering PASS, not paper accuracy.
+Evidence: `reports/m4/stage_a_eval.json` and the hashed full metrics/CSV named
+there.
+
+The causal evaluator now enforces the complete validation accounting of 244
+manifest frames, 240 derived endpoints, and 238 evaluable T=3 windows. It
+audits the raw VGGT receipt/identity, video-disjoint holdout lineage, per-record
+derived linkage, and the exact Stage-A initialization SHA. T1/T3 temporal error
+uses the intersection of their HR visibility/static/collision/geometry-safe
+masks. A one-window smoke produced finite paired metrics but is explicitly
+`NON_HOLDOUT_SMOKE_PASS` because its one-step T3 checkpoint was trained on the
+same validation cache; its -4.14% number is not an acceptance result. Evidence:
+`reports/m4/stage_b_eval_smoke.json`.
+
 ## Tests
 
 ```text
 conda run -n env-tsr pytest -q
-........................................................................ [ 50%]
-......................................................................   [100%]
-158 passed
+........................................................................ [ 41%]
+........................................................................ [ 83%]
+............................                                             [100%]
+172 passed
 ```
 
 The current suite includes receipt/cache identity, manifest/crop/intrinsics,
 disparity scale, FFS hooks, VGGT preprocessing, baseline scale, robust depth
 alignment, camera convention, z-buffer identity/translation/collision/OOV,
-model shapes/anchor/recurrence, visualization, and empty-safe losses.
+model shapes/anchor/recurrence, strict temporal holdout/cache lineage,
+paired-domain TEPE, physical clamp reporting, visualization, and empty-safe
+losses.
 
 ## Current open work
 
 | Blocker | Required resolution |
 |---|---|
-| Stage-A training | real-cache dry-run and two optimizer steps pass; run the declared 5,000-step schedule from a committed source tree |
-| Formal accuracy evidence | no EPE/Bad-1/temporal acceptance claim exists until training/evaluation completes |
+| Stage-B training | initialize causal T=3 from the accepted Stage-A checkpoint and run the declared 15,000-step schedule |
+| Formal temporal evidence | no T3-vs-T1 TEPE acceptance claim exists until Stage-B training/evaluation completes |
+| Independent accuracy | current Stage-A metrics use same-family FFS pseudo-GT; add real GT or an independent benchmark before paper claims |
 
 ## Claim boundary
 

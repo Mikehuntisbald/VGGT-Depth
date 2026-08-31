@@ -493,7 +493,7 @@ def derive_geometry_manifest(
         if (
             raw_selected != len(all_entries)
             or raw_written + raw_reused != raw_selected
-            or raw_available < raw_selected
+            or raw_available != raw_selected
             or not isinstance(canonical_vggt_identity, Mapping)
         ):
             raise CacheMismatchError(

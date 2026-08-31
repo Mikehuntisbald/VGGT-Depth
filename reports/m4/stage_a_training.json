@@ -1,0 +1,26 @@
+{
+  "claim_policy": "This receipt proves completion, provenance, throughput, memory, and finite optimization only; accuracy is reported separately by eval.py.",
+  "component": "stage-a-training",
+  "config_fingerprint": "afbdae62b0296fd7aa72c7737590d22a8b534be9da05dddd2af2d62e738efd55",
+  "cuda_version": "12.8",
+  "device": "cuda",
+  "device_name": "NVIDIA GeForce RTX 5090",
+  "elapsed_seconds": 1357.935954177985,
+  "final_checkpoint": {
+    "path": "/home/haoyi/ffs_omega_tsr/outputs/ffs_omega_tsr_x2/stage_a/final.pt",
+    "sha256": "6bb7ff116236ea4bb86a010c03f14ba96fb69ac24fc0affdb01e7e561e90c254"
+  },
+  "git_hash": "3e0df0b543f5000d0bf8490740b5f34ad979e3b6",
+  "peak_cuda_allocated_bytes": 3414233600,
+  "peak_cuda_reserved_bytes": 3925868544,
+  "run_steps": 5000,
+  "source_run_summary_sha256": "bed6eb10e08d70953ddcf87df495d9813bb327904e3b1997252f097a696ec3a7",
+  "stage": "spatial",
+  "status": "TRAINING_COMPLETE",
+  "steps_per_second": 3.682058777968441,
+  "torch_version": "2.10.0+cu128",
+  "train_log": {
+    "records": 5000,
+    "sha256": "a482ea9cb575277e214af36f60c032f2feb62f470a8a661c95da234444c727e4"
+  }
+}

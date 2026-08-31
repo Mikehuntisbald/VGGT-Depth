@@ -13,8 +13,11 @@ temporal super-resolution head，将低分辨率 disparity 重建为高分辨率
   metric 化、完整质量门控并逐条 safe-zero 审计。
 - M3：实现与数值测试完成；temporal training 使用 HR forward splat +
   z-buffer，invalid pose 严格禁用。
-- M4/M5：T=1 与 T=3 训练/评测闭环已通过真实缓存 BF16 smoke；正式训练和
-  go/no-go 精度结论尚未完成。
+- M4：正式 T=1 训练 5,000 step 已完成；完整 validation pseudo-GT 工程门槛
+  （低置信 EPE、空洞完整率、trusted 区）通过。raw 负视差 3.72%，已单独报告
+  `clamp_min(0)` 物理后处理，不能把零值伪装为有效深度。
+- M5：T=3 训练/评测闭环已通过真实缓存 BF16 smoke；正式 15,000-step 训练与
+  TEPE 结论尚未完成。
 - M6：独立 HR epipolar refiner 已实现并通过 CUDA smoke，尚未接入正式训练。
 
 用户已要求持续按本文件顺序推进。不得把未运行的训练、精度或验收项标记为通过。

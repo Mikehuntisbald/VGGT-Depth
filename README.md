@@ -16,8 +16,9 @@ offline cache producers and are never optimized with the TSR model.
 ## Current status
 
 M0 is **PASS_WITH_FALLBACK**, M1 is **PASS**, and the M2 cache/geometry stage is
-complete as of 2026-09-01 (Asia/Shanghai). M3/M4 code is implemented and under
-training/evaluation; no accuracy gate is claimed yet.
+complete as of 2026-09-01 (Asia/Shanghai). M3 geometry is tested and the formal
+M4 Stage-A spatial run has a conditional engineering PASS against pseudo-GT;
+Stage-B temporal training/evaluation is next.
 
 - Three isolated cu128 environments pass RTX 5090/SM120 FP16 and BF16 CUDA
   checks; both upstream repositories are clean pinned submodules.
@@ -43,6 +44,12 @@ training/evaluation; no accuracy gate is claimed yet.
 - A separate 69,905-parameter HR local epipolar refiner is implemented and
   CUDA-tested, but is not enabled until the spatial and temporal stages are
   evaluated.
+- Formal Stage-A completed 5,000 steps at 3.682 step/s. On all 244 held-out
+  frames at full 800×1280 resolution, low-confidence EPE improves 11.996%,
+  invalid-region completeness improves 725.3%, and trusted-region EPE improves
+  4.269%. Raw disparity still has 3.722% negatives; the explicitly reported
+  `clamp_min(0)` deployment row removes negatives without inventing positive
+  epsilon depth, leaving those pixels honestly zero/invalid.
 
 The M0 fallback remains historical and confined to the separate NGC interface
 probe; it is not used by M1 caches. See [`REPORT.md`](REPORT.md) for exact

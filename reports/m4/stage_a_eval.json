@@ -1,0 +1,70 @@
+{
+  "claim_policy": "Trusted HR FFS pseudo-GT engineering validation only; this is not paper accuracy or independent ground truth.",
+  "component": "stage-a-evaluation-summary",
+  "checkpoint": {
+    "git_hash": "3e0df0b543f5000d0bf8490740b5f34ad979e3b6",
+    "sha256": "6bb7ff116236ea4bb86a010c03f14ba96fb69ac24fc0affdb01e7e561e90c254",
+    "step": 5000
+  },
+  "fixed_384x768": {
+    "metrics_csv_sha256": "fe3733b5a1a8772621f1992e71e0afcbbd2c051e2f74a1780f3de77b67799a93",
+    "metrics_json_sha256": "3de5c4398ecca6fcd2d1177520f78d28bafa674ea525dd190caeadff7c6f7f77",
+    "records": 244,
+    "t1_clamp0_vs_bilinear_clamp0": {
+      "invalid_region_completeness_relative_percent": 550.5567797508926,
+      "low_confidence_epe_relative_percent": -12.39769506179453,
+      "trusted_region_epe_relative_percent": -4.690670339914007
+    },
+    "t1_raw": {
+      "bad_1": 0.010299906748963033,
+      "bad_2": 0.0038467173443064297,
+      "boundary_epe_hr_px": 0.9577105984541394,
+      "epe_hr_px": 0.16196744615160452,
+      "invalid_rate": 0.030179188768286087,
+      "negative_rate": 0.030179188768286087
+    },
+    "t1_raw_vs_bilinear": {
+      "invalid_region_completeness_relative_percent": 550.5567797508926,
+      "low_confidence_epe_relative_percent": -12.409500759472062,
+      "trusted_region_epe_relative_percent": -4.537430733067737
+    }
+  },
+  "full_800x1280": {
+    "metrics_csv_sha256": "b1ef4f8543ebbdb152566e7663c95c02427b4edb8dde4587c5138648c7607df0",
+    "metrics_json_sha256": "3178a317d017da6aed8ff8aec5b0d1d088a5cd57e8d034ca3f124593289cf570",
+    "records": 244,
+    "t1_clamp0": {
+      "epe_hr_px": 0.15075680949564563,
+      "invalid_rate": 0.03721759333376025,
+      "negative_rate": 0.0,
+      "zero_rate": 0.03721759333376025
+    },
+    "t1_clamp0_vs_bilinear_clamp0": {
+      "invalid_region_completeness_relative_percent": 725.3082677069872,
+      "low_confidence_epe_relative_percent": -12.533634129686915,
+      "trusted_region_epe_relative_percent": -4.538938657549429
+    },
+    "t1_raw": {
+      "bad_1": 0.00932992134537869,
+      "bad_2": 0.003270823841015257,
+      "boundary_epe_hr_px": 0.8661393396106641,
+      "epe_hr_px": 0.1520003204960715,
+      "invalid_rate": 0.03721759333376025,
+      "negative_rate": 0.03721758132684426
+    },
+    "t1_raw_vs_bilinear": {
+      "invalid_region_completeness_relative_percent": 725.3082677069872,
+      "low_confidence_epe_relative_percent": -11.996175508318492,
+      "trusted_region_epe_relative_percent": -4.269369417600531
+    }
+  },
+  "go_no_go": {
+    "hole_completeness_at_least_15_percent": true,
+    "low_confidence_epe_at_least_10_percent": true,
+    "nan_rate_below_0_5_percent": true,
+    "negative_rate_below_0_5_percent_after_declared_clamp0": true,
+    "raw_negative_rate_below_0_5_percent": false,
+    "trusted_region_degradation_at_most_2_percent": true
+  },
+  "postprocess_semantics": "clamp_min(0) only; zeros remain invalid and completeness is unchanged, so no epsilon fill is used"
+}

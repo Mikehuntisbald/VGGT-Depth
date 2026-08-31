@@ -1,0 +1,77 @@
+{
+  "schema_version": 1,
+  "status": "NON_HOLDOUT_SMOKE_PASS",
+  "stage": "T3_CAUSAL_STAGE_B",
+  "purpose": "one-window causal evaluation pipeline and lineage closure only",
+  "acceptance_eligible": false,
+  "non_acceptance_reasons": [
+    "the Stage-B smoke checkpoint was trained from the same validation manifest/cache",
+    "only one of 238 evaluable validation windows was scored",
+    "the target is trusted HR FFS teacher pseudo-GT, not paper ground truth",
+    "the checkpoint has one temporal optimizer step and is not the formal Stage-B model"
+  ],
+  "baseline_provenance_commit": "3e0df0b543f5000d0bf8490740b5f34ad979e3b6",
+  "selection": {
+    "manifest_records": 244,
+    "derived_endpoint_records": 240,
+    "evaluable_t3_windows": 238,
+    "start_window": 23,
+    "evaluated_windows": 1,
+    "endpoint_pose_valid": 1,
+    "endpoint_static_prior_valid": 1,
+    "future_frames": false,
+    "shared_fixed_crop": true,
+    "scored_time_index": 2
+  },
+  "checkpoints": {
+    "spatial": {
+      "path": "/tmp/ffs_omega_tsr_stage_a_smoke.LAb6XG/final.pt",
+      "sha256": "2e5e061e263b137f7e0923860473f513244b2c6bb0299b6268f0d549492477f8",
+      "step": 2
+    },
+    "temporal": {
+      "path": "/tmp/ffs_omega_tsr_stage_b_smoke.Isxf9q/final.pt",
+      "sha256": "23c3b03f6a4414ecfbf236a20fe3ae7278687bdc6c06d9751248e417f10807d0",
+      "step": 1,
+      "initialization_sha256_matches_spatial": true
+    }
+  },
+  "cache_receipts": {
+    "derived_run_receipt_sha256": "a45dbd40b37e9a3e4a20ac49ea21db2b5df97cde6514b874ad8216f09c22ea40",
+    "derived_cache_manifest_sha256": "f9e34fa730e43013aa7b1e19b57b132bc929f9b6ffe72c4d7796cd67fa1cd594",
+    "raw_vggt_cache_manifest_sha256": "12e6d39c765d377699595a560c3f85f1d29e04cb53243198e350539900a3a0d3",
+    "audited_per_record_raw_lineage_count": 240
+  },
+  "temporal_metric_smoke": {
+    "domain": "paired intersection of T1 and T3 strict HR z-buffer safe masks",
+    "count_each": 191866,
+    "t1_epe_hr_px": 0.8483623306853166,
+    "t3_epe_hr_px": 0.8132353581126615,
+    "relative_change_percent": -4.1405625052068515,
+    "claim": "diagnostic only; not an acceptance result"
+  },
+  "output_variants": {
+    "raw_retained": true,
+    "physical_variant": "clamp_min(0)",
+    "epsilon_fill": false,
+    "zero_remains_invalid": true,
+    "raw_and_physical_rows_reported_separately": true
+  },
+  "artifacts": {
+    "metrics_json": {
+      "path": "/tmp/ffs_omega_tsr_stage_b_eval_smoke_valid_pose/metrics.json",
+      "sha256": "be6172874f2244d4942f4606978f1d1c6b04e5804e07ed158ab41ef22890db62"
+    },
+    "metrics_csv": {
+      "path": "/tmp/ffs_omega_tsr_stage_b_eval_smoke_valid_pose/metrics.csv",
+      "sha256": "dd5d4fb88d2587d77ddd6b302dcc9e11ebd701c586dd1287589728d8cc8fe74b"
+    },
+    "visualization_samples": 1
+  },
+  "verification": {
+    "focused_tests": "20 passed",
+    "full_tests": "171 passed",
+    "compileall": "PASS",
+    "diff_check": "PASS"
+  }
+}

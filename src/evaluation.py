@@ -1,9 +1,9 @@
-"""Stage-A evaluation primitives with aggregation-safe metric accounting.
+"""Spatial and causal evaluation primitives with safe metric aggregation.
 
-This module deliberately evaluates only the spatial ``T=1`` model.  The
-reference target is the trusted subset of an HR FFS teacher cache, so results
-produced here are pseudo-GT engineering measurements rather than paper
-accuracy.  All disparities passed to this module are expressed in HR pixels.
+The reference target is the trusted subset of an HR FFS teacher cache, so
+results are pseudo-GT engineering measurements rather than paper accuracy.
+Stage-B helpers enforce endpoint-only causal T=3 lineage and HR z-buffer
+temporal domains. All disparities passed here are expressed in HR pixels.
 """
 
 from __future__ import annotations
@@ -25,6 +25,8 @@ from metrics.disparity import (
     invalid_region_completeness,
     low_confidence_region_epe,
 )
+from metrics.temporal import temporal_disparity_error
+from data.cache_dataset import sha256_file
 from utils.checkpoint import CHECKPOINT_SCHEMA_VERSION, CheckpointMismatchError
 
 
@@ -33,6 +35,18 @@ POINT_TO_PLANE_NOT_AVAILABLE = {
     "status": "NOT_AVAILABLE",
     "reason": "target point normals and explicit correspondences are unavailable",
 }
+
+
+def physical_disparity_clamp_min_zero(disparity_hr_px: Tensor) -> Tensor:
+    """Map finite negative disparity to zero without filling invalid holes.
+
+    NaN and infinities retain their IEEE semantics. Zero remains an invalid
+    disparity in completeness/output-validity metrics; no epsilon is added.
+    """
+
+    if not isinstance(disparity_hr_px, Tensor) or not disparity_hr_px.is_floating_point():
+        raise TypeError("disparity_hr_px must be a floating-point torch.Tensor")
+    return disparity_hr_px.clamp_min(0.0)
 
 
 @dataclass(frozen=True, slots=True)
@@ -186,7 +200,7 @@ def compute_sample_metrics(
     boundary_gradient_threshold_px: float = 1.0,
     boundary_radius_px: int = 1,
 ) -> dict[str, MetricResult]:
-    """Compute one method's Stage-A metrics on explicit HR-grid domains."""
+    """Compute one endpoint's spatial metrics on explicit HR-grid domains."""
 
     if prediction_disparity_hr_px.shape != target_disparity_hr_px.shape:
         raise ValueError("prediction and target disparity shapes must match")
@@ -254,36 +268,50 @@ def compute_sample_metrics(
     }
 
 
+def aggregate_metric_change(
+    baseline: Mapping[str, AggregateMetric],
+    candidate: Mapping[str, AggregateMetric],
+    metric_name: str,
+) -> dict[str, Any]:
+    """Compare one metric after global numerator/count aggregation."""
+
+    base = baseline[metric_name]
+    cand = candidate[metric_name]
+    valid = base.valid and cand.valid
+    absolute = cand.value - base.value if valid else None  # type: ignore[operator]
+    relative_valid = valid and base.value is not None and base.value != 0.0
+    relative = (
+        100.0 * absolute / base.value  # type: ignore[operator]
+        if relative_valid and absolute is not None
+        else None
+    )
+    return {
+        "metric": metric_name,
+        "baseline": base.to_dict(),
+        "candidate": cand.to_dict(),
+        "absolute_change": absolute,
+        "relative_change_percent": relative,
+        "valid": valid,
+        "relative_valid": relative_valid,
+    }
+
+
 def comparison_from_aggregates(
     baseline: Mapping[str, AggregateMetric],
     candidate: Mapping[str, AggregateMetric],
 ) -> dict[str, Any]:
-    """Compute aggregate-only Stage-A go/no-go comparison values."""
-
-    def change(metric_name: str) -> dict[str, Any]:
-        base = baseline[metric_name]
-        cand = candidate[metric_name]
-        valid = base.valid and cand.valid
-        absolute = cand.value - base.value if valid else None  # type: ignore[operator]
-        relative_valid = valid and base.value is not None and base.value != 0.0
-        relative = (
-            100.0 * absolute / base.value  # type: ignore[operator]
-            if relative_valid and absolute is not None
-            else None
-        )
-        return {
-            "baseline": base.to_dict(),
-            "candidate": cand.to_dict(),
-            "absolute_change": absolute,
-            "relative_change_percent": relative,
-            "valid": valid,
-            "relative_valid": relative_valid,
-        }
+    """Compute aggregate-only spatial go/no-go comparison values."""
 
     return {
-        "trusted_region_degradation": change("trusted_region_epe_px"),
-        "low_confidence_epe_change": change("low_confidence_epe_px"),
-        "invalid_region_completeness_change": change(
+        "trusted_region_degradation": aggregate_metric_change(
+            baseline, candidate, "trusted_region_epe_px"
+        ),
+        "low_confidence_epe_change": aggregate_metric_change(
+            baseline, candidate, "low_confidence_epe_px"
+        ),
+        "invalid_region_completeness_change": aggregate_metric_change(
+            baseline,
+            candidate,
             "invalid_region_completeness"
         ),
     }
@@ -294,8 +322,9 @@ def load_model_for_evaluation(
     model: nn.Module,
     *,
     expected_parameter_count: int,
+    require_full_training_state: bool = False,
 ) -> dict[str, Any]:
-    """Strictly load the model member of a local Stage-A training checkpoint.
+    """Strictly load the model member of a local training checkpoint.
 
     The training resume loader also requires an optimizer and scheduler, which
     evaluation intentionally does not create.  This loader applies the same
@@ -316,11 +345,26 @@ def load_model_for_evaluation(
     for key in ("model", "parameter_count", "step", "config", "git_hash"):
         if key not in payload:
             raise CheckpointMismatchError(f"checkpoint field is missing: {key}")
+    if require_full_training_state:
+        required_training_fields = {"optimizer", "scheduler", "scaler", "rng_states"}
+        missing_training_fields = sorted(required_training_fields.difference(payload))
+        if missing_training_fields:
+            raise CheckpointMismatchError(
+                "formal training checkpoint fields are missing: "
+                f"{missing_training_fields}"
+            )
     if payload["parameter_count"] != expected_parameter_count:
         raise CheckpointMismatchError(
             "model parameter count mismatch: expected "
             f"{expected_parameter_count}, got {payload['parameter_count']}"
         )
+    completed_step = payload["step"]
+    if (
+        isinstance(completed_step, bool)
+        or not isinstance(completed_step, int)
+        or completed_step < 0
+    ):
+        raise CheckpointMismatchError("checkpoint step is malformed")
     try:
         model.load_state_dict(payload["model"], strict=True)
     except (TypeError, RuntimeError) as exc:
@@ -329,11 +373,432 @@ def load_model_for_evaluation(
         ) from exc
     return {
         "path": str(path),
-        "step": int(payload["step"]),
+        "checkpoint_sha256": sha256_file(path),
+        "step": completed_step,
         "parameter_count": int(payload["parameter_count"]),
         "git_hash": str(payload["git_hash"]),
         "training_config": payload["config"],
     }
+
+
+def _required_mapping(value: object, name: str) -> Mapping[str, Any]:
+    if not isinstance(value, Mapping):
+        raise CheckpointMismatchError(f"{name} is missing or malformed")
+    return value
+
+
+def _identity_mapping(value: object, name: str) -> dict[str, Any]:
+    mapping = _required_mapping(value, name)
+    fields = {
+        "component",
+        "upstream_commit",
+        "checkpoint_sha256",
+        "torch_version",
+        "cuda_version",
+        "config_sha256",
+    }
+    if set(mapping) != fields:
+        raise CheckpointMismatchError(
+            f"{name} fields must be exactly {sorted(fields)}, got {sorted(mapping)}"
+        )
+    return dict(mapping)
+
+
+def validate_checkpoint_lineage(
+    checkpoint_metadata: Mapping[str, Any],
+    *,
+    required_stage: str,
+    observation_cache_identity: Mapping[str, Any],
+    teacher_cache_identity: Mapping[str, Any],
+    derived_cache_lineage: Mapping[str, Any] | None = None,
+    evaluation_config: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Validate checkpoint stage and cache compatibility for evaluation.
+
+    Train and validation manifests are intentionally disjoint, so a temporal
+    checkpoint's derived-cache receipt hash must *not* equal the validation
+    receipt.  Compatibility instead requires the exact frozen FFS identities
+    and the exact derived-geometry policy/configuration to match.
+    """
+
+    if required_stage not in {"spatial", "temporal"}:
+        raise ValueError("required_stage must be spatial or temporal")
+    config = _required_mapping(
+        checkpoint_metadata.get("training_config"), "checkpoint training config"
+    )
+    data = _required_mapping(config.get("data"), "checkpoint data config")
+    train = _required_mapping(config.get("train"), "checkpoint train config")
+    model = _required_mapping(config.get("model"), "checkpoint model config")
+    vggt = _required_mapping(config.get("vggt"), "checkpoint VGGT config")
+    expected_sequence_length = 1 if required_stage == "spatial" else 3
+    if data.get("sequence_length") != expected_sequence_length:
+        raise CheckpointMismatchError(
+            f"{required_stage} checkpoint must have sequence_length="
+            f"{expected_sequence_length}, got {data.get('sequence_length')!r}"
+        )
+    if str(train.get("stage", "spatial")).lower() != required_stage:
+        raise CheckpointMismatchError(
+            f"checkpoint train.stage is not {required_stage!r}: "
+            f"{train.get('stage')!r}"
+        )
+    saved_observation = _identity_mapping(
+        data.get("observation_cache_identity"),
+        "checkpoint observation cache identity",
+    )
+    saved_teacher = _identity_mapping(
+        data.get("teacher_cache_identity"), "checkpoint teacher cache identity"
+    )
+    current_observation = _identity_mapping(
+        observation_cache_identity, "evaluation observation cache identity"
+    )
+    current_teacher = _identity_mapping(
+        teacher_cache_identity, "evaluation teacher cache identity"
+    )
+    if saved_observation != current_observation:
+        raise CheckpointMismatchError(
+            "evaluation observation cache identity differs from checkpoint lineage"
+        )
+    if saved_teacher != current_teacher:
+        raise CheckpointMismatchError(
+            "evaluation teacher cache identity differs from checkpoint lineage"
+        )
+
+    result: dict[str, Any] = {
+        "stage": required_stage,
+        "source_sequence_length": expected_sequence_length,
+        "observation_cache_identity": saved_observation,
+        "teacher_cache_identity": saved_teacher,
+    }
+    if required_stage == "spatial":
+        if bool(model.get("use_history", False)) or bool(
+            model.get("use_vggt_pose", False)
+        ):
+            raise CheckpointMismatchError(
+                "spatial checkpoint unexpectedly enables temporal history/pose"
+            )
+        return result
+
+    if data.get("vggt_context_pairs") != 5:
+        raise CheckpointMismatchError("temporal checkpoint must use five VGGT pairs")
+    if not bool(vggt.get("causal")):
+        raise CheckpointMismatchError("temporal checkpoint is not causal")
+    if not bool(model.get("use_history")) or not bool(model.get("use_vggt_pose")):
+        raise CheckpointMismatchError(
+            "temporal checkpoint must enable history and VGGT pose"
+        )
+    if bool(model.get("epipolar_refinement")):
+        raise CheckpointMismatchError(
+            "Stage-B checkpoint must not enable Stage-C epipolar refinement"
+        )
+    if str(train.get("init_from_stage", "")).lower() != "spatial":
+        raise CheckpointMismatchError(
+            "temporal checkpoint is not initialized from the spatial stage"
+        )
+    if train.get("history_detach") is not True:
+        raise CheckpointMismatchError(
+            "temporal checkpoint does not use detached prediction history"
+        )
+    initialization_path = train.get("initialization_checkpoint")
+    initialization_sha256 = train.get("initialization_checkpoint_sha256")
+    if not isinstance(initialization_path, str) or not initialization_path:
+        raise CheckpointMismatchError(
+            "temporal checkpoint has no Stage-A initialization path"
+        )
+    if (
+        not isinstance(initialization_sha256, str)
+        or len(initialization_sha256) != 64
+        or any(character not in "0123456789abcdef" for character in initialization_sha256)
+    ):
+        raise CheckpointMismatchError(
+            "temporal checkpoint has no valid Stage-A initialization SHA-256"
+        )
+    saved_derived = _required_mapping(
+        data.get("derived_cache_lineage"), "checkpoint derived-cache lineage"
+    )
+    current_derived = _required_mapping(
+        derived_cache_lineage, "evaluation derived-cache lineage"
+    )
+    if saved_derived.get("component") != "vggt-ffs-derived-geometry-batch":
+        raise CheckpointMismatchError(
+            "checkpoint derived-cache component is incompatible"
+        )
+    if current_derived.get("component") != saved_derived.get("component"):
+        raise CheckpointMismatchError(
+            "evaluation derived-cache component differs from checkpoint lineage"
+        )
+    saved_policy = _required_mapping(
+        saved_derived.get("config"), "checkpoint derived-cache policy"
+    )
+    current_policy = _required_mapping(
+        current_derived.get("config"), "evaluation derived-cache policy"
+    )
+    if dict(saved_policy) != dict(current_policy):
+        raise CheckpointMismatchError(
+            "evaluation derived-geometry policy differs from checkpoint lineage"
+        )
+    active_inference_fields = {
+        "data.scale": (data, "scale"),
+        "data.sequence_length": (data, "sequence_length"),
+        "data.vggt_context_pairs": (data, "vggt_context_pairs"),
+        "model.rgb_channels": (model, "rgb_channels"),
+        "model.geometry_channels": (model, "geometry_channels"),
+        "model.hidden_dim": (model, "hidden_dim"),
+        "model.gru_layers": (model, "gru_layers"),
+        "model.residual_limit_hr_px": (model, "residual_limit_hr_px"),
+        "model.convex_scale": (model, "convex_scale"),
+        "model.use_history": (model, "use_history"),
+        "model.use_vggt_pose": (model, "use_vggt_pose"),
+        "vggt.causal": (vggt, "causal"),
+        "train.history_detach": (train, "history_detach"),
+        "train.photometric_temperature": (train, "photometric_temperature"),
+        "train.disparity_temperature_hr_px": (
+            train,
+            "disparity_temperature_hr_px",
+        ),
+        "train.history_conflict_hr_px": (train, "history_conflict_hr_px"),
+        "train.temporal_photometric_threshold": (
+            train,
+            "temporal_photometric_threshold",
+        ),
+        "train.temporal_geometry_threshold_hr_px": (
+            train,
+            "temporal_geometry_threshold_hr_px",
+        ),
+    }
+    if evaluation_config is None:
+        raise CheckpointMismatchError(
+            "temporal lineage validation requires the resolved evaluation config"
+        )
+    current_config = _required_mapping(
+        evaluation_config, "resolved evaluation config"
+    )
+    for dotted_name, (saved_section, field_name) in active_inference_fields.items():
+        section_name, _ = dotted_name.split(".", maxsplit=1)
+        current_section = _required_mapping(
+            current_config.get(section_name),
+            f"evaluation {section_name} config",
+        )
+        saved_value = saved_section.get(field_name)
+        current_value = current_section.get(field_name)
+        if saved_value != current_value:
+            raise CheckpointMismatchError(
+                f"inference config mismatch for {dotted_name}: checkpoint "
+                f"{saved_value!r}, evaluation {current_value!r}"
+            )
+    result.update(
+        {
+            "derived_geometry_policy": dict(saved_policy),
+            "stage_a_initialization_path": initialization_path,
+            "stage_a_initialization_sha256": initialization_sha256,
+        }
+    )
+    return result
+
+
+def validate_spatial_checkpoint_binding(
+    spatial_checkpoint_metadata: Mapping[str, Any],
+    temporal_checkpoint_lineage: Mapping[str, Any],
+) -> None:
+    """Require the T1 evaluator to use the exact Stage-A initialization."""
+
+    expected = temporal_checkpoint_lineage.get("stage_a_initialization_sha256")
+    actual = spatial_checkpoint_metadata.get("checkpoint_sha256")
+    if not isinstance(expected, str) or actual != expected:
+        raise CheckpointMismatchError(
+            "T1 spatial checkpoint SHA-256 does not match the temporal "
+            "checkpoint's Stage-A initialization lineage"
+        )
+
+
+def validate_temporal_batch_causality(batch: Mapping[str, Any]) -> dict[str, int]:
+    """Defense-in-depth checks for three endpoint-derived causal frames.
+
+    The dataset already performs these validations while loading each record.
+    Evaluation repeats the cheap metadata checks before moving a batch to the
+    accelerator, making accidental future-frame or mixed-crop evaluation an
+    explicit failure rather than an undocumented metric change.
+    """
+
+    frame_ids = batch.get("frame_ids")
+    timestamps = batch.get("timestamps")
+    manifest_indices = batch.get("manifest_indices")
+    metadata = batch.get("identity_metadata")
+    pose_valid = batch.get("temporal_pose_valid_sequence")
+    prior_valid = batch.get("static_prior_valid_sequence")
+    if not all(
+        isinstance(value, Tensor)
+        for value in (frame_ids, timestamps, manifest_indices, pose_valid, prior_valid)
+    ):
+        raise ValueError("temporal batch causal tensors are missing")
+    if frame_ids.ndim != 2 or frame_ids.shape[1] != 3:
+        raise ValueError("temporal frame_ids must have shape [B,3]")
+    expected_shape = frame_ids.shape
+    for name, value in (
+        ("timestamps", timestamps),
+        ("manifest_indices", manifest_indices),
+        ("temporal_pose_valid_sequence", pose_valid),
+        ("static_prior_valid_sequence", prior_valid),
+    ):
+        if value.shape != expected_shape:
+            raise ValueError(f"{name} must have shape {tuple(expected_shape)}")
+    if not bool((timestamps[:, 1:] > timestamps[:, :-1]).all().item()):
+        raise ValueError("temporal batch contains non-increasing/future timestamps")
+    if not bool(torch.isfinite(timestamps).all().item()):
+        raise ValueError("temporal batch timestamps must be finite")
+    if not bool((frame_ids[:, 1:] > frame_ids[:, :-1]).all().item()):
+        raise ValueError("temporal frame IDs must be strictly increasing")
+    if not bool((manifest_indices[:, 1:] > manifest_indices[:, :-1]).all().item()):
+        raise ValueError("temporal batch manifest indices are not causal")
+    if not isinstance(metadata, list) or len(metadata) != frame_ids.shape[0]:
+        raise ValueError("temporal identity_metadata does not match batch size")
+
+    for batch_index, item in enumerate(metadata):
+        if not isinstance(item, Mapping):
+            raise ValueError("temporal identity metadata item is malformed")
+        student_indices = item.get("student_manifest_indices")
+        vggt_indices = item.get("vggt_context_manifest_indices")
+        endpoint = item.get("endpoint_manifest_index")
+        expected_student = [int(value) for value in manifest_indices[batch_index].tolist()]
+        if student_indices != expected_student or endpoint != expected_student[-1]:
+            raise ValueError("student window metadata does not match batch endpoint")
+        if (
+            not isinstance(vggt_indices, list)
+            or len(vggt_indices) != 5
+            or vggt_indices[-1] != endpoint
+            or any(
+                isinstance(value, bool)
+                or not isinstance(value, int)
+                or value < 0
+                or value > endpoint
+                for value in vggt_indices
+            )
+            or any(
+                right <= left
+                for left, right in zip(vggt_indices, vggt_indices[1:])
+            )
+        ):
+            raise ValueError("VGGT metadata is not a five-pair causal context")
+        per_time_ffs = item.get("per_time_ffs")
+        per_time_derived = item.get("per_time_derived")
+        if not isinstance(per_time_ffs, list) or len(per_time_ffs) != 3:
+            raise ValueError("each temporal window needs three FFS endpoint records")
+        if not isinstance(per_time_derived, list) or len(per_time_derived) != 3:
+            raise ValueError("each temporal window needs three derived endpoint records")
+        shared_crop = item.get("crop_hr_px")
+        sequence_ids = batch.get("sequence_id")
+        if (
+            not isinstance(sequence_ids, list)
+            or len(sequence_ids) != frame_ids.shape[0]
+            or item.get("sequence_id") != sequence_ids[batch_index]
+        ):
+            raise ValueError("temporal window sequence metadata is inconsistent")
+        if (
+            not isinstance(shared_crop, Mapping)
+            or shared_crop.get("spatial_scale") != 2
+            or any(
+                not isinstance(shared_crop.get(name), int)
+                or int(shared_crop[name]) % 2
+                for name in ("x", "y", "width", "height")
+            )
+        ):
+            raise ValueError("temporal window crop is not a valid x2-aligned crop")
+        for time_index in range(3):
+            ffs_item = per_time_ffs[time_index]
+            derived_item = per_time_derived[time_index]
+            if not isinstance(ffs_item, Mapping) or not isinstance(
+                derived_item, Mapping
+            ):
+                raise ValueError("per-time causal lineage entry is malformed")
+            record = ffs_item.get("manifest_record")
+            if not isinstance(record, Mapping):
+                raise ValueError("per-time FFS manifest record is missing")
+            expected_frame_id = int(frame_ids[batch_index, time_index].item())
+            expected_timestamp = float(timestamps[batch_index, time_index].item())
+            if record.get("frame_id") != expected_frame_id or record.get(
+                "timestamp"
+            ) != expected_timestamp:
+                raise ValueError("per-time FFS record does not match causal frame")
+            if record.get("sequence_id") != sequence_ids[batch_index]:
+                raise ValueError("per-time FFS record crosses a sequence boundary")
+            if ffs_item.get("crop_hr_px") != shared_crop:
+                raise ValueError("T=3 frames do not share one fixed HR crop")
+            cache_path = derived_item.get("cache_path")
+            if not isinstance(cache_path, str) or Path(cache_path).stem != str(
+                expected_frame_id
+            ):
+                raise ValueError("derived geometry is not tied to its frame endpoint")
+            if not isinstance(derived_item.get("pose_valid"), bool) or bool(
+                derived_item["pose_valid"]
+            ) != bool(
+                pose_valid[batch_index, time_index].item()
+            ):
+                raise ValueError("derived pose validity differs from batch tensor")
+            if not isinstance(
+                derived_item.get("static_prior_valid"), bool
+            ) or bool(derived_item["static_prior_valid"]) != bool(
+                prior_valid[batch_index, time_index].item()
+            ):
+                raise ValueError("derived prior validity differs from batch tensor")
+    return {"batch_size": int(frame_ids.shape[0]), "frames_per_window": 3}
+
+
+def hr_temporal_safe_mask(
+    reference_disparity_hr_px: Tensor,
+    *,
+    visibility_mask_hr: Tensor,
+    static_mask_hr: Tensor,
+    collision_mask_hr: Tensor,
+    geometry_consistent_mask_hr: Tensor,
+    valid_history_hr: Tensor,
+) -> Tensor:
+    """Build the strict HR z-buffer visible/static evaluation domain."""
+
+    expected_shape = reference_disparity_hr_px.shape
+    for name, value in (
+        ("visibility_mask_hr", visibility_mask_hr),
+        ("static_mask_hr", static_mask_hr),
+        ("collision_mask_hr", collision_mask_hr),
+        ("geometry_consistent_mask_hr", geometry_consistent_mask_hr),
+        ("valid_history_hr", valid_history_hr),
+    ):
+        if value.shape != expected_shape:
+            raise ValueError(f"{name} must have shape {tuple(expected_shape)}")
+    return (
+        visibility_mask_hr.to(dtype=torch.bool)
+        & static_mask_hr.to(dtype=torch.bool)
+        & ~collision_mask_hr.to(dtype=torch.bool)
+        & geometry_consistent_mask_hr.to(dtype=torch.bool)
+        & valid_history_hr.to(dtype=torch.bool)
+    )
+
+
+def hr_temporal_metric(
+    current_disparity_hr_px: Tensor,
+    warped_history_disparity_hr_px: Tensor,
+    *,
+    visibility_mask_hr: Tensor,
+    static_mask_hr: Tensor,
+    collision_mask_hr: Tensor,
+    geometry_consistent_mask_hr: Tensor,
+    valid_history_hr: Tensor,
+) -> MetricResult:
+    """Temporal disparity error on the strict HR z-buffer safe domain."""
+
+    if warped_history_disparity_hr_px.shape != current_disparity_hr_px.shape:
+        raise ValueError("warped_history_disparity_hr_px shape mismatch")
+    safe_mask = hr_temporal_safe_mask(
+        current_disparity_hr_px,
+        visibility_mask_hr=visibility_mask_hr,
+        static_mask_hr=static_mask_hr,
+        collision_mask_hr=collision_mask_hr,
+        geometry_consistent_mask_hr=geometry_consistent_mask_hr,
+        valid_history_hr=valid_history_hr,
+    )
+    return temporal_disparity_error(
+        current_disparity_hr_px,
+        warped_history_disparity_hr_px,
+        safe_mask=safe_mask,
+    )
 
 
 __all__ = [
@@ -343,8 +808,15 @@ __all__ = [
     "POINT_TO_PLANE_NOT_AVAILABLE",
     "PSEUDO_GT_LABEL",
     "aggregate_metric_results",
+    "aggregate_metric_change",
     "comparison_from_aggregates",
     "compute_sample_metrics",
+    "hr_temporal_metric",
+    "hr_temporal_safe_mask",
     "load_model_for_evaluation",
+    "physical_disparity_clamp_min_zero",
     "upsample_ffs_inputs_to_hr",
+    "validate_checkpoint_lineage",
+    "validate_spatial_checkpoint_binding",
+    "validate_temporal_batch_causality",
 ]
