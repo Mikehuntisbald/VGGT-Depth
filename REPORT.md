@@ -343,9 +343,15 @@ in 1,357.94 seconds (3.6821 steps/s). Peak CUDA allocation/reservation was
 3,414,233,600 / 3,925,868,544 bytes. The final checkpoint SHA-256 is
 `6bb7ff116236ea4bb86a010c03f14ba96fb69ac24fc0affdb01e7e561e90c254`
 and it records Git commit `3e0df0b543f5000d0bf8490740b5f34ad979e3b6`.
-The log has exactly 5,000 finite optimizer records. Evidence:
-`reports/m4/stage_a_training.json` and the ignored reproducibility artifacts
-under `outputs/ffs_omega_tsr_x2/stage_a/`.
+The log has exactly 5,000 finite optimizer records. A separate read-only audit
+also verifies continuous steps from one, the exact cosine/warmup learning-rate
+schedule, finite model/optimizer/scheduler/RNG state, 1,619,882 parameter
+entries, final scheduler epoch 5,000 and zero terminal learning rate. The 1,589
+pre-clip gradient norms above 1.0 are retained as diagnostics; the trainer
+clips them and the auditor does not misclassify them as post-clip violations.
+Evidence: `reports/m4/stage_a_training.json`,
+`reports/m4/stage_a_training_audit.json`, and the ignored reproducibility
+artifacts under `outputs/ffs_omega_tsr_x2/stage_a/`.
 
 All 244 video-isolated validation frames were evaluated both at the fixed
 384×768 crop and at their full 800×1280 resolution. Against trusted HR FFS
@@ -386,10 +392,10 @@ same validation cache; its -4.14% number is not an acceptance result. Evidence:
 
 ```text
 conda run -n env-tsr pytest -q
-........................................................................ [ 41%]
-........................................................................ [ 83%]
-............................                                             [100%]
-172 passed
+........................................................................ [ 40%]
+........................................................................ [ 81%]
+.................................                                        [100%]
+177 passed
 ```
 
 The current suite includes receipt/cache identity, manifest/crop/intrinsics,
@@ -397,13 +403,15 @@ disparity scale, FFS hooks, VGGT preprocessing, baseline scale, robust depth
 alignment, camera convention, z-buffer identity/translation/collision/OOV,
 model shapes/anchor/recurrence, strict temporal holdout/cache lineage,
 paired-domain TEPE, physical clamp reporting, visualization, and empty-safe
-losses.
+losses. It also covers completed/in-progress training receipt distinction,
+strict JSON/log continuity, checkpoint finite-state validation, and exact
+learning-rate schedule auditing.
 
 ## Current open work
 
 | Blocker | Required resolution |
 |---|---|
-| Stage-B training | initialize causal T=3 from the accepted Stage-A checkpoint and run the declared 15,000-step schedule |
+| Stage-B training | the formal causal T=3 run is active on the declared 15,000-step schedule; completion receipt and final audit remain pending |
 | Formal temporal evidence | no T3-vs-T1 TEPE acceptance claim exists until Stage-B training/evaluation completes |
 | Independent accuracy | current Stage-A metrics use same-family FFS pseudo-GT; add real GT or an independent benchmark before paper claims |
 
@@ -413,7 +421,8 @@ M0 proves environment viability, exact source identity, real FFS inference,
 and real ten-image VGGT-Ω interface inference. M1 additionally proves the
 declared disparity-unit/cache contracts on the formal split. M2 proves metric
 baseline scaling, quality-gated priors/poses, and rejected-record zero safety;
-M3 proves numerical HR z-buffer conventions. The training smokes prove only
-execution and provenance plumbing. No current artifact proves the Stage-A or
-Stage-B go/no-go accuracy thresholds, steady-state formal throughput, point
+M3 proves numerical HR z-buffer conventions. The formal Stage-A artifacts prove
+its internal pseudo-GT engineering thresholds and completed-run throughput;
+training smokes prove only execution and provenance plumbing. No current
+artifact proves the Stage-B go/no-go threshold, independent-GT accuracy, point
 cloud accuracy, or paper-level performance.

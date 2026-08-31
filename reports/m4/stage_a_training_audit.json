@@ -1,0 +1,372 @@
+{
+  "checkpoint_lag_steps": 0,
+  "component": "training-run-audit",
+  "config_fingerprint": "afbdae62b0296fd7aa72c7737590d22a8b534be9da05dddd2af2d62e738efd55",
+  "configured_steps": 5000,
+  "files": {
+    "final_checkpoint": {
+      "byte_size": 19525419,
+      "config_fingerprint": "afbdae62b0296fd7aa72c7737590d22a8b534be9da05dddd2af2d62e738efd55",
+      "configured_steps": 5000,
+      "git_hash": "3e0df0b543f5000d0bf8490740b5f34ad979e3b6",
+      "model_state_numel": 1619882,
+      "optimizer_learning_rate": 0.0,
+      "parameter_count": 1619882,
+      "path": "/home/haoyi/ffs_omega_tsr/outputs/ffs_omega_tsr_x2/stage_a/final.pt",
+      "scheduler_last_epoch": 5000,
+      "schema_version": 1,
+      "sha256": "6bb7ff116236ea4bb86a010c03f14ba96fb69ac24fc0affdb01e7e561e90c254",
+      "stage": "spatial",
+      "step": 5000
+    },
+    "latest_checkpoint": {
+      "byte_size": 19525643,
+      "config_fingerprint": "afbdae62b0296fd7aa72c7737590d22a8b534be9da05dddd2af2d62e738efd55",
+      "configured_steps": 5000,
+      "git_hash": "3e0df0b543f5000d0bf8490740b5f34ad979e3b6",
+      "model_state_numel": 1619882,
+      "optimizer_learning_rate": 0.0,
+      "parameter_count": 1619882,
+      "path": "/home/haoyi/ffs_omega_tsr/outputs/ffs_omega_tsr_x2/stage_a/latest.pt",
+      "scheduler_last_epoch": 5000,
+      "schema_version": 1,
+      "sha256": "c05e060dd0e276785a3144778efc088d65ef0889e9ca7078c94192baab89291e",
+      "stage": "spatial",
+      "step": 5000
+    },
+    "run_summary": {
+      "byte_size": 730,
+      "path": "/home/haoyi/ffs_omega_tsr/outputs/ffs_omega_tsr_x2/stage_a/run_summary.json",
+      "sha256": "bed6eb10e08d70953ddcf87df495d9813bb327904e3b1997252f097a696ec3a7"
+    },
+    "train_log": {
+      "byte_size": 1959224,
+      "path": "/home/haoyi/ffs_omega_tsr/outputs/ffs_omega_tsr_x2/stage_a/train.jsonl",
+      "records": 5000,
+      "sha256": "a482ea9cb575277e214af36f60c032f2feb62f470a8a661c95da234444c727e4"
+    }
+  },
+  "git_hash": "3e0df0b543f5000d0bf8490740b5f34ad979e3b6",
+  "latest_checkpoint_step": 5000,
+  "logged_steps": 5000,
+  "output_dir": "/home/haoyi/ffs_omega_tsr/outputs/ffs_omega_tsr_x2/stage_a",
+  "parameter_count": 1619882,
+  "read_only": true,
+  "schema_version": 1,
+  "stage": "spatial",
+  "statistics": {
+    "gradient_norm_pre_clip": {
+      "above_configured_clip_count": 1589,
+      "configured_clip": 1.0,
+      "count": 5000,
+      "interpretation": "gradient_norm is measured before clipping; values above the clip are diagnostic, not audit failures",
+      "maximum": 96.89478302001953,
+      "mean": 1.0461790136516094,
+      "minimum": 0.11275894194841385,
+      "outlier_count": 144,
+      "outlier_lower_fence": -1.543359637260437,
+      "outlier_policy": "outside_q1_q3_plus_or_minus_3_iqr",
+      "outlier_upper_fence": 3.177138037979603,
+      "population_std": 1.9963812488737498,
+      "quantiles": {
+        "p01": 0.20679359406232833,
+        "p05": 0.28086766600608826,
+        "p25": 0.47971079498529434,
+        "p50": 0.7389772236347198,
+        "p75": 1.1540676057338715,
+        "p95": 2.292965173721314,
+        "p99": 6.546525206565868
+      },
+      "rolling": {
+        "first_mean": 0.5516366356611252,
+        "last_mean": 0.9059069481492042,
+        "last_minus_first": 0.35427031248807905,
+        "maximum_mean": 2.196381971538067,
+        "minimum_mean": 0.5516366356611252,
+        "window_count": 4901,
+        "window_size": 100
+      }
+    },
+    "loss": {
+      "disparity": {
+        "count": 5000,
+        "maximum": 13.724140167236328,
+        "mean": 0.23859955653250217,
+        "minimum": 0.09539952874183655,
+        "outlier_count": 257,
+        "outlier_lower_fence": -0.014121729880571365,
+        "outlier_policy": "outside_q1_q3_plus_or_minus_3_iqr",
+        "outlier_upper_fence": 0.3889172375202179,
+        "population_std": 0.42723816940694614,
+        "quantiles": {
+          "p01": 0.11470229752361775,
+          "p05": 0.13126571029424666,
+          "p25": 0.15860925614833832,
+          "p50": 0.18304328620433807,
+          "p75": 0.2161862514913082,
+          "p95": 0.3941038221120835,
+          "p99": 1.5921787989139562
+        },
+        "rolling": {
+          "first_mean": 0.28166997686028483,
+          "last_mean": 0.20792424581944943,
+          "last_minus_first": -0.0737457310408354,
+          "maximum_mean": 0.3683169808983803,
+          "minimum_mean": 0.174370104521513,
+          "window_count": 4901,
+          "window_size": 100
+        }
+      },
+      "epipolar": {
+        "count": 5000,
+        "maximum": 0.0,
+        "mean": 0.0,
+        "minimum": 0.0,
+        "outlier_count": 0,
+        "outlier_lower_fence": 0.0,
+        "outlier_policy": "outside_q1_q3_plus_or_minus_3_iqr",
+        "outlier_upper_fence": 0.0,
+        "population_std": 0.0,
+        "quantiles": {
+          "p01": 0.0,
+          "p05": 0.0,
+          "p25": 0.0,
+          "p50": 0.0,
+          "p75": 0.0,
+          "p95": 0.0,
+          "p99": 0.0
+        },
+        "rolling": {
+          "first_mean": 0.0,
+          "last_mean": 0.0,
+          "last_minus_first": 0.0,
+          "maximum_mean": 0.0,
+          "minimum_mean": 0.0,
+          "window_count": 4901,
+          "window_size": 100
+        }
+      },
+      "gate_regularizer": {
+        "count": 5000,
+        "maximum": 0.0,
+        "mean": 0.0,
+        "minimum": 0.0,
+        "outlier_count": 0,
+        "outlier_lower_fence": 0.0,
+        "outlier_policy": "outside_q1_q3_plus_or_minus_3_iqr",
+        "outlier_upper_fence": 0.0,
+        "population_std": 0.0,
+        "quantiles": {
+          "p01": 0.0,
+          "p05": 0.0,
+          "p25": 0.0,
+          "p50": 0.0,
+          "p75": 0.0,
+          "p95": 0.0,
+          "p99": 0.0
+        },
+        "rolling": {
+          "first_mean": 0.0,
+          "last_mean": 0.0,
+          "last_minus_first": 0.0,
+          "maximum_mean": 0.0,
+          "minimum_mean": 0.0,
+          "window_count": 4901,
+          "window_size": 100
+        }
+      },
+      "gradient": {
+        "count": 5000,
+        "maximum": 0.3324214220046997,
+        "mean": 0.04630656023696065,
+        "minimum": 0.018349913880228996,
+        "outlier_count": 58,
+        "outlier_lower_fence": -0.023176416754722595,
+        "outlier_policy": "outside_q1_q3_plus_or_minus_3_iqr",
+        "outlier_upper_fence": 0.11041021440178156,
+        "population_std": 0.018935749323629243,
+        "quantiles": {
+          "p01": 0.02315276090055704,
+          "p05": 0.02686538910493255,
+          "p25": 0.0340749965980649,
+          "p50": 0.0420474112033844,
+          "p75": 0.053158801048994064,
+          "p95": 0.07999694645404819,
+          "p99": 0.11374941892921926
+        },
+        "rolling": {
+          "first_mean": 0.07434928689152003,
+          "last_mean": 0.04130071509629488,
+          "last_minus_first": -0.03304857179522515,
+          "maximum_mean": 0.07434928689152003,
+          "minimum_mean": 0.039290948491543534,
+          "window_count": 4901,
+          "window_size": 100
+        }
+      },
+      "measurement": {
+        "count": 5000,
+        "maximum": 0.10573546588420868,
+        "mean": 0.011493455065600573,
+        "minimum": 0.002813672414049506,
+        "outlier_count": 23,
+        "outlier_lower_fence": -0.004605863243341446,
+        "outlier_policy": "outside_q1_q3_plus_or_minus_3_iqr",
+        "outlier_upper_fence": 0.026945393066853285,
+        "population_std": 0.004076496144319245,
+        "quantiles": {
+          "p01": 0.005173098458908498,
+          "p05": 0.006453072582371533,
+          "p25": 0.00891610374674201,
+          "p50": 0.010911747347563505,
+          "p75": 0.013423426076769829,
+          "p95": 0.01812531976029277,
+          "p99": 0.02271797560155392
+        },
+        "rolling": {
+          "first_mean": 0.009140871446579695,
+          "last_mean": 0.013089958447962999,
+          "last_minus_first": 0.003949087001383304,
+          "maximum_mean": 0.014678293177857994,
+          "minimum_mean": 0.0076925516477786005,
+          "window_count": 4901,
+          "window_size": 100
+        }
+      },
+      "temporal": {
+        "count": 5000,
+        "maximum": 0.0,
+        "mean": 0.0,
+        "minimum": 0.0,
+        "outlier_count": 0,
+        "outlier_lower_fence": 0.0,
+        "outlier_policy": "outside_q1_q3_plus_or_minus_3_iqr",
+        "outlier_upper_fence": 0.0,
+        "population_std": 0.0,
+        "quantiles": {
+          "p01": 0.0,
+          "p05": 0.0,
+          "p25": 0.0,
+          "p50": 0.0,
+          "p75": 0.0,
+          "p95": 0.0,
+          "p99": 0.0
+        },
+        "rolling": {
+          "first_mean": 0.0,
+          "last_mean": 0.0,
+          "last_minus_first": 0.0,
+          "maximum_mean": 0.0,
+          "minimum_mean": 0.0,
+          "window_count": 4901,
+          "window_size": 100
+        }
+      },
+      "total": {
+        "count": 5000,
+        "maximum": 13.851736068725586,
+        "mean": 0.24301613898128271,
+        "minimum": 0.08391615748405457,
+        "outlier_count": 238,
+        "outlier_lower_fence": -0.03439803048968315,
+        "outlier_policy": "outside_q1_q3_plus_or_minus_3_iqr",
+        "outlier_upper_fence": 0.417199082672596,
+        "population_std": 0.43197220144427295,
+        "quantiles": {
+          "p01": 0.10745056964457035,
+          "p05": 0.1270361863076687,
+          "p25": 0.1591435894370079,
+          "p50": 0.18683818727731705,
+          "p75": 0.22365746274590492,
+          "p95": 0.4092184066772461,
+          "p99": 1.602605589628222
+        },
+        "rolling": {
+          "first_mean": 0.30356142193078994,
+          "last_mean": 0.20970990531146527,
+          "last_minus_first": -0.09385151661932467,
+          "maximum_mean": 0.38022221118211746,
+          "minimum_mean": 0.17629628375172615,
+          "window_count": 4901,
+          "window_size": 100
+        }
+      },
+      "uncertainty_nll": {
+        "count": 5000,
+        "maximum": 14.699689865112305,
+        "mean": -1.059145741823502,
+        "minimum": -2.6626367568969727,
+        "outlier_count": 33,
+        "outlier_lower_fence": -2.9376654475927353,
+        "outlier_policy": "outside_q1_q3_plus_or_minus_3_iqr",
+        "outlier_upper_fence": 0.7216540575027466,
+        "population_std": 0.6036948335264198,
+        "quantiles": {
+          "p01": -2.0385044288635252,
+          "p05": -1.7723594367504119,
+          "p25": -1.3693856596946716,
+          "p50": -1.1024780869483948,
+          "p75": -0.8466257303953171,
+          "p95": -0.11844190657138809,
+          "p99": 0.38614167988300335
+        },
+        "rolling": {
+          "first_mean": 0.2451156996190548,
+          "last_mean": -1.3019460278749466,
+          "last_minus_first": -1.5470617274940015,
+          "maximum_mean": 0.3017099271900952,
+          "minimum_mean": -1.3776486700773238,
+          "window_count": 4901,
+          "window_size": 100
+        }
+      }
+    },
+    "optimizer_steps_per_second": {
+      "count": 5000,
+      "maximum": 4.659830422054986,
+      "mean": 3.940664172836155,
+      "minimum": 1.1286402383630862,
+      "outlier_count": 0,
+      "outlier_lower_fence": 0.23795254911111918,
+      "outlier_policy": "outside_q1_q3_plus_or_minus_3_iqr",
+      "outlier_upper_fence": 7.708028584460747,
+      "population_std": 0.8355276672710759,
+      "quantiles": {
+        "p01": 1.7063344328632069,
+        "p05": 2.177240929761211,
+        "p25": 3.4394137071181023,
+        "p50": 4.489218976983725,
+        "p75": 4.506567426453763,
+        "p95": 4.51559267133839,
+        "p99": 4.520394694543271
+      },
+      "rolling": {
+        "first_mean": 3.843640270679941,
+        "last_mean": 3.9401792914579348,
+        "last_minus_first": 0.09653902077799392,
+        "maximum_mean": 4.08231630439348,
+        "minimum_mean": 3.7451437092169306,
+        "window_count": 4901,
+        "window_size": 100
+      }
+    },
+    "rolling_window_requested": 100,
+    "total_metric_outlier_count": 753
+  },
+  "status": "PASS",
+  "training_status": "TRAINING_COMPLETE",
+  "validation": {
+    "all_numeric_values_finite": true,
+    "checkpoint_identity_consistent": true,
+    "checkpoint_schema_valid": true,
+    "checkpoint_state_finite": true,
+    "completion_receipt_valid": true,
+    "continuous_steps_from_one": true,
+    "learning_rate_schedule_exact": true,
+    "learning_rates_nonnegative": true,
+    "resume_boundaries": [],
+    "stage_consistent": true,
+    "strict_json": true
+  },
+  "warnings": []
+}
