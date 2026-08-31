@@ -1,0 +1,60 @@
+{
+  "schema_version": 1,
+  "dataset_root": "/home/haoyi/Downloads/xd/datasets/xd_stereo_flashocc_teacher_video_5fps",
+  "source_manifest": {
+    "path": "/home/haoyi/Downloads/xd/datasets/xd_stereo_flashocc_teacher_video_5fps/manifest_val.csv",
+    "sha256": "582794a70bbb610f9fa9bac929d2b232df47ea7cac4de3ce1a3df29f3d041f1b"
+  },
+  "source_video": "/media/haoyi/T9/uvc-nvdec-2560x800-60/recordings/uvc_20260706_172530_741_2560x800_60fps.mkv",
+  "declared_rectified": true,
+  "image_size_wh": [1280, 800],
+  "left_rect_K": [
+    [772.6184797147923, 0.0, 623.7779235839844],
+    [0.0, 772.6184797147923, 384.73791122436523],
+    [0.0, 0.0, 1.0]
+  ],
+  "baseline_m": 0.11612416665784427,
+  "order": "L[t-4],R[t-4],L[t-3],R[t-3],L[t-2],R[t-2],L[t-1],R[t-1],L[t],R[t]",
+  "frames": [
+    {
+      "token": "val_000033",
+      "source_time_sec": 21.7,
+      "source_frame_index": 1302,
+      "meta_sha256": "aa3e1a1682b8bbbb6b8ccff8d2cf748a977c2f225cb6daa16378813961c47908",
+      "left": "samples_val/000033/left_rect.jpg",
+      "right": "samples_val/000033/right_rect.jpg"
+    },
+    {
+      "token": "val_000034",
+      "source_time_sec": 21.9,
+      "source_frame_index": 1314,
+      "meta_sha256": "7abccff2b9526a7f1d678a58ce060a1035b6711d08061b91f3118018a12b1832",
+      "left": "samples_val/000034/left_rect.jpg",
+      "right": "samples_val/000034/right_rect.jpg"
+    },
+    {
+      "token": "val_000035",
+      "source_time_sec": 22.1,
+      "source_frame_index": 1326,
+      "meta_sha256": "718ec89ebd5d812effe73492b5c57eb0853344c1f74262ef2c891b4d7eb2fdea",
+      "left": "samples_val/000035/left_rect.jpg",
+      "right": "samples_val/000035/right_rect.jpg"
+    },
+    {
+      "token": "val_000036",
+      "source_time_sec": 22.3,
+      "source_frame_index": 1338,
+      "meta_sha256": "2debfcfdde4b5ffdd520240622722ff47e96504d4cf75056a911f65eb6f60ab1",
+      "left": "samples_val/000036/left_rect.jpg",
+      "right": "samples_val/000036/right_rect.jpg"
+    },
+    {
+      "token": "val_000037",
+      "source_time_sec": 22.5,
+      "source_frame_index": 1350,
+      "meta_sha256": "d7fe1c115c1af3c279b4bf804f25396d19b61e6cde34f182aa7d1112528111e8",
+      "left": "samples_val/000037/left_rect.jpg",
+      "right": "samples_val/000037/right_rect.jpg"
+    }
+  ]
+}

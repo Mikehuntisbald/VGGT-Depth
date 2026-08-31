@@ -1,0 +1,20 @@
+experiment: ffs_omega_tsr_temporal_x2
+defaults_from: configs/mvp_x2.yaml
+data:
+  scale: 2
+  hr_crop: [384, 768]
+  sequence_length: 3
+  vggt_context_pairs: 5
+  crop_origin_multiple: 2
+  cache_dtype: float16
+model:
+  use_history: true
+  use_vggt_pose: true
+  use_registers_in_model: false
+  epipolar_refinement: false
+train:
+  stage: temporal
+  steps: 15000
+  init_from_stage: spatial
+  compile_model: false
+

@@ -1,0 +1,66 @@
+experiment: ffs_omega_tsr_x2
+seed: 42
+
+data:
+  scale: 2
+  hr_crop: [384, 768]
+  sequence_length: 1
+  vggt_context_pairs: 5
+  crop_origin_multiple: 2
+  cache_dtype: float16
+
+ffs:
+  observation_iters: 4
+  teacher_iters: 8
+  volume_backend: pytorch1
+  return_aux: true
+  right_left_check: true
+  max_disp_lr: auto
+
+vggt:
+  model: 1B-512
+  input_mode: balanced
+  use_stereo_pairs: true
+  causal: true
+  cache_depth: true
+  cache_depth_conf: true
+  cache_extrinsics: true
+  cache_registers: true
+  use_registers_in_model: false
+
+model:
+  rgb_channels: [32, 64, 96]
+  geometry_channels: 64
+  hidden_dim: 96
+  gru_layers: 2
+  residual_limit_hr_px: 8.0
+  convex_scale: 2
+  predict_uncertainty: true
+  epipolar_refinement: false
+
+train:
+  precision: bf16
+  micro_batch_size: 2
+  grad_accumulation: 4
+  effective_batch_size: 8
+  optimizer: adamw
+  learning_rate: 2.0e-4
+  weight_decay: 1.0e-4
+  warmup_steps: 500
+  gradient_clip: 1.0
+  steps_spatial: 5000
+  steps_temporal: 15000
+  num_workers: 8
+  pin_memory: true
+  persistent_workers: true
+  compile_model: false
+
+loss:
+  disparity: 1.00
+  measurement: 0.50
+  gradient: 0.20
+  temporal: 0.10
+  epipolar: 0.05
+  uncertainty_nll: 0.01
+  gate_regularizer: 0.02
+

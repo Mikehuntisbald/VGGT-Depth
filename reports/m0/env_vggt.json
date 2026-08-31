@@ -1,0 +1,121 @@
+{
+  "checks": [
+    {
+      "detail": "env-vggt",
+      "name": "environment_identity",
+      "status": "PASS"
+    },
+    {
+      "name": "required_modules",
+      "status": "PASS"
+    },
+    {
+      "detail": "NVIDIA GeForce RTX 5090, 595.84, 32607, 12.0",
+      "name": "nvidia_smi",
+      "status": "PASS"
+    },
+    {
+      "detail": true,
+      "name": "cuda_available",
+      "status": "PASS"
+    },
+    {
+      "detail": "12.8",
+      "name": "torch_cuda_at_least_12_8",
+      "status": "PASS"
+    },
+    {
+      "detail": {
+        "bf16_supported": true,
+        "capability": [
+          12,
+          0
+        ],
+        "name": "NVIDIA GeForce RTX 5090",
+        "total_memory_bytes": 33667612672
+      },
+      "name": "rtx_5090_sm120",
+      "status": "PASS"
+    },
+    {
+      "detail": {
+        "finite": true,
+        "sample": 256.0
+      },
+      "name": "cuda_matmul_float16",
+      "status": "PASS"
+    },
+    {
+      "detail": {
+        "finite": true,
+        "sample": 256.0
+      },
+      "name": "cuda_matmul_bfloat16",
+      "status": "PASS"
+    }
+  ],
+  "created_at_utc": "2026-08-31T16:19:59+00:00",
+  "gpu": {
+    "bf16_supported": true,
+    "capability": [
+      12,
+      0
+    ],
+    "name": "NVIDIA GeForce RTX 5090",
+    "total_memory_bytes": 33667612672
+  },
+  "hostname": "haoyi-System-Product-Name",
+  "kind": "environment:vggt",
+  "nvcc": {
+    "command": [
+      "nvcc",
+      "--version"
+    ],
+    "returncode": 0,
+    "stderr": "",
+    "stdout": "nvcc: NVIDIA (R) Cuda compiler driver\nCopyright (c) 2005-2026 NVIDIA Corporation\nBuilt on Tue_Jun_09_02:43:40_PM_PDT_2026\nCuda compilation tools, release 13.3, V13.3.73\nBuild cuda_13.3.r13.3/compiler.38244171_0"
+  },
+  "nvidia_smi": {
+    "command": [
+      "nvidia-smi",
+      "--query-gpu=name,driver_version,memory.total,compute_cap",
+      "--format=csv,noheader,nounits"
+    ],
+    "returncode": 0,
+    "stderr": "",
+    "stdout": "NVIDIA GeForce RTX 5090, 595.84, 32607, 12.0"
+  },
+  "python": {
+    "environment": "env-vggt",
+    "executable": "/home/haoyi/miniconda/envs/env-vggt/bin/python",
+    "prefix": "/home/haoyi/miniconda/envs/env-vggt",
+    "version": "3.12.14 | packaged by Anaconda, Inc. | (main, Aug 27 2026, 14:46:43) [GCC 14.3.0]"
+  },
+  "required_modules": [
+    "torch",
+    "torchvision",
+    "numpy",
+    "PIL",
+    "einops",
+    "safetensors",
+    "cv2",
+    "vggt_omega"
+  ],
+  "schema_version": 1,
+  "status": "PASS",
+  "torch": {
+    "arch_list": [
+      "sm_70",
+      "sm_75",
+      "sm_80",
+      "sm_86",
+      "sm_90",
+      "sm_100",
+      "sm_120"
+    ],
+    "cuda_available": true,
+    "cuda_runtime": "12.8",
+    "cudnn": 91002,
+    "version": "2.10.0+cu128"
+  }
+}

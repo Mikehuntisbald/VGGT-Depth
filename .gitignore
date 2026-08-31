@@ -1,0 +1,25 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# Large/private artifacts
+checkpoints/ffs/*/
+checkpoints/vggt/*
+cache/
+outputs/
+visualizations/*
+failures/*
+
+# Local data and credentials
+manifests/*.jsonl
+.env
+*.token
+
+# Editors and OS
+.idea/
+.vscode/
+.DS_Store
+

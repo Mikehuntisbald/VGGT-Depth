@@ -1,0 +1,6 @@
+[submodule "third_party/Fast-FoundationStereo"]
+	path = third_party/Fast-FoundationStereo
+	url = https://github.com/NVlabs/Fast-FoundationStereo.git
+[submodule "third_party/vggt-omega"]
+	path = third_party/vggt-omega
+	url = https://github.com/facebookresearch/vggt-omega.git

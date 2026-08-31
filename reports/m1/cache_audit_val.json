@@ -1,0 +1,115 @@
+{
+  "manifest": "/home/haoyi/ffs_omega_cache/manifests/val_video_isolated.jsonl",
+  "manifest_sha256": "014bd75de8ffbf74530c64eac76394a30bfc62d65b2da02397de2fb5c984760c",
+  "observation_identity": {
+    "checkpoint_sha256": "98b5a9acf39fbfa795025de8cea95ce123daa40f6b6234d719167751024cf692",
+    "component": "ffs-observation",
+    "config_sha256": "93ccfa329b30ba924ce9a96f262c73e4607fa51f010b96db9623af0b2edadaf5",
+    "cuda_version": "12.8",
+    "torch_version": "2.10.0+cu128",
+    "upstream_commit": "a290ba04c1b3ad1ec41a33974a157b2917b624d4"
+  },
+  "record_count": 244,
+  "sample_count": 9,
+  "samples": [
+    {
+      "frame_id": 906,
+      "index": 0,
+      "observation_trusted_fraction": 0.47957029938697815,
+      "observation_valid_fraction": 0.9253711104393005,
+      "scale_max_abs_error": 5.960464477539063e-08,
+      "sequence_id": "uvc_20260706_183939_677_2560x800_60fps",
+      "teacher_trusted_fraction": 0.47740527987480164,
+      "teacher_valid_fraction": 0.8912246227264404
+    },
+    {
+      "frame_id": 1266,
+      "index": 30,
+      "observation_trusted_fraction": 0.29142969846725464,
+      "observation_valid_fraction": 0.9634023308753967,
+      "scale_max_abs_error": 5.960464477539063e-08,
+      "sequence_id": "uvc_20260706_183939_677_2560x800_60fps",
+      "teacher_trusted_fraction": 0.44786620140075684,
+      "teacher_valid_fraction": 0.8581328392028809
+    },
+    {
+      "frame_id": 1638,
+      "index": 61,
+      "observation_trusted_fraction": 0.23499219119548798,
+      "observation_valid_fraction": 0.9685273170471191,
+      "scale_max_abs_error": 5.960464477539063e-08,
+      "sequence_id": "uvc_20260706_183939_677_2560x800_60fps",
+      "teacher_trusted_fraction": 0.29387402534484863,
+      "teacher_valid_fraction": 0.9543222784996033
+    },
+    {
+      "frame_id": 1998,
+      "index": 91,
+      "observation_trusted_fraction": 0.17847265303134918,
+      "observation_valid_fraction": 0.9736523628234863,
+      "scale_max_abs_error": 0.0,
+      "sequence_id": "uvc_20260706_183939_677_2560x800_60fps",
+      "teacher_trusted_fraction": 0.24304784834384918,
+      "teacher_valid_fraction": 0.974172830581665
+    },
+    {
+      "frame_id": 2370,
+      "index": 122,
+      "observation_trusted_fraction": 0.3595234453678131,
+      "observation_valid_fraction": 0.9536367058753967,
+      "scale_max_abs_error": 5.960464477539063e-08,
+      "sequence_id": "uvc_20260706_183939_677_2560x800_60fps",
+      "teacher_trusted_fraction": 0.34415918588638306,
+      "teacher_valid_fraction": 0.9366689324378967
+    },
+    {
+      "frame_id": 2730,
+      "index": 152,
+      "observation_trusted_fraction": 0.4299921989440918,
+      "observation_valid_fraction": 0.9485937356948853,
+      "scale_max_abs_error": 5.960464477539063e-08,
+      "sequence_id": "uvc_20260706_183939_677_2560x800_60fps",
+      "teacher_trusted_fraction": 0.40424901247024536,
+      "teacher_valid_fraction": 0.8804892301559448
+    },
+    {
+      "frame_id": 3090,
+      "index": 182,
+      "observation_trusted_fraction": 0.13239453732967377,
+      "observation_valid_fraction": 0.9804062247276306,
+      "scale_max_abs_error": 0.0,
+      "sequence_id": "uvc_20260706_183939_677_2560x800_60fps",
+      "teacher_trusted_fraction": 0.24125391244888306,
+      "teacher_valid_fraction": 0.9802793264389038
+    },
+    {
+      "frame_id": 3462,
+      "index": 213,
+      "observation_trusted_fraction": 0.14241796731948853,
+      "observation_valid_fraction": 0.9792616963386536,
+      "scale_max_abs_error": 0.0,
+      "sequence_id": "uvc_20260706_183939_677_2560x800_60fps",
+      "teacher_trusted_fraction": 0.28574803471565247,
+      "teacher_valid_fraction": 0.9794238209724426
+    },
+    {
+      "frame_id": 3822,
+      "index": 243,
+      "observation_trusted_fraction": 0.1611328125,
+      "observation_valid_fraction": 0.9819218516349792,
+      "scale_max_abs_error": 0.0,
+      "sequence_id": "uvc_20260706_183939_677_2560x800_60fps",
+      "teacher_trusted_fraction": 0.31871485710144043,
+      "teacher_valid_fraction": 0.9821953177452087
+    }
+  ],
+  "status": "PASS",
+  "teacher_identity": {
+    "checkpoint_sha256": "af0658f289ec840b292645f8d5538978f06e8cabaa1fd31e84acc91af268e990",
+    "component": "ffs-teacher",
+    "config_sha256": "9d402130df586ce1b57d16d65b2fcf43c73e28992160fdf4a2e8f4b50b95672e",
+    "cuda_version": "12.8",
+    "torch_version": "2.10.0+cu128",
+    "upstream_commit": "a290ba04c1b3ad1ec41a33974a157b2917b624d4"
+  }
+}

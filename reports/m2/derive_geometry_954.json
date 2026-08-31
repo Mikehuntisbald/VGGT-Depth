@@ -1,0 +1,243 @@
+{
+  "config": {
+    "algorithm": "baseline_metric_scale+scale_only_alignment+strict_pose_quality",
+    "cache_dtype": "float32",
+    "current_left_view_index": 8,
+    "extrinsics_convention": "camera-from-world",
+    "invalid_temporal_pose_policy": "zero-filled with false validity tensor",
+    "missing_diagnostic_policy": "invalid",
+    "previous_left_view_index": 6,
+    "schema_version": 1,
+    "thresholds": {
+      "alignment_huber_delta_hr_px": 1.0,
+      "ffs_confidence_threshold": 0.8,
+      "max_baseline_cv": 0.1,
+      "max_depth_median_absolute_error_hr_px": 2.0,
+      "max_depth_median_relative_error": null,
+      "max_depth_weighted_mae_hr_px": 2.0,
+      "max_left_right_error_lr_px": 1.0,
+      "max_photometric_median_absolute_rgb": 0.12,
+      "max_stereo_rotation_error_deg": 5.0,
+      "min_alignment_pixels": 256,
+      "min_photometric_samples": 1024,
+      "min_photometric_valid_fraction": 0.5
+    }
+  },
+  "identity": {
+    "checkpoint_sha256": "89e8bd22864a93e9528649a3c953277562d929e4c3d8c66bee0edb167ba3f3bd",
+    "component": "vggt-ffs-derived-geometry",
+    "config_sha256": "586190a312985781d836eca302290d71f54d08cc53db23bec2c77ff3c256de0a",
+    "cuda_version": "12.8",
+    "torch_version": "2.10.0+cu128",
+    "upstream_commit": "1db5c96c9476fc869ed74070aa485805c66f0a05f41615c1be28f0be1bebac38"
+  },
+  "output": "/home/haoyi/ffs_omega_cache/m2_smoke/derived/uvc_20260706_183939_677_2560x800_60fps/954.pt",
+  "output_sha256": "fcbac3d5c2a4e34429884a43118667dc34ad9f30f2c787d528c2387548216c0b",
+  "pose_quality": {
+    "alignment": {
+      "converged": true,
+      "failure_reason": null,
+      "iterations": 7,
+      "model": "scale_only; no additive shift",
+      "reliable_pixel_count": 127413,
+      "scale_px_m": 95.93758392333984,
+      "static_prior_valid": true,
+      "valid": true,
+      "weighted_mean_absolute_residual_hr_px": 1.9890735149383545
+    },
+    "baseline": {
+      "alpha_m_per_vggt_unit": 62.12163734873612,
+      "baseline_coefficient_of_variation": 0.04401711500997726,
+      "calibrated_baseline_m": 0.11612416665784427,
+      "failure_reason": null,
+      "median_predicted_baseline_vggt_unit": 0.0018693030579015613,
+      "predicted_baselines_vggt_unit": [
+        0.001810869318433106,
+        0.001969237346202135,
+        0.0017494398634880781,
+        0.0019472757121548057,
+        0.0018693030579015613
+      ],
+      "stereo_rotation_error_max_deg": 0.33102235198020935,
+      "stereo_rotation_error_median_deg": 0.22555352747440338,
+      "stereo_rotation_errors_deg": [
+        0.22555352747440338,
+        0.17471297085285187,
+        0.33102235198020935,
+        0.27124205231666565,
+        0.1312212347984314
+      ],
+      "valid": true
+    },
+    "baseline_rotation_valid": true,
+    "depth_consistency": {
+      "available": true,
+      "failure_reasons": [],
+      "median_absolute_error_hr_px": 0.44493287801742554,
+      "median_relative_error": 13.975800514221191,
+      "relative_error_gate_enabled": false,
+      "sample_count": 127413,
+      "valid": true,
+      "weighted_mae_hr_px": 1.9890735149383545
+    },
+    "failure_reasons": [],
+    "photometric": {
+      "available": true,
+      "depth_sample_count": 256000,
+      "failure_reasons": [],
+      "median_absolute_rgb_residual": 0.019063057377934456,
+      "projected_sample_count": 215031,
+      "valid": true,
+      "valid_fraction": 0.83996484375
+    },
+    "pose_valid": true
+  },
+  "schema_version": 1,
+  "source": {
+    "ffs_cache_path": "/home/haoyi/ffs_omega_cache/m1_smoke/observation/uvc_20260706_183939_677_2560x800_60fps/954.pt",
+    "ffs_cache_sha256": "61e5a4bdc197b7bcc24141fcf1415cd581d6a02827960dc82eb6c512ef6c3cad",
+    "linkage": {
+      "current_left": {
+        "path": "/home/haoyi/Downloads/xd/datasets/xd_stereo_flashocc_teacher_video_5fps/samples_val/001169/left_rect.jpg",
+        "sha256": "e32b228f14d16f40ecb0afe0311a32f5aefc50db7ee92f0e87790da7d900bace",
+        "size_bytes": 231648,
+        "view_index": 8,
+        "view_label": "L[t]"
+      },
+      "current_left_sha256": "e32b228f14d16f40ecb0afe0311a32f5aefc50db7ee92f0e87790da7d900bace",
+      "current_right_sha256": "6393276b4106477bd03b42070f7433fbe90759710538c64dc78a7f5b2dfc4c3d",
+      "ffs_raw_identity": {
+        "checkpoint_sha256": "98b5a9acf39fbfa795025de8cea95ce123daa40f6b6234d719167751024cf692",
+        "component": "ffs-observation",
+        "config_sha256": "93ccfa329b30ba924ce9a96f262c73e4607fa51f010b96db9623af0b2edadaf5",
+        "cuda_version": "12.8",
+        "torch_version": "2.10.0+cu128",
+        "upstream_commit": "a290ba04c1b3ad1ec41a33974a157b2917b624d4"
+      },
+      "previous_left": {
+        "path": "/home/haoyi/Downloads/xd/datasets/xd_stereo_flashocc_teacher_video_5fps/samples_val/001168/left_rect.jpg",
+        "sha256": "b68fdd897bd7b6fe18c8c04975f0a7692a22f5923bb6358b6d59690b27dd45b3",
+        "size_bytes": 228842,
+        "view_index": 6,
+        "view_label": "L[t-1]"
+      },
+      "target_frame_id": 954,
+      "target_manifest_record": {
+        "K": [
+          [
+            772.6184797147923,
+            0.0,
+            623.7779235839844
+          ],
+          [
+            0.0,
+            772.6184797147923,
+            384.73791122436523
+          ],
+          [
+            0.0,
+            0.0,
+            1.0
+          ]
+        ],
+        "K_right": [
+          [
+            772.6184797147923,
+            0.0,
+            623.7779235839844
+          ],
+          [
+            0.0,
+            772.6184797147923,
+            390.1379112243652
+          ],
+          [
+            0.0,
+            0.0,
+            1.0
+          ]
+        ],
+        "P_left": [
+          [
+            772.6184797147923,
+            0.0,
+            623.7779235839844,
+            0.0
+          ],
+          [
+            0.0,
+            772.6184797147923,
+            384.73791122436523,
+            0.0
+          ],
+          [
+            0.0,
+            0.0,
+            1.0,
+            0.0
+          ]
+        ],
+        "P_right": [
+          [
+            772.6184797147923,
+            0.0,
+            623.7779235839844,
+            -89.71967710133082
+          ],
+          [
+            0.0,
+            772.6184797147923,
+            390.1379112243652,
+            0.0
+          ],
+          [
+            0.0,
+            0.0,
+            1.0,
+            0.0
+          ]
+        ],
+        "baseline_from_projection_m": 0.11612416665784427,
+        "baseline_m": 0.11612416665784427,
+        "frame_id": 954,
+        "gt_disparity_path": null,
+        "image_size_wh": [
+          1280,
+          800
+        ],
+        "left_path": "/home/haoyi/Downloads/xd/datasets/xd_stereo_flashocc_teacher_video_5fps/samples_val/001169/left_rect.jpg",
+        "metadata_path": "/home/haoyi/Downloads/xd/datasets/xd_stereo_flashocc_teacher_video_5fps/samples_val/001169/meta.yaml",
+        "metadata_sha256": "69c3117459df99c18bbed335cea30c285ec0c7bacca62af2f812f022051aa93c",
+        "rectified": true,
+        "right_path": "/home/haoyi/Downloads/xd/datasets/xd_stereo_flashocc_teacher_video_5fps/samples_val/001169/right_rect.jpg",
+        "sequence_id": "uvc_20260706_183939_677_2560x800_60fps",
+        "source_csv": "/home/haoyi/Downloads/xd/datasets/xd_stereo_flashocc_teacher_video_5fps/manifest_val.csv",
+        "source_csv_row": 1171,
+        "source_frame_index": 954,
+        "source_time_sec": 15.9,
+        "source_video": "/media/haoyi/T9/uvc-nvdec-2560x800-60/recordings/uvc_20260706_183939_677_2560x800_60fps.mkv",
+        "split_source": "val_excluded_frames",
+        "timestamp": 15.9,
+        "token": "val_001169"
+      },
+      "target_sequence_id": "uvc_20260706_183939_677_2560x800_60fps",
+      "target_timestamp": 15.9,
+      "vggt_raw_identity": {
+        "checkpoint_sha256": "c02da418b18bb01d0392598d3f6147366bcde1bb70fd08a5e3bf7925b0667934",
+        "component": "vggt-omega",
+        "config_sha256": "1ac151ba851c4626ab2fd8a22405a5e44399a905432da3e0123d7e106d111f88",
+        "cuda_version": "12.8",
+        "torch_version": "2.10.0+cu128",
+        "upstream_commit": "282ec70363edeff59424bf43731658092fba3d37"
+      }
+    },
+    "vggt_cache_path": "/home/haoyi/ffs_omega_cache/m2_smoke/vggt/uvc_20260706_183939_677_2560x800_60fps/954.pt",
+    "vggt_cache_sha256": "47e89a73a050ad011862c256d1fe739348bf0ea281e37795c0aa585df90f8491"
+  },
+  "status": "written",
+  "target": {
+    "frame_id": 954,
+    "sequence_id": "uvc_20260706_183939_677_2560x800_60fps",
+    "timestamp": 15.9
+  }
+}

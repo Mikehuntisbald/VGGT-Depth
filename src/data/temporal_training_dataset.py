@@ -1,0 +1,1055 @@
+"""Strict cached inputs for causal Stage-B temporal training.
+
+The temporal dataset composes :class:`CachedFFSTrainingDataset` rather than
+duplicating its FFS/source-lineage checks.  A sample contains exactly three
+stereo times in oldest-to-current order.  All spatial tensors use one shared
+scale-aligned HR crop, and every VGGT-derived tensor is tied to the matching
+manifest record and FFS cache by SHA-256.
+
+Disparities sampled on the LR grid are nevertheless expressed in **HR pixel
+units**, except for the explicitly named ``observation_disparity_lr_px``
+measurement tensor.
+"""
+
+from __future__ import annotations
+
+import json
+import multiprocessing as mp
+from collections.abc import Mapping
+from dataclasses import dataclass, replace
+from functools import lru_cache
+from pathlib import Path
+from typing import Any, Literal
+
+import numpy as np
+import torch
+from torch import Tensor
+from torch.utils.data import Dataset
+
+from geometry.camera import crop_intrinsics
+
+from .cache_dataset import (
+    CacheIdentity,
+    CacheMismatchError,
+    load_cache_record,
+    sha256_file,
+)
+from .crop import CropWindow, sample_aligned_crop
+from .training_dataset import (
+    CachedFFSTrainingDataset,
+    CausalWindow,
+    FFSTrainingSample,
+    build_causal_windows,
+    cache_path_for_record,
+)
+
+
+DERIVED_COMPONENT = "vggt-ffs-derived-geometry"
+STUDENT_SEQUENCE_LENGTH = 3
+VGGT_CONTEXT_PAIRS = 5
+VGGT_STEREO_VIEW_COUNT = 2 * VGGT_CONTEXT_PAIRS
+
+
+@dataclass(frozen=True, slots=True)
+class DerivedCacheEntry:
+    """One trusted row from the formal derived-cache manifest."""
+
+    target_manifest_index: int
+    sequence_id: str
+    frame_id: int
+    timestamp: float
+    cache_path: Path
+    cache_sha256: str
+
+
+@dataclass(frozen=True, slots=True)
+class TemporalTrainingSample:
+    """One oldest-to-current causal sequence for Stage B.
+
+    Shapes use ``T=3``, HR crop ``Hh,Wh`` and LR crop ``Hl,Wl``:
+
+    * RGB: ``[T,3,Hh,Wh]`` in ``[0,1]``.
+    * FFS observation fields: ``[T,1,Hl,Wl]``.  The ``*_hr_px``
+      disparity uses HR-pixel units; ``*_lr_px`` uses LR-pixel units.
+    * Teacher fields: optional ``[T,1,Hh,Wh]`` in HR-pixel units.
+    * VGGT prior fields: ``[T,1,Hl,Wl]`` in HR-pixel units/probability.
+    * VGGT poses: ``[T,10,3,4]`` OpenCV camera-from-world metric poses.
+      An entire time slice is zero when ``temporal_pose_valid_sequence`` is
+      false and must not be used for history reprojection.
+    * Intrinsics: ``[T,3,3]`` in the cropped HR coordinate system.
+    """
+
+    rgb_hr_sequence: Tensor
+    observation_disparity_hr_px_sequence: Tensor
+    observation_disparity_lr_px_sequence: Tensor
+    observation_confidence_sequence: Tensor
+    observation_valid_mask_sequence: Tensor
+    observation_trusted_mask_sequence: Tensor
+    teacher_disparity_hr_px_sequence: Tensor | None
+    teacher_confidence_sequence: Tensor | None
+    teacher_valid_mask_sequence: Tensor | None
+    teacher_trusted_mask_sequence: Tensor | None
+    K_hr_sequence: Tensor
+    baseline_m_sequence: Tensor
+    vggt_disparity_hr_px_sequence: Tensor
+    vggt_confidence_sequence: Tensor
+    vggt_valid_mask_sequence: Tensor
+    vggt_extrinsics_camera_from_world_metric_sequence: Tensor
+    temporal_pose_valid_sequence: Tensor
+    static_prior_valid_sequence: Tensor
+    sequence_id: str
+    frame_ids: tuple[int, ...]
+    timestamps: tuple[float, ...]
+    manifest_indices: tuple[int, ...]
+    identity_metadata: Mapping[str, Any]
+
+    @property
+    def disparity_ffs_hr_px_sequence(self) -> Tensor:
+        """Model-facing alias for current-frame FFS measurements."""
+
+        return self.observation_disparity_hr_px_sequence
+
+    @property
+    def confidence_ffs_sequence(self) -> Tensor:
+        """Model-facing alias for FFS confidence."""
+
+        return self.observation_confidence_sequence
+
+    @property
+    def valid_ffs_sequence(self) -> Tensor:
+        """Model-facing alias for FFS validity."""
+
+        return self.observation_valid_mask_sequence
+
+    @property
+    def history_pose_valid_sequence(self) -> Tensor:
+        """Mask that gates all VGGT-pose history reprojection."""
+
+        return self.temporal_pose_valid_sequence
+
+
+def _positive_integer(value: int, name: str) -> int:
+    if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+        raise ValueError(f"{name} must be a positive integer")
+    return value
+
+
+def _is_within(path: Path, root: Path) -> bool:
+    try:
+        path.resolve().relative_to(root.resolve())
+    except ValueError:
+        return False
+    return True
+
+
+def _identity_from_mapping(
+    value: Mapping[str, Any], *, cache_path: Path
+) -> CacheIdentity:
+    fields = {
+        "component",
+        "upstream_commit",
+        "checkpoint_sha256",
+        "torch_version",
+        "cuda_version",
+        "config_sha256",
+    }
+    if set(value) != fields:
+        raise CacheMismatchError(
+            f"derived cache identity fields are malformed for {cache_path}: "
+            f"expected {sorted(fields)}, got {sorted(value)}"
+        )
+    identity = CacheIdentity(
+        component=str(value["component"]),
+        upstream_commit=str(value["upstream_commit"]),
+        checkpoint_sha256=str(value["checkpoint_sha256"]),
+        torch_version=str(value["torch_version"]),
+        cuda_version=(
+            None if value["cuda_version"] is None else str(value["cuda_version"])
+        ),
+        config_sha256=str(value["config_sha256"]),
+    )
+    if identity.component != DERIVED_COMPONENT:
+        raise CacheMismatchError(
+            f"derived cache component mismatch for {cache_path}: expected "
+            f"{DERIVED_COMPONENT!r}, got {identity.component!r}"
+        )
+    return identity
+
+
+@lru_cache(maxsize=16_384)
+def _sha256_for_unchanged_stat(path: str, size_bytes: int, mtime_ns: int) -> str:
+    del size_bytes, mtime_ns
+    return sha256_file(Path(path))
+
+
+def _current_sha256(path: Path) -> str:
+    stat = path.stat()
+    return _sha256_for_unchanged_stat(
+        str(path.resolve()), int(stat.st_size), int(stat.st_mtime_ns)
+    )
+
+
+def _load_derived_manifest(
+    derived_cache_root: Path,
+    records: list[Any],
+) -> dict[int, DerivedCacheEntry]:
+    """Load and bind the formal derived manifest to original indices."""
+
+    manifest_path = derived_cache_root / "cache_manifest.jsonl"
+    if not manifest_path.is_file():
+        raise FileNotFoundError(
+            f"formal derived cache manifest does not exist: {manifest_path}"
+        )
+    entries: dict[int, DerivedCacheEntry] = {}
+    seen_targets: set[tuple[str, int]] = set()
+    previous_selection_index = -1
+    with manifest_path.open("r", encoding="utf-8") as handle:
+        for line_number, raw_line in enumerate(handle, start=1):
+            if not raw_line.strip():
+                raise CacheMismatchError(
+                    f"blank row in derived cache manifest {manifest_path}:{line_number}"
+                )
+            try:
+                row = json.loads(raw_line)
+                selection_index = int(row["selection_index"])
+                target_index = int(row["target_manifest_index"])
+                sequence_id = str(row["sequence_id"])
+                frame_id = int(row["frame_id"])
+                timestamp = float(row["timestamp"])
+                cache_path = Path(row["cache_path"]).expanduser().resolve()
+                cache_sha256 = str(row["cache_sha256"])
+            except (json.JSONDecodeError, KeyError, TypeError, ValueError) as exc:
+                raise CacheMismatchError(
+                    f"malformed derived cache manifest row "
+                    f"{manifest_path}:{line_number}"
+                ) from exc
+            if selection_index <= previous_selection_index:
+                raise CacheMismatchError(
+                    "derived cache selection_index values must be strictly increasing"
+                )
+            previous_selection_index = selection_index
+            if target_index < 0 or target_index >= len(records):
+                raise CacheMismatchError(
+                    f"derived target_manifest_index {target_index} is out of range"
+                )
+            record = records[target_index]
+            if (
+                sequence_id != record.sequence_id
+                or frame_id != record.frame_id
+                or timestamp != record.timestamp
+            ):
+                raise CacheMismatchError(
+                    "derived cache manifest target disagrees with training manifest "
+                    f"at index {target_index}"
+                )
+            target = (sequence_id, frame_id)
+            if target in seen_targets or target_index in entries:
+                raise CacheMismatchError(f"duplicate derived cache target: {target}")
+            if not _is_within(cache_path, derived_cache_root):
+                raise CacheMismatchError(
+                    f"derived cache path escapes its declared root: {cache_path}"
+                )
+            canonical_path = cache_path_for_record(derived_cache_root, record).resolve()
+            if cache_path != canonical_path:
+                raise CacheMismatchError(
+                    f"derived cache path is not canonical for {target}: {cache_path}"
+                )
+            if not cache_path.is_file():
+                raise FileNotFoundError(
+                    f"derived cache record is missing: {cache_path}"
+                )
+            if len(cache_sha256) != 64:
+                raise CacheMismatchError(
+                    f"malformed derived cache SHA-256 for {cache_path}"
+                )
+            entries[target_index] = DerivedCacheEntry(
+                target_manifest_index=target_index,
+                sequence_id=sequence_id,
+                frame_id=frame_id,
+                timestamp=timestamp,
+                cache_path=cache_path,
+                cache_sha256=cache_sha256,
+            )
+            seen_targets.add(target)
+    if not entries:
+        raise CacheMismatchError(f"derived cache manifest is empty: {manifest_path}")
+    return entries
+
+
+def _validate_derived_run_receipt(
+    derived_cache_root: Path,
+    *,
+    entry_count: int,
+) -> dict[str, Any]:
+    """Validate the batch receipt that owns the derived manifest.
+
+    Per-record derived identities intentionally differ because each binds the
+    exact raw FFS/VGGT cache hashes.  This receipt validation supplies the
+    complementary batch-level boundary: it binds manifest content, coverage,
+    and causal geometry policy.
+    """
+
+    receipt_path = derived_cache_root / "run_receipt.json"
+    manifest_path = derived_cache_root / "cache_manifest.jsonl"
+    if not receipt_path.is_file():
+        raise FileNotFoundError(
+            f"formal derived cache receipt does not exist: {receipt_path}"
+        )
+    try:
+        receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise CacheMismatchError(
+            f"cannot read derived cache receipt {receipt_path}: {exc}"
+        ) from exc
+    if not isinstance(receipt, Mapping):
+        raise CacheMismatchError(f"derived receipt is not a mapping: {receipt_path}")
+    if receipt.get("schema_version") != 1:
+        raise CacheMismatchError(
+            f"unsupported derived receipt schema in {receipt_path}: "
+            f"{receipt.get('schema_version')!r}"
+        )
+    if receipt.get("component") != "vggt-ffs-derived-geometry-batch":
+        raise CacheMismatchError(
+            f"derived receipt component mismatch in {receipt_path}: "
+            f"{receipt.get('component')!r}"
+        )
+    config = receipt.get("config")
+    if not isinstance(config, Mapping):
+        raise CacheMismatchError(f"derived receipt config missing: {receipt_path}")
+    required_config = {
+        "algorithm": "baseline_metric_scale+scale_only_alignment+strict_pose_quality",
+        "extrinsics_convention": "camera-from-world",
+        "previous_left_view_index": 6,
+        "current_left_view_index": 8,
+        "invalid_temporal_pose_policy": "zero-filled with false validity tensor",
+    }
+    differences = {
+        key: {"expected": expected, "actual": config.get(key)}
+        for key, expected in required_config.items()
+        if config.get(key) != expected
+    }
+    if differences:
+        raise CacheMismatchError(
+            f"derived receipt causal contract mismatch in {receipt_path}: "
+            f"{differences}"
+        )
+
+    actual_manifest_sha256 = _current_sha256(manifest_path)
+    output = receipt.get("output")
+    if not isinstance(output, Mapping) or output.get(
+        "cache_manifest_sha256"
+    ) != actual_manifest_sha256:
+        actual = (
+            output.get("cache_manifest_sha256")
+            if isinstance(output, Mapping)
+            else None
+        )
+        raise CacheMismatchError(
+            f"derived receipt/manifest SHA-256 mismatch in {receipt_path}: "
+            f"expected {actual_manifest_sha256}, got {actual!r}"
+        )
+
+    counts = receipt.get("counts")
+    selection = receipt.get("selection")
+    if not isinstance(counts, Mapping) or not isinstance(selection, Mapping):
+        raise CacheMismatchError(
+            f"derived receipt coverage fields are missing: {receipt_path}"
+        )
+    selected = counts.get("selected")
+    selected_windows = selection.get("selected_windows")
+    written = counts.get("written")
+    reused = counts.get("reused")
+    count_values = (selected, selected_windows, written, reused)
+    if any(
+        isinstance(value, bool) or not isinstance(value, int) or value < 0
+        for value in count_values
+    ):
+        raise CacheMismatchError(
+            f"derived receipt coverage counts are malformed: {receipt_path}"
+        )
+    if selected != entry_count or selected_windows != entry_count:
+        raise CacheMismatchError(
+            f"derived receipt covers {selected}/{selected_windows} records but "
+            f"manifest contains {entry_count}: {receipt_path}"
+        )
+    if written + reused != selected:
+        raise CacheMismatchError(
+            f"derived receipt written+reused does not cover selected: {receipt_path}"
+        )
+    for valid_name, rejected_name in (
+        ("pose_valid", "pose_rejected"),
+        ("static_prior_valid", "static_prior_rejected"),
+    ):
+        valid = counts.get(valid_name)
+        rejected = counts.get(rejected_name)
+        if any(
+            isinstance(value, bool) or not isinstance(value, int) or value < 0
+            for value in (valid, rejected)
+        ) or valid + rejected != selected:
+            raise CacheMismatchError(
+                f"derived receipt {valid_name}/{rejected_name} coverage is "
+                f"malformed: {receipt_path}"
+            )
+    receipt_sha256 = _current_sha256(receipt_path)
+    return {
+        "component": receipt["component"],
+        "derived_cache_root": str(derived_cache_root),
+        "run_receipt_path": str(receipt_path),
+        "run_receipt_sha256": receipt_sha256,
+        "cache_manifest_path": str(manifest_path),
+        "cache_manifest_sha256": actual_manifest_sha256,
+        "selected_records": entry_count,
+        "config": dict(config),
+    }
+
+
+def _scalar_chw(
+    tensors: Mapping[str, Any], name: str, *, boolean: bool = False
+) -> Tensor:
+    value = tensors.get(name)
+    if not isinstance(value, Tensor):
+        raise CacheMismatchError(f"derived tensor {name!r} is missing or malformed")
+    if value.ndim == 2:
+        value = value.unsqueeze(0)
+    elif value.ndim == 4 and value.shape[:2] == (1, 1):
+        value = value[0]
+    if value.ndim != 3 or value.shape[0] != 1:
+        raise CacheMismatchError(
+            f"derived tensor {name!r} must resolve to [1,H,W], got "
+            f"{tuple(value.shape)}"
+        )
+    return value.to(dtype=torch.bool if boolean else torch.float32).contiguous()
+
+
+def _scalar_bool(tensors: Mapping[str, Any], name: str) -> bool:
+    value = tensors.get(name)
+    if not isinstance(value, Tensor) or value.numel() != 1 or value.dtype != torch.bool:
+        raise CacheMismatchError(
+            f"derived tensor {name!r} must be one boolean scalar"
+        )
+    return bool(value.item())
+
+
+def _validate_derived_lineage(
+    payload: Mapping[str, Any],
+    *,
+    record: Any,
+    observation_cache_path: Path,
+    observation_cache_sha256: str,
+    cache_path: Path,
+) -> tuple[bool, bool]:
+    metadata = payload.get("metadata")
+    if not isinstance(metadata, Mapping):
+        raise CacheMismatchError(f"derived metadata missing for {cache_path}")
+    config = metadata.get("config")
+    if not isinstance(config, Mapping):
+        raise CacheMismatchError(f"derived config missing for {cache_path}")
+    required_config = {
+        "algorithm": "baseline_metric_scale+scale_only_alignment+strict_pose_quality",
+        "extrinsics_convention": "camera-from-world",
+        "previous_left_view_index": 6,
+        "current_left_view_index": 8,
+        "invalid_temporal_pose_policy": "zero-filled with false validity tensor",
+    }
+    differences = {
+        key: {"expected": expected, "actual": config.get(key)}
+        for key, expected in required_config.items()
+        if config.get(key) != expected
+    }
+    if differences:
+        raise CacheMismatchError(
+            f"derived geometry contract mismatch for {cache_path}: {differences}"
+        )
+
+    target = metadata.get("target")
+    expected_target = {
+        "sequence_id": record.sequence_id,
+        "frame_id": record.frame_id,
+        "timestamp": record.timestamp,
+    }
+    if not isinstance(target, Mapping) or any(
+        target.get(key) != value for key, value in expected_target.items()
+    ):
+        raise CacheMismatchError(
+            f"derived target metadata mismatch for {cache_path}: "
+            f"expected {expected_target}, got {target!r}"
+        )
+    source = metadata.get("source")
+    linkage = source.get("linkage") if isinstance(source, Mapping) else None
+    if not isinstance(source, Mapping) or not isinstance(linkage, Mapping):
+        raise CacheMismatchError(f"derived source linkage missing for {cache_path}")
+    if source.get("ffs_cache_sha256") != observation_cache_sha256:
+        raise CacheMismatchError(
+            f"derived FFS source SHA-256 mismatch for {cache_path}"
+        )
+    linked_record = linkage.get("target_manifest_record")
+    if linked_record != record.to_dict():
+        raise CacheMismatchError(
+            f"derived manifest-record linkage mismatch for {cache_path}"
+        )
+    for name, expected in (
+        ("target_sequence_id", record.sequence_id),
+        ("target_frame_id", record.frame_id),
+        ("target_timestamp", record.timestamp),
+    ):
+        if linkage.get(name) != expected:
+            raise CacheMismatchError(
+                f"derived linkage {name} mismatch for {cache_path}"
+            )
+    # The digest is authoritative and permits relocating a complete cache tree;
+    # retain the current path in diagnostics without requiring old absolute paths.
+    if not observation_cache_path.is_file():  # pragma: no cover
+        raise FileNotFoundError(observation_cache_path)
+
+    quality = metadata.get("pose_quality")
+    alignment = quality.get("alignment") if isinstance(quality, Mapping) else None
+    if not isinstance(quality, Mapping) or not isinstance(alignment, Mapping):
+        raise CacheMismatchError(
+            f"derived pose_quality metadata missing for {cache_path}"
+        )
+    pose_valid = quality.get("pose_valid")
+    static_prior_valid = alignment.get("static_prior_valid")
+    if not isinstance(pose_valid, bool) or not isinstance(static_prior_valid, bool):
+        raise CacheMismatchError(
+            f"derived pose/prior validity metadata is malformed for {cache_path}"
+        )
+    return pose_valid, static_prior_valid
+
+
+def _crop_lr(tensor: Tensor, crop: CropWindow) -> Tensor:
+    x_lr = crop.x_px // crop.spatial_scale
+    y_lr = crop.y_px // crop.spatial_scale
+    height_lr, width_lr = crop.lr_size_hw
+    return tensor[:, y_lr : y_lr + height_lr, x_lr : x_lr + width_lr].contiguous()
+
+
+def _crop_hr(tensor: Tensor, crop: CropWindow) -> Tensor:
+    height_slice, width_slice = crop.slices_hw
+    return tensor[:, height_slice, width_slice].contiguous()
+
+
+def _crop_spatial_sample(
+    sample: FFSTrainingSample,
+    crop: CropWindow,
+    *,
+    manifest_index: int,
+    epoch: int,
+) -> FFSTrainingSample:
+    height_slice, width_slice = crop.slices_hw
+    teacher_disparity = sample.teacher_disparity_hr_px
+    teacher_confidence = sample.teacher_confidence
+    teacher_valid = sample.teacher_valid_mask
+    teacher_trusted = sample.teacher_trusted_mask
+    if teacher_disparity is not None:
+        assert teacher_confidence is not None
+        assert teacher_valid is not None
+        assert teacher_trusted is not None
+        teacher_disparity = _crop_hr(teacher_disparity, crop)
+        teacher_confidence = _crop_hr(teacher_confidence, crop)
+        teacher_valid = _crop_hr(teacher_valid, crop)
+        teacher_trusted = _crop_hr(teacher_trusted, crop)
+    metadata = dict(sample.identity_metadata)
+    metadata["crop_hr_px"] = {
+        "x": crop.x_px,
+        "y": crop.y_px,
+        "width": crop.width_px,
+        "height": crop.height_px,
+        "spatial_scale": crop.spatial_scale,
+    }
+    metadata["dataset_index"] = manifest_index
+    metadata["epoch"] = epoch
+    return replace(
+        sample,
+        rgb_hr=sample.rgb_hr[:, height_slice, width_slice].contiguous(),
+        observation_disparity_hr_px=_crop_lr(
+            sample.observation_disparity_hr_px, crop
+        ),
+        observation_disparity_lr_px=_crop_lr(
+            sample.observation_disparity_lr_px, crop
+        ),
+        observation_confidence=_crop_lr(sample.observation_confidence, crop),
+        observation_valid_mask=_crop_lr(sample.observation_valid_mask, crop),
+        observation_trusted_mask=_crop_lr(sample.observation_trusted_mask, crop),
+        teacher_disparity_hr_px=teacher_disparity,
+        teacher_confidence=teacher_confidence,
+        teacher_valid_mask=teacher_valid,
+        teacher_trusted_mask=teacher_trusted,
+        K_hr=torch.as_tensor(
+            crop_intrinsics(sample.K_hr.numpy(), crop.x_px, crop.y_px),
+            dtype=torch.float32,
+        ).contiguous(),
+        identity_metadata=metadata,
+    )
+
+
+def _stack_optional(values: list[Tensor | None], name: str) -> Tensor | None:
+    if all(value is None for value in values):
+        return None
+    if any(value is None for value in values):
+        raise CacheMismatchError(
+            f"teacher field {name!r} is present for only part of a temporal window"
+        )
+    return torch.stack([value for value in values if value is not None])
+
+
+class CachedTemporalTrainingDataset(Dataset[TemporalTrainingSample]):
+    """Join T=3 cached FFS frames with per-time VGGT-derived geometry.
+
+    Only windows whose three student records all have formal derived entries
+    are emitted.  Every student and VGGT context index is at or before the
+    endpoint; future frames and sequence-boundary crossings are rejected.
+
+    ``derived_identities`` is optional because formal identities differ per
+    record (they bind hashes of the exact raw FFS and VGGT caches).  When
+    provided, it maps ``(sequence_id, frame_id)`` to the full expected
+    :class:`CacheIdentity`.  Without it, the complete identity is still parsed
+    and its component is strictly checked on every record.
+    """
+
+    sequence_length = STUDENT_SEQUENCE_LENGTH
+    vggt_context_pairs = VGGT_CONTEXT_PAIRS
+
+    def __init__(
+        self,
+        manifest_path: str | Path,
+        observation_cache_root: str | Path,
+        teacher_cache_root: str | Path | None,
+        derived_cache_root: str | Path,
+        *,
+        observation_identity: CacheIdentity | None = None,
+        teacher_identity: CacheIdentity | None = None,
+        derived_identities: Mapping[tuple[str, int], CacheIdentity] | None = None,
+        crop_size_hr_hw: tuple[int, int] | None = (384, 768),
+        crop_mode: Literal["random", "fixed"] = "random",
+        fixed_crop_origin_hr_xy: tuple[int, int] | None = None,
+        spatial_scale: int = 2,
+        student_sequence_length: int = STUDENT_SEQUENCE_LENGTH,
+        vggt_context_pairs: int = VGGT_CONTEXT_PAIRS,
+        seed: int = 42,
+    ) -> None:
+        super().__init__()
+        if student_sequence_length != STUDENT_SEQUENCE_LENGTH:
+            raise ValueError("Stage B is fixed to a causal student sequence length T=3")
+        if vggt_context_pairs != VGGT_CONTEXT_PAIRS:
+            raise ValueError("Stage B is fixed to five causal VGGT stereo pairs")
+        self.spatial_scale = _positive_integer(spatial_scale, "spatial_scale")
+        if self.spatial_scale != 2:
+            raise ValueError("the first-round temporal dataset is fixed to x2")
+        if crop_mode not in ("random", "fixed"):
+            raise ValueError("crop_mode must be 'random' or 'fixed'")
+        self.crop_mode = crop_mode
+        if isinstance(seed, bool) or not isinstance(seed, int) or seed < 0:
+            raise ValueError("seed must be a non-negative integer")
+        self.seed = seed
+        self._shared_epoch = mp.Value("q", 0, lock=True)
+        if crop_size_hr_hw is not None:
+            if len(crop_size_hr_hw) != 2:
+                raise ValueError("crop_size_hr_hw must be (height,width)")
+            crop_height, crop_width = crop_size_hr_hw
+            _positive_integer(crop_height, "crop height")
+            _positive_integer(crop_width, "crop width")
+            if crop_height % self.spatial_scale or crop_width % self.spatial_scale:
+                raise ValueError(
+                    "HR crop dimensions must be multiples of spatial_scale"
+                )
+            self.crop_size_hr_hw = (crop_height, crop_width)
+        else:
+            self.crop_size_hr_hw = None
+        if fixed_crop_origin_hr_xy is not None:
+            if len(fixed_crop_origin_hr_xy) != 2 or any(
+                isinstance(value, bool) or not isinstance(value, int)
+                for value in fixed_crop_origin_hr_xy
+            ):
+                raise ValueError("fixed_crop_origin_hr_xy must be integer (x,y)")
+            x_px, y_px = fixed_crop_origin_hr_xy
+            if x_px < 0 or y_px < 0:
+                raise ValueError("fixed crop origin must be non-negative")
+            if x_px % self.spatial_scale or y_px % self.spatial_scale:
+                raise ValueError("fixed crop origin must be aligned to spatial_scale")
+            self.fixed_crop_origin_hr_xy = (x_px, y_px)
+        else:
+            self.fixed_crop_origin_hr_xy = None
+        if crop_mode == "random" and fixed_crop_origin_hr_xy is not None:
+            raise ValueError("fixed_crop_origin_hr_xy is only valid in fixed mode")
+
+        self.spatial_dataset = CachedFFSTrainingDataset(
+            manifest_path,
+            observation_cache_root,
+            teacher_cache_root,
+            observation_identity=observation_identity,
+            teacher_identity=teacher_identity,
+            crop_size_hr_hw=None,
+            crop_mode="fixed",
+            spatial_scale=self.spatial_scale,
+            seed=seed,
+        )
+        self.records = self.spatial_dataset.records
+        self.manifest_path = self.spatial_dataset.manifest_path
+        self.observation_cache_root = self.spatial_dataset.observation_cache_root
+        self.derived_cache_root = Path(derived_cache_root).expanduser().resolve()
+        if not self.derived_cache_root.is_dir():
+            raise FileNotFoundError(
+                f"derived cache root does not exist: {self.derived_cache_root}"
+            )
+        self.derived_entries = _load_derived_manifest(
+            self.derived_cache_root, self.records
+        )
+        self.cache_lineage_summary = _validate_derived_run_receipt(
+            self.derived_cache_root,
+            entry_count=len(self.derived_entries),
+        )
+        self.derived_identities = (
+            None if derived_identities is None else dict(derived_identities)
+        )
+        candidates = build_causal_windows(
+            self.records,
+            student_sequence_length=STUDENT_SEQUENCE_LENGTH,
+            vggt_context_pairs=VGGT_CONTEXT_PAIRS,
+        )
+        self.windows = [
+            window
+            for window in candidates
+            if all(index in self.derived_entries for index in window.student_indices)
+        ]
+        if not self.windows:
+            raise ValueError(
+                "no causal T=3 window has derived geometry for all three times"
+            )
+        for window in self.windows:
+            self._validate_window_causality(window)
+
+    def __len__(self) -> int:
+        return len(self.windows)
+
+    @property
+    def epoch(self) -> int:
+        with self._shared_epoch.get_lock():
+            return int(self._shared_epoch.value)
+
+    def set_epoch(self, epoch: int) -> None:
+        """Set deterministic shared-crop epoch, including persistent workers."""
+
+        if isinstance(epoch, bool) or not isinstance(epoch, int) or epoch < 0:
+            raise ValueError("epoch must be a non-negative integer")
+        with self._shared_epoch.get_lock():
+            self._shared_epoch.value = epoch
+        self.spatial_dataset.set_epoch(epoch)
+
+    def _validate_window_causality(self, window: CausalWindow) -> None:
+        endpoint = self.records[window.endpoint_index]
+        if len(window.student_indices) != STUDENT_SEQUENCE_LENGTH:
+            raise CacheMismatchError("temporal window does not contain exactly T=3")
+        if len(window.vggt_indices) != VGGT_CONTEXT_PAIRS:
+            raise CacheMismatchError("VGGT window does not contain exactly five pairs")
+        if window.student_indices[-1] != window.endpoint_index:
+            raise CacheMismatchError("student window does not end at its endpoint")
+        for index in (*window.student_indices, *window.vggt_indices):
+            record = self.records[index]
+            if record.sequence_id != endpoint.sequence_id:
+                raise CacheMismatchError("causal window crosses a sequence boundary")
+            if index > window.endpoint_index or record.timestamp > endpoint.timestamp:
+                raise CacheMismatchError("causal window contains a future frame")
+
+    def _crop_for_window(
+        self, dataset_index: int, *, height_hr: int, width_hr: int
+    ) -> CropWindow:
+        if self.crop_size_hr_hw is None:
+            if height_hr % self.spatial_scale or width_hr % self.spatial_scale:
+                raise ValueError(
+                    "full HR image dimensions must be multiples of spatial_scale"
+                )
+            return CropWindow(
+                x_px=0,
+                y_px=0,
+                width_px=width_hr,
+                height_px=height_hr,
+                spatial_scale=self.spatial_scale,
+            )
+        crop_height, crop_width = self.crop_size_hr_hw
+        if self.crop_mode == "random":
+            generator = np.random.default_rng(
+                np.random.SeedSequence((self.seed, self.epoch, dataset_index))
+            )
+            return sample_aligned_crop(
+                height_hr,
+                width_hr,
+                crop_height,
+                crop_width,
+                self.spatial_scale,
+                generator=generator,
+            )
+        if self.fixed_crop_origin_hr_xy is None:
+            maximum_x = width_hr - crop_width
+            maximum_y = height_hr - crop_height
+            if maximum_x < 0 or maximum_y < 0:
+                raise ValueError("crop dimensions exceed source image dimensions")
+            x_px = (maximum_x // 2 // self.spatial_scale) * self.spatial_scale
+            y_px = (maximum_y // 2 // self.spatial_scale) * self.spatial_scale
+        else:
+            x_px, y_px = self.fixed_crop_origin_hr_xy
+        crop = CropWindow(
+            x_px=x_px,
+            y_px=y_px,
+            width_px=crop_width,
+            height_px=crop_height,
+            spatial_scale=self.spatial_scale,
+        )
+        crop.validate_within(height_hr, width_hr)
+        return crop
+
+    def _load_derived(
+        self,
+        manifest_index: int,
+        spatial_sample: FFSTrainingSample,
+        crop: CropWindow,
+    ) -> tuple[Tensor, Tensor, Tensor, Tensor, bool, bool, dict[str, Any]]:
+        record = self.records[manifest_index]
+        entry = self.derived_entries[manifest_index]
+        actual_cache_sha256 = _current_sha256(entry.cache_path)
+        if actual_cache_sha256 != entry.cache_sha256:
+            raise CacheMismatchError(
+                f"derived cache SHA-256 mismatch for {entry.cache_path}: expected "
+                f"{entry.cache_sha256}, got {actual_cache_sha256}"
+            )
+        expected_identity = None
+        if self.derived_identities is not None:
+            key = (record.sequence_id, record.frame_id)
+            if key not in self.derived_identities:
+                raise CacheMismatchError(
+                    f"expected derived CacheIdentity is missing for {key}"
+                )
+            expected_identity = self.derived_identities[key]
+        payload = load_cache_record(
+            entry.cache_path, expected_identity=expected_identity
+        )
+        actual_identity = _identity_from_mapping(
+            payload["identity"], cache_path=entry.cache_path
+        )
+        observation_path = cache_path_for_record(
+            self.observation_cache_root, record
+        ).resolve()
+        pose_valid_metadata, static_prior_valid_metadata = _validate_derived_lineage(
+            payload,
+            record=record,
+            observation_cache_path=observation_path,
+            observation_cache_sha256=_current_sha256(observation_path),
+            cache_path=entry.cache_path,
+        )
+        tensors = payload["tensors"]
+        disparity_vggt_hr_px = _scalar_chw(
+            tensors, "vggt_disparity_current_left_aligned_hr_px"
+        )
+        confidence_vggt = _scalar_chw(tensors, "vggt_aligned_confidence")
+        valid_vggt = _scalar_chw(
+            tensors, "vggt_aligned_valid_mask", boolean=True
+        )
+        pose_valid = _scalar_bool(tensors, "temporal_pose_valid")
+        static_prior_valid = _scalar_bool(tensors, "static_prior_valid")
+        if pose_valid != pose_valid_metadata:
+            raise CacheMismatchError(
+                f"temporal_pose_valid tensor/metadata mismatch for {entry.cache_path}"
+            )
+        if static_prior_valid != static_prior_valid_metadata:
+            raise CacheMismatchError(
+                f"static_prior_valid tensor/metadata mismatch for {entry.cache_path}"
+            )
+        expected_shape = spatial_sample.observation_disparity_hr_px.shape
+        for name, tensor in (
+            ("vggt_disparity_current_left_aligned_hr_px", disparity_vggt_hr_px),
+            ("vggt_aligned_confidence", confidence_vggt),
+            ("vggt_aligned_valid_mask", valid_vggt),
+        ):
+            if tensor.shape != expected_shape:
+                raise CacheMismatchError(
+                    f"derived tensor {name!r} shape {tuple(tensor.shape)} does not "
+                    f"match FFS LR grid {tuple(expected_shape)}"
+                )
+        if not bool(torch.isfinite(disparity_vggt_hr_px).all()):
+            raise CacheMismatchError(
+                f"non-finite aligned disparity in {entry.cache_path}"
+            )
+        if not bool(torch.isfinite(confidence_vggt).all()) or bool(
+            ((confidence_vggt < 0) | (confidence_vggt > 1)).any()
+        ):
+            raise CacheMismatchError(
+                "aligned confidence is non-finite or outside [0,1] in "
+                f"{entry.cache_path}"
+            )
+        if static_prior_valid:
+            valid_vggt &= disparity_vggt_hr_px > 0
+        else:
+            if bool(valid_vggt.any()) or bool(
+                (disparity_vggt_hr_px != 0).any()
+            ) or bool((confidence_vggt != 0).any()):
+                raise CacheMismatchError(
+                    "invalid static VGGT prior must be zero-filled with an empty mask: "
+                    f"{entry.cache_path}"
+                )
+
+        extrinsics = tensors.get(
+            "vggt_extrinsics_camera_from_world_metric_temporal"
+        )
+        if not isinstance(extrinsics, Tensor) or extrinsics.shape != (
+            VGGT_STEREO_VIEW_COUNT,
+            3,
+            4,
+        ):
+            shape = (
+                None
+                if not isinstance(extrinsics, Tensor)
+                else tuple(extrinsics.shape)
+            )
+            raise CacheMismatchError(
+                f"temporal extrinsics must have shape [10,3,4], got {shape}"
+            )
+        extrinsics = extrinsics.to(dtype=torch.float32).contiguous()
+        if not bool(torch.isfinite(extrinsics).all()):
+            raise CacheMismatchError(f"non-finite temporal poses in {entry.cache_path}")
+        if not pose_valid and bool((extrinsics != 0).any()):
+            raise CacheMismatchError(
+                f"rejected temporal pose must be zero-filled: {entry.cache_path}"
+            )
+        # Defense in depth: downstream sees no pose whenever the strict gate
+        # rejects it, even if tensor representation changes in a later schema.
+        if not pose_valid:
+            extrinsics = torch.zeros_like(extrinsics)
+
+        return (
+            _crop_lr(disparity_vggt_hr_px, crop),
+            _crop_lr(confidence_vggt, crop),
+            _crop_lr(valid_vggt, crop),
+            extrinsics,
+            pose_valid,
+            static_prior_valid,
+            {
+                "cache_path": str(entry.cache_path),
+                "cache_sha256": actual_cache_sha256,
+                "cache_identity": actual_identity.to_dict(),
+                "pose_valid": pose_valid,
+                "static_prior_valid": static_prior_valid,
+            },
+        )
+
+    def __getitem__(self, index: int) -> TemporalTrainingSample:
+        if isinstance(index, bool) or not isinstance(index, int):
+            raise TypeError("dataset index must be an integer")
+        if index < 0:
+            index += len(self.windows)
+        if index < 0 or index >= len(self.windows):
+            raise IndexError(index)
+        window = self.windows[index]
+        self._validate_window_causality(window)
+        full_samples = [
+            self.spatial_dataset[manifest_index]
+            for manifest_index in window.student_indices
+        ]
+        spatial_shapes = {tuple(sample.rgb_hr.shape[-2:]) for sample in full_samples}
+        if len(spatial_shapes) != 1:
+            raise CacheMismatchError(
+                "temporal RGB shapes differ within one window: "
+                f"{sorted(spatial_shapes)}"
+            )
+        height_hr, width_hr = next(iter(spatial_shapes))
+        crop = self._crop_for_window(
+            index, height_hr=height_hr, width_hr=width_hr
+        )
+        cropped_samples = [
+            _crop_spatial_sample(
+                sample,
+                crop,
+                manifest_index=manifest_index,
+                epoch=self.epoch,
+            )
+            for manifest_index, sample in zip(
+                window.student_indices, full_samples, strict=True
+            )
+        ]
+        derived = [
+            self._load_derived(manifest_index, full_sample, crop)
+            for manifest_index, full_sample in zip(
+                window.student_indices, full_samples, strict=True
+            )
+        ]
+        records = [self.records[item] for item in window.student_indices]
+        return TemporalTrainingSample(
+            rgb_hr_sequence=torch.stack([sample.rgb_hr for sample in cropped_samples]),
+            observation_disparity_hr_px_sequence=torch.stack(
+                [sample.observation_disparity_hr_px for sample in cropped_samples]
+            ),
+            observation_disparity_lr_px_sequence=torch.stack(
+                [sample.observation_disparity_lr_px for sample in cropped_samples]
+            ),
+            observation_confidence_sequence=torch.stack(
+                [sample.observation_confidence for sample in cropped_samples]
+            ),
+            observation_valid_mask_sequence=torch.stack(
+                [sample.observation_valid_mask for sample in cropped_samples]
+            ),
+            observation_trusted_mask_sequence=torch.stack(
+                [sample.observation_trusted_mask for sample in cropped_samples]
+            ),
+            teacher_disparity_hr_px_sequence=_stack_optional(
+                [sample.teacher_disparity_hr_px for sample in cropped_samples],
+                "teacher_disparity_hr_px",
+            ),
+            teacher_confidence_sequence=_stack_optional(
+                [sample.teacher_confidence for sample in cropped_samples],
+                "teacher_confidence",
+            ),
+            teacher_valid_mask_sequence=_stack_optional(
+                [sample.teacher_valid_mask for sample in cropped_samples],
+                "teacher_valid_mask",
+            ),
+            teacher_trusted_mask_sequence=_stack_optional(
+                [sample.teacher_trusted_mask for sample in cropped_samples],
+                "teacher_trusted_mask",
+            ),
+            K_hr_sequence=torch.stack([sample.K_hr for sample in cropped_samples]),
+            baseline_m_sequence=torch.stack(
+                [sample.baseline_m for sample in cropped_samples]
+            ),
+            vggt_disparity_hr_px_sequence=torch.stack([item[0] for item in derived]),
+            vggt_confidence_sequence=torch.stack([item[1] for item in derived]),
+            vggt_valid_mask_sequence=torch.stack([item[2] for item in derived]),
+            vggt_extrinsics_camera_from_world_metric_sequence=torch.stack(
+                [item[3] for item in derived]
+            ),
+            temporal_pose_valid_sequence=torch.tensor(
+                [item[4] for item in derived], dtype=torch.bool
+            ),
+            static_prior_valid_sequence=torch.tensor(
+                [item[5] for item in derived], dtype=torch.bool
+            ),
+            sequence_id=window.sequence_id,
+            frame_ids=tuple(record.frame_id for record in records),
+            timestamps=tuple(record.timestamp for record in records),
+            manifest_indices=window.student_indices,
+            identity_metadata={
+                "manifest_path": str(self.manifest_path),
+                "derived_cache_lineage": dict(self.cache_lineage_summary),
+                "sequence_id": window.sequence_id,
+                "endpoint_manifest_index": window.endpoint_index,
+                "student_manifest_indices": list(window.student_indices),
+                "vggt_context_manifest_indices": list(window.vggt_indices),
+                "crop_hr_px": {
+                    "x": crop.x_px,
+                    "y": crop.y_px,
+                    "width": crop.width_px,
+                    "height": crop.height_px,
+                    "spatial_scale": crop.spatial_scale,
+                },
+                "epoch": self.epoch,
+                "seed": self.seed,
+                "per_time_ffs": [
+                    dict(sample.identity_metadata) for sample in cropped_samples
+                ],
+                "per_time_derived": [item[6] for item in derived],
+            },
+        )
+
+
+__all__ = [
+    "CachedTemporalTrainingDataset",
+    "DerivedCacheEntry",
+    "TemporalTrainingSample",
+]

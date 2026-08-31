@@ -1,0 +1,17 @@
+experiment: ffs_omega_tsr_epipolar_x2
+defaults_from: configs/temporal_x2.yaml
+data:
+  scale: 2
+  hr_crop: [384, 768]
+  sequence_length: 3
+  vggt_context_pairs: 5
+model:
+  use_history: true
+  use_vggt_pose: true
+  epipolar_refinement: true
+  epipolar_offsets_hr_px: [-2, -1, 0, 1, 2]
+train:
+  stage: epipolar
+  init_from_stage: temporal
+  compile_model: false
+

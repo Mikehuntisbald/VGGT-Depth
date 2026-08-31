@@ -1,0 +1,18 @@
+{
+  "schema_version": 1,
+  "components": {
+    "Fast-FoundationStereo": {
+      "commit": "a290ba04c1b3ad1ec41a33974a157b2917b624d4",
+      "license": "NVIDIA Source Code License for Fast-FoundationStereo; non-commercial research only",
+      "path": "third_party/Fast-FoundationStereo",
+      "remote": "https://github.com/NVlabs/Fast-FoundationStereo.git"
+    },
+    "vggt-omega": {
+      "commit": "282ec70363edeff59424bf43731658092fba3d37",
+      "license": "VGGT-Omega License plus FAIR Acceptable Use Policy; non-commercial research only",
+      "path": "third_party/vggt-omega",
+      "remote": "https://github.com/facebookresearch/vggt-omega.git"
+    }
+  }
+}
+

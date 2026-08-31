@@ -1,0 +1,169 @@
+{
+  "arguments": {
+    "disable_dynamo": false,
+    "iters": 4,
+    "max_disp": 192,
+    "missing_normalize": "error",
+    "requested_volume_backend": "pytorch1"
+  },
+  "checkpoint": {
+    "cfg_path": "/home/haoyi/ffs_omega_tsr/checkpoints/ffs/20-26-39/cfg.yaml",
+    "cfg_sha256": "d45afe99b176454d5aff416edf16c8da6a99579f8f374b927f37907442a7d6bc",
+    "path": "/home/haoyi/ffs_omega_tsr/checkpoints/ffs/20-26-39/model_best_bp2_serialize.pth",
+    "provenance_note": "Hash recorded by this run; source-specific verification is reported separately.",
+    "sha256": "d147587849b3482dd2921eef60dc2cd9e12690735612e91ee2782a92f8d1c59e",
+    "size_bytes": 67971170
+  },
+  "checks": [
+    {
+      "name": "required_inputs",
+      "status": "PASS"
+    },
+    {
+      "detail": {
+        "dirty": false,
+        "head": "a290ba04c1b3ad1ec41a33974a157b2917b624d4",
+        "path": "/home/haoyi/ffs_omega_tsr/third_party/Fast-FoundationStereo",
+        "remote": "https://github.com/NVlabs/Fast-FoundationStereo.git",
+        "status_porcelain": []
+      },
+      "name": "upstream_identity",
+      "status": "PASS"
+    },
+    {
+      "detail": false,
+      "name": "checkpoint_arg_normalize",
+      "status": "PASS"
+    },
+    {
+      "detail": true,
+      "name": "model_frozen_eval",
+      "status": "PASS"
+    },
+    {
+      "detail": {
+        "original_shape": [
+          1,
+          3,
+          540,
+          960
+        ],
+        "padded_shape": [
+          1,
+          3,
+          544,
+          960
+        ],
+        "padding_lrtb": [
+          0,
+          0,
+          2,
+          2
+        ]
+      },
+      "name": "padding_multiple_32",
+      "status": "PASS"
+    },
+    {
+      "detail": [
+        1,
+        1,
+        540,
+        960
+      ],
+      "name": "output_shape",
+      "status": "PASS"
+    },
+    {
+      "detail": 1.0,
+      "name": "output_all_finite",
+      "status": "PASS"
+    },
+    {
+      "detail": {
+        "actual_volume_backend": "pytorch1",
+        "compatibility_fallback": null,
+        "elapsed_seconds_including_first_compile": 3.6760011879960075,
+        "fallback_error": null,
+        "peak_cuda_memory_bytes": 1110345216
+      },
+      "name": "backend",
+      "status": "PASS"
+    }
+  ],
+  "created_at_utc": "2026-08-31T19:33:01+00:00",
+  "hostname": "haoyi-System-Product-Name",
+  "inputs": {
+    "left": {
+      "height": 540,
+      "path": "/home/haoyi/ffs_omega_tsr/third_party/Fast-FoundationStereo/demo_data/left.png",
+      "sha256": "f080f84d7b2e28ba110eea80f0504cad9390f2399d6ffde6cd1e668200c3ef48",
+      "width": 960
+    },
+    "range": "RGB float32 0..255",
+    "right": {
+      "height": 540,
+      "path": "/home/haoyi/ffs_omega_tsr/third_party/Fast-FoundationStereo/demo_data/right.png",
+      "sha256": "337991aa0b35417ae64d6f66819522c233a4455eacfd34c9dc114ad569ec50f4",
+      "width": 960
+    }
+  },
+  "kind": "smoke:ffs",
+  "output": {
+    "dtype": "torch.float32",
+    "finite_fraction": 1.0,
+    "max": 137.96511840820312,
+    "mean": 93.3612060546875,
+    "min": 35.236572265625,
+    "negative_fraction": 0.0,
+    "shape": [
+      1,
+      1,
+      540,
+      960
+    ],
+    "unit": "input-image pixels"
+  },
+  "padding": {
+    "original_shape": [
+      1,
+      3,
+      540,
+      960
+    ],
+    "padded_shape": [
+      1,
+      3,
+      544,
+      960
+    ],
+    "padding_lrtb": [
+      0,
+      0,
+      2,
+      2
+    ]
+  },
+  "runtime": {
+    "actual_volume_backend": "pytorch1",
+    "compatibility_fallback": null,
+    "elapsed_seconds_including_first_compile": 3.6760011879960075,
+    "fallback_error": null,
+    "peak_cuda_memory_bytes": 1110345216
+  },
+  "schema_version": 1,
+  "status": "PASS",
+  "upstream": {
+    "dirty": false,
+    "expected": {
+      "commit": "a290ba04c1b3ad1ec41a33974a157b2917b624d4",
+      "license": "NVIDIA Source Code License for Fast-FoundationStereo; non-commercial research only",
+      "path": "third_party/Fast-FoundationStereo",
+      "remote": "https://github.com/NVlabs/Fast-FoundationStereo.git"
+    },
+    "head": "a290ba04c1b3ad1ec41a33974a157b2917b624d4",
+    "path": "/home/haoyi/ffs_omega_tsr/third_party/Fast-FoundationStereo",
+    "remote": "https://github.com/NVlabs/Fast-FoundationStereo.git",
+    "status_porcelain": []
+  }
+}

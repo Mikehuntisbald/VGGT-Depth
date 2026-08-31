@@ -1,0 +1,24 @@
+{
+  "claim_policy": "Execution and resource smoke only; the Stage-A initializer was not formally trained and no accuracy claim is permitted.",
+  "component": "stage-b-training-smoke",
+  "initializer": {
+    "formal": false,
+    "git_hash": "unknown"
+  },
+  "run_summary": {
+    "config_fingerprint": "0bc4b538040b3c22c7309715d17bce50233941a3c8dd0cbaf7f6c31472962f0c",
+    "cuda_version": "12.8",
+    "device": "cuda",
+    "device_name": "NVIDIA GeForce RTX 5090",
+    "elapsed_seconds": 0.7337197060114704,
+    "final_checkpoint_sha256": "19a43dafdd029a3471ea39ecc333e3afe76fb64a4b8294af0ec0560ceacfa284",
+    "peak_cuda_allocated_bytes": 4533681664,
+    "peak_cuda_reserved_bytes": 4838129664,
+    "run_steps": 1,
+    "stage": "temporal",
+    "status": "TRAINING_COMPLETE",
+    "steps_per_second": 1.3629182803826272,
+    "torch_version": "2.10.0+cu128"
+  },
+  "source_run_summary_sha256": "70da433c0141924ca65b280a0a8a4ca8acab26a35fe819dd5697fd7cbb9ea97b"
+}

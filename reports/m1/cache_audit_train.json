@@ -1,0 +1,135 @@
+{
+  "manifest": "/home/haoyi/ffs_omega_cache/manifests/train_video_isolated.jsonl",
+  "manifest_sha256": "596702933688f695d9aac480d9f01e5764f40a4d7b28d72d73c550eb209b301c",
+  "observation_identity": {
+    "checkpoint_sha256": "98b5a9acf39fbfa795025de8cea95ce123daa40f6b6234d719167751024cf692",
+    "component": "ffs-observation",
+    "config_sha256": "93ccfa329b30ba924ce9a96f262c73e4607fa51f010b96db9623af0b2edadaf5",
+    "cuda_version": "12.8",
+    "torch_version": "2.10.0+cu128",
+    "upstream_commit": "a290ba04c1b3ad1ec41a33974a157b2917b624d4"
+  },
+  "record_count": 2787,
+  "sample_count": 11,
+  "samples": [
+    {
+      "frame_id": 900,
+      "index": 0,
+      "observation_trusted_fraction": 0.23823827505111694,
+      "observation_valid_fraction": 0.9307109117507935,
+      "scale_max_abs_error": 5.960464477539063e-08,
+      "sequence_id": "uvc_20260706_172530_741_2560x800_60fps",
+      "teacher_trusted_fraction": 0.21807324886322021,
+      "teacher_valid_fraction": 0.8547129034996033
+    },
+    {
+      "frame_id": 4248,
+      "index": 279,
+      "observation_trusted_fraction": 0.3311523497104645,
+      "observation_valid_fraction": 0.9322617053985596,
+      "scale_max_abs_error": 5.960464477539063e-08,
+      "sequence_id": "uvc_20260706_172530_741_2560x800_60fps",
+      "teacher_trusted_fraction": 0.30802735686302185,
+      "teacher_valid_fraction": 0.8808310627937317
+    },
+    {
+      "frame_id": 7584,
+      "index": 557,
+      "observation_trusted_fraction": 0.5160390734672546,
+      "observation_valid_fraction": 0.9129687547683716,
+      "scale_max_abs_error": 5.960464477539063e-08,
+      "sequence_id": "uvc_20260706_172530_741_2560x800_60fps",
+      "teacher_trusted_fraction": 0.5205292701721191,
+      "teacher_valid_fraction": 0.8093622922897339
+    },
+    {
+      "frame_id": 10932,
+      "index": 836,
+      "observation_trusted_fraction": 0.23745311796665192,
+      "observation_valid_fraction": 0.9330898523330688,
+      "scale_max_abs_error": 5.960464477539063e-08,
+      "sequence_id": "uvc_20260706_172530_741_2560x800_60fps",
+      "teacher_trusted_fraction": 0.33043554425239563,
+      "teacher_valid_fraction": 0.8850761651992798
+    },
+    {
+      "frame_id": 14268,
+      "index": 1114,
+      "observation_trusted_fraction": 0.32749608159065247,
+      "observation_valid_fraction": 0.9463046789169312,
+      "scale_max_abs_error": 5.960464477539063e-08,
+      "sequence_id": "uvc_20260706_172530_741_2560x800_60fps",
+      "teacher_trusted_fraction": 0.41593652963638306,
+      "teacher_valid_fraction": 0.9106073975563049
+    },
+    {
+      "frame_id": 3624,
+      "index": 1393,
+      "observation_trusted_fraction": 0.1071796864271164,
+      "observation_valid_fraction": 0.9758594036102295,
+      "scale_max_abs_error": 0.0,
+      "sequence_id": "uvc_20260706_191627_418_2560x800_60fps",
+      "teacher_trusted_fraction": 0.23012597858905792,
+      "teacher_valid_fraction": 0.9765751957893372
+    },
+    {
+      "frame_id": 6972,
+      "index": 1672,
+      "observation_trusted_fraction": 0.00046874998952262104,
+      "observation_valid_fraction": 0.9287382960319519,
+      "scale_max_abs_error": 0.0,
+      "sequence_id": "uvc_20260706_191627_418_2560x800_60fps",
+      "teacher_trusted_fraction": 0.012887694872915745,
+      "teacher_valid_fraction": 0.9402998089790344
+    },
+    {
+      "frame_id": 10308,
+      "index": 1950,
+      "observation_trusted_fraction": 0.006343749817460775,
+      "observation_valid_fraction": 0.9176601767539978,
+      "scale_max_abs_error": 0.0,
+      "sequence_id": "uvc_20260706_191627_418_2560x800_60fps",
+      "teacher_trusted_fraction": 0.01858496107161045,
+      "teacher_valid_fraction": 0.9181347489356995
+    },
+    {
+      "frame_id": 13656,
+      "index": 2229,
+      "observation_trusted_fraction": 0.1112382784485817,
+      "observation_valid_fraction": 0.9677070379257202,
+      "scale_max_abs_error": 5.960464477539063e-08,
+      "sequence_id": "uvc_20260706_191627_418_2560x800_60fps",
+      "teacher_trusted_fraction": 0.13782714307308197,
+      "teacher_valid_fraction": 0.9769843816757202
+    },
+    {
+      "frame_id": 16992,
+      "index": 2507,
+      "observation_trusted_fraction": 0.1766679733991623,
+      "observation_valid_fraction": 0.9621953368186951,
+      "scale_max_abs_error": 5.960464477539063e-08,
+      "sequence_id": "uvc_20260706_191627_418_2560x800_60fps",
+      "teacher_trusted_fraction": 0.2056308537721634,
+      "teacher_valid_fraction": 0.9566523432731628
+    },
+    {
+      "frame_id": 20340,
+      "index": 2786,
+      "observation_trusted_fraction": 0.15621094405651093,
+      "observation_valid_fraction": 0.9561132788658142,
+      "scale_max_abs_error": 5.960464477539063e-08,
+      "sequence_id": "uvc_20260706_191627_418_2560x800_60fps",
+      "teacher_trusted_fraction": 0.2045000046491623,
+      "teacher_valid_fraction": 0.9687705039978027
+    }
+  ],
+  "status": "PASS",
+  "teacher_identity": {
+    "checkpoint_sha256": "af0658f289ec840b292645f8d5538978f06e8cabaa1fd31e84acc91af268e990",
+    "component": "ffs-teacher",
+    "config_sha256": "9d402130df586ce1b57d16d65b2fcf43c73e28992160fdf4a2e8f4b50b95672e",
+    "cuda_version": "12.8",
+    "torch_version": "2.10.0+cu128",
+    "upstream_commit": "a290ba04c1b3ad1ec41a33974a157b2917b624d4"
+  }
+}

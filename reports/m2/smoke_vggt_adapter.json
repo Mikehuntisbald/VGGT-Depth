@@ -1,0 +1,1555 @@
+{
+  "adapter_metadata": {
+    "camera_token_count": 1,
+    "causality_enforcement": "caller input order only; upstream has no causal flag",
+    "context_pairs": 5,
+    "depth_conf_semantics": "unbounded score 1 + exp(logit), >=1; not probability",
+    "depth_unit": "VGGT-Omega arbitrary scale; positive camera-z",
+    "extrinsics_convention": "OpenCV camera-from-world [R|t]",
+    "frozen": true,
+    "image_resolution": 512,
+    "inference_mode": true,
+    "input_mode": "balanced",
+    "input_order_contract": "L[t-4],R[t-4],...,L[t],R[t] for context_pairs=5",
+    "intrinsics_pred_usage": "diagnostic only; never replaces calibrated intrinsics",
+    "model_input_shape_schw": [
+      10,
+      3,
+      400,
+      640
+    ],
+    "patch_size": 16,
+    "register_token_count": 16
+  },
+  "arguments": {
+    "causal": true,
+    "context_pairs": 5,
+    "image_resolution": 512,
+    "input_mode": "balanced",
+    "patch_size": 16
+  },
+  "causal_window_provenance": {
+    "manifest": "/home/haoyi/ffs_omega_cache/manifests/smoke_val_isolated_5.jsonl",
+    "manifest_indices": [
+      0,
+      1,
+      2,
+      3,
+      4
+    ],
+    "manifest_sha256": "2528d6bbd9a008b3f684bd626cf0ec089e9cd93a78ebdbb87ca238f0330eb32b",
+    "ordered_manifest_records": [
+      {
+        "K": [
+          [
+            772.6184797147923,
+            0.0,
+            623.7779235839844
+          ],
+          [
+            0.0,
+            772.6184797147923,
+            384.73791122436523
+          ],
+          [
+            0.0,
+            0.0,
+            1.0
+          ]
+        ],
+        "K_right": [
+          [
+            772.6184797147923,
+            0.0,
+            623.7779235839844
+          ],
+          [
+            0.0,
+            772.6184797147923,
+            390.1379112243652
+          ],
+          [
+            0.0,
+            0.0,
+            1.0
+          ]
+        ],
+        "P_left": [
+          [
+            772.6184797147923,
+            0.0,
+            623.7779235839844,
+            0.0
+          ],
+          [
+            0.0,
+            772.6184797147923,
+            384.73791122436523,
+            0.0
+          ],
+          [
+            0.0,
+            0.0,
+            1.0,
+            0.0
+          ]
+        ],
+        "P_right": [
+          [
+            772.6184797147923,
+            0.0,
+            623.7779235839844,
+            -89.71967710133082
+          ],
+          [
+            0.0,
+            772.6184797147923,
+            390.1379112243652,
+            0.0
+          ],
+          [
+            0.0,
+            0.0,
+            1.0,
+            0.0
+          ]
+        ],
+        "baseline_from_projection_m": 0.11612416665784427,
+        "baseline_m": 0.11612416665784427,
+        "frame_id": 906,
+        "gt_disparity_path": null,
+        "image_size_wh": [
+          1280,
+          800
+        ],
+        "left_path": "/home/haoyi/Downloads/xd/datasets/xd_stereo_flashocc_teacher_video_5fps/samples_val/001165/left_rect.jpg",
+        "metadata_path": "/home/haoyi/Downloads/xd/datasets/xd_stereo_flashocc_teacher_video_5fps/samples_val/001165/meta.yaml",
+        "metadata_sha256": "c928f3e41dda20e88ac1e2202cdd6142e90d6330d549b343b54e49c37f9575f3",
+        "rectified": true,
+        "right_path": "/home/haoyi/Downloads/xd/datasets/xd_stereo_flashocc_teacher_video_5fps/samples_val/001165/right_rect.jpg",
+        "sequence_id": "uvc_20260706_183939_677_2560x800_60fps",
+        "source_csv": "/home/haoyi/Downloads/xd/datasets/xd_stereo_flashocc_teacher_video_5fps/manifest_val.csv",
+        "source_csv_row": 1167,
+        "source_frame_index": 906,
+        "source_time_sec": 15.1,
+        "source_video": "/media/haoyi/T9/uvc-nvdec-2560x800-60/recordings/uvc_20260706_183939_677_2560x800_60fps.mkv",
+        "split_source": "val_excluded_frames",
+        "timestamp": 15.1,
+        "token": "val_001165"
+      },
+      {
+        "K": [
+          [
+            772.6184797147923,
+            0.0,
+            623.7779235839844
+          ],
+          [
+            0.0,
+            772.6184797147923,
+            384.73791122436523
+          ],
+          [
+            0.0,
+            0.0,
+            1.0
+          ]
+        ],
+        "K_right": [
+          [
+            772.6184797147923,
+            0.0,
+            623.7779235839844
+          ],
+          [
+            0.0,
+            772.6184797147923,
+            390.1379112243652
+          ],
+          [
+            0.0,
+            0.0,
+            1.0
+          ]
+        ],
+        "P_left": [
+          [
+            772.6184797147923,
+            0.0,
+            623.7779235839844,
+            0.0
+          ],
+          [
+            0.0,
+            772.6184797147923,
+            384.73791122436523,
+            0.0
+          ],
+          [
+            0.0,
+            0.0,
+            1.0,
+            0.0
+          ]
+        ],
+        "P_right": [
+          [
+            772.6184797147923,
+            0.0,
+            623.7779235839844,
+            -89.71967710133082
+          ],
+          [
+            0.0,
+            772.6184797147923,
+            390.1379112243652,
+            0.0
+          ],
+          [
+            0.0,
+            0.0,
+            1.0,
+            0.0
+          ]
+        ],
+        "baseline_from_projection_m": 0.11612416665784427,
+        "baseline_m": 0.11612416665784427,
+        "frame_id": 918,
+        "gt_disparity_path": null,
+        "image_size_wh": [
+          1280,
+          800
+        ],
+        "left_path": "/home/haoyi/Downloads/xd/datasets/xd_stereo_flashocc_teacher_video_5fps/samples_val/001166/left_rect.jpg",
+        "metadata_path": "/home/haoyi/Downloads/xd/datasets/xd_stereo_flashocc_teacher_video_5fps/samples_val/001166/meta.yaml",
+        "metadata_sha256": "a4b90ecd8f830244b1c4bbb9ff189350730a851b31ac2c839db2c0c66fcfb0da",
+        "rectified": true,
+        "right_path": "/home/haoyi/Downloads/xd/datasets/xd_stereo_flashocc_teacher_video_5fps/samples_val/001166/right_rect.jpg",
+        "sequence_id": "uvc_20260706_183939_677_2560x800_60fps",
+        "source_csv": "/home/haoyi/Downloads/xd/datasets/xd_stereo_flashocc_teacher_video_5fps/manifest_val.csv",
+        "source_csv_row": 1168,
+        "source_frame_index": 918,
+        "source_time_sec": 15.3,
+        "source_video": "/media/haoyi/T9/uvc-nvdec-2560x800-60/recordings/uvc_20260706_183939_677_2560x800_60fps.mkv",
+        "split_source": "val_excluded_frames",
+        "timestamp": 15.3,
+        "token": "val_001166"
+      },
+      {
+        "K": [
+          [
+            772.6184797147923,
+            0.0,
+            623.7779235839844
+          ],
+          [
+            0.0,
+            772.6184797147923,
+            384.73791122436523
+          ],
+          [
+            0.0,
+            0.0,
+            1.0
+          ]
+        ],
+        "K_right": [
+          [
+            772.6184797147923,
+            0.0,
+            623.7779235839844
+          ],
+          [
+            0.0,
+            772.6184797147923,
+            390.1379112243652
+          ],
+          [
+            0.0,
+            0.0,
+            1.0
+          ]
+        ],
+        "P_left": [
+          [
+            772.6184797147923,
+            0.0,
+            623.7779235839844,
+            0.0
+          ],
+          [
+            0.0,
+            772.6184797147923,
+            384.73791122436523,
+            0.0
+          ],
+          [
+            0.0,
+            0.0,
+            1.0,
+            0.0
+          ]
+        ],
+        "P_right": [
+          [
+            772.6184797147923,
+            0.0,
+            623.7779235839844,
+            -89.71967710133082
+          ],
+          [
+            0.0,
+            772.6184797147923,
+            390.1379112243652,
+            0.0
+          ],
+          [
+            0.0,
+            0.0,
+            1.0,
+            0.0
+          ]
+        ],
+        "baseline_from_projection_m": 0.11612416665784427,
+        "baseline_m": 0.11612416665784427,
+        "frame_id": 930,
+        "gt_disparity_path": null,
+        "image_size_wh": [
+          1280,
+          800
+        ],
+        "left_path": "/home/haoyi/Downloads/xd/datasets/xd_stereo_flashocc_teacher_video_5fps/samples_val/001167/left_rect.jpg",
+        "metadata_path": "/home/haoyi/Downloads/xd/datasets/xd_stereo_flashocc_teacher_video_5fps/samples_val/001167/meta.yaml",
+        "metadata_sha256": "906eeb51ffabd9f8b00be6d1e498e3e6ee8efc7a95587ed5118bff9d24c06279",
+        "rectified": true,
+        "right_path": "/home/haoyi/Downloads/xd/datasets/xd_stereo_flashocc_teacher_video_5fps/samples_val/001167/right_rect.jpg",
+        "sequence_id": "uvc_20260706_183939_677_2560x800_60fps",
+        "source_csv": "/home/haoyi/Downloads/xd/datasets/xd_stereo_flashocc_teacher_video_5fps/manifest_val.csv",
+        "source_csv_row": 1169,
+        "source_frame_index": 930,
+        "source_time_sec": 15.5,
+        "source_video": "/media/haoyi/T9/uvc-nvdec-2560x800-60/recordings/uvc_20260706_183939_677_2560x800_60fps.mkv",
+        "split_source": "val_excluded_frames",
+        "timestamp": 15.5,
+        "token": "val_001167"
+      },
+      {
+        "K": [
+          [
+            772.6184797147923,
+            0.0,
+            623.7779235839844
+          ],
+          [
+            0.0,
+            772.6184797147923,
+            384.73791122436523
+          ],
+          [
+            0.0,
+            0.0,
+            1.0
+          ]
+        ],
+        "K_right": [
+          [
+            772.6184797147923,
+            0.0,
+            623.7779235839844
+          ],
+          [
+            0.0,
+            772.6184797147923,
+            390.1379112243652
+          ],
+          [
+            0.0,
+            0.0,
+            1.0
+          ]
+        ],
+        "P_left": [
+          [
+            772.6184797147923,
+            0.0,
+            623.7779235839844,
+            0.0
+          ],
+          [
+            0.0,
+            772.6184797147923,
+            384.73791122436523,
+            0.0
+          ],
+          [
+            0.0,
+            0.0,
+            1.0,
+            0.0
+          ]
+        ],
+        "P_right": [
+          [
+            772.6184797147923,
+            0.0,
+            623.7779235839844,
+            -89.71967710133082
+          ],
+          [
+            0.0,
+            772.6184797147923,
+            390.1379112243652,
+            0.0
+          ],
+          [
+            0.0,
+            0.0,
+            1.0,
+            0.0
+          ]
+        ],
+        "baseline_from_projection_m": 0.11612416665784427,
+        "baseline_m": 0.11612416665784427,
+        "frame_id": 942,
+        "gt_disparity_path": null,
+        "image_size_wh": [
+          1280,
+          800
+        ],
+        "left_path": "/home/haoyi/Downloads/xd/datasets/xd_stereo_flashocc_teacher_video_5fps/samples_val/001168/left_rect.jpg",
+        "metadata_path": "/home/haoyi/Downloads/xd/datasets/xd_stereo_flashocc_teacher_video_5fps/samples_val/001168/meta.yaml",
+        "metadata_sha256": "8165d1536af6a66a19311df6fb54e2a184951e44819af240c2ed50e282fac57a",
+        "rectified": true,
+        "right_path": "/home/haoyi/Downloads/xd/datasets/xd_stereo_flashocc_teacher_video_5fps/samples_val/001168/right_rect.jpg",
+        "sequence_id": "uvc_20260706_183939_677_2560x800_60fps",
+        "source_csv": "/home/haoyi/Downloads/xd/datasets/xd_stereo_flashocc_teacher_video_5fps/manifest_val.csv",
+        "source_csv_row": 1170,
+        "source_frame_index": 942,
+        "source_time_sec": 15.7,
+        "source_video": "/media/haoyi/T9/uvc-nvdec-2560x800-60/recordings/uvc_20260706_183939_677_2560x800_60fps.mkv",
+        "split_source": "val_excluded_frames",
+        "timestamp": 15.7,
+        "token": "val_001168"
+      },
+      {
+        "K": [
+          [
+            772.6184797147923,
+            0.0,
+            623.7779235839844
+          ],
+          [
+            0.0,
+            772.6184797147923,
+            384.73791122436523
+          ],
+          [
+            0.0,
+            0.0,
+            1.0
+          ]
+        ],
+        "K_right": [
+          [
+            772.6184797147923,
+            0.0,
+            623.7779235839844
+          ],
+          [
+            0.0,
+            772.6184797147923,
+            390.1379112243652
+          ],
+          [
+            0.0,
+            0.0,
+            1.0
+          ]
+        ],
+        "P_left": [
+          [
+            772.6184797147923,
+            0.0,
+            623.7779235839844,
+            0.0
+          ],
+          [
+            0.0,
+            772.6184797147923,
+            384.73791122436523,
+            0.0
+          ],
+          [
+            0.0,
+            0.0,
+            1.0,
+            0.0
+          ]
+        ],
+        "P_right": [
+          [
+            772.6184797147923,
+            0.0,
+            623.7779235839844,
+            -89.71967710133082
+          ],
+          [
+            0.0,
+            772.6184797147923,
+            390.1379112243652,
+            0.0
+          ],
+          [
+            0.0,
+            0.0,
+            1.0,
+            0.0
+          ]
+        ],
+        "baseline_from_projection_m": 0.11612416665784427,
+        "baseline_m": 0.11612416665784427,
+        "frame_id": 954,
+        "gt_disparity_path": null,
+        "image_size_wh": [
+          1280,
+          800
+        ],
+        "left_path": "/home/haoyi/Downloads/xd/datasets/xd_stereo_flashocc_teacher_video_5fps/samples_val/001169/left_rect.jpg",
+        "metadata_path": "/home/haoyi/Downloads/xd/datasets/xd_stereo_flashocc_teacher_video_5fps/samples_val/001169/meta.yaml",
+        "metadata_sha256": "69c3117459df99c18bbed335cea30c285ec0c7bacca62af2f812f022051aa93c",
+        "rectified": true,
+        "right_path": "/home/haoyi/Downloads/xd/datasets/xd_stereo_flashocc_teacher_video_5fps/samples_val/001169/right_rect.jpg",
+        "sequence_id": "uvc_20260706_183939_677_2560x800_60fps",
+        "source_csv": "/home/haoyi/Downloads/xd/datasets/xd_stereo_flashocc_teacher_video_5fps/manifest_val.csv",
+        "source_csv_row": 1171,
+        "source_frame_index": 954,
+        "source_time_sec": 15.9,
+        "source_video": "/media/haoyi/T9/uvc-nvdec-2560x800-60/recordings/uvc_20260706_183939_677_2560x800_60fps.mkv",
+        "split_source": "val_excluded_frames",
+        "timestamp": 15.9,
+        "token": "val_001169"
+      }
+    ],
+    "sequence_id": "uvc_20260706_183939_677_2560x800_60fps",
+    "target_frame_id": 954,
+    "target_timestamp": 15.9,
+    "window_index": 0
+  },
+  "checkpoint": {
+    "path": "/home/haoyi/.cache/modelscope/hub/models/facebook/VGGT-Omega/vggt_omega_1b_512.pt",
+    "sha256": "c02da418b18bb01d0392598d3f6147366bcde1bb70fd08a5e3bf7925b0667934",
+    "size_bytes": 4576706117
+  },
+  "checks": [
+    {
+      "detail": {
+        "dirty": false,
+        "head": "282ec70363edeff59424bf43731658092fba3d37",
+        "path": "/home/haoyi/ffs_omega_tsr/third_party/vggt-omega",
+        "remote": "https://github.com/facebookresearch/vggt-omega.git",
+        "status_porcelain": []
+      },
+      "name": "upstream_identity",
+      "status": "PASS"
+    },
+    {
+      "name": "required_inputs",
+      "status": "PASS"
+    },
+    {
+      "detail": {
+        "adapter": "backbones.vggt_omega_adapter.VGGTOmegaAdapter",
+        "model": "vggt_omega.models.VGGTOmega",
+        "torch": "2.10.0+cu128"
+      },
+      "name": "official_api_import",
+      "status": "PASS"
+    },
+    {
+      "detail": true,
+      "name": "model_frozen_eval",
+      "status": "PASS"
+    },
+    {
+      "detail": true,
+      "name": "outputs_all_finite",
+      "status": "PASS"
+    },
+    {
+      "detail": true,
+      "name": "causal_sequence_length_10",
+      "status": "PASS"
+    },
+    {
+      "detail": true,
+      "name": "camera_and_register_tokens_split",
+      "status": "PASS"
+    },
+    {
+      "detail": true,
+      "name": "preprocessing_transforms_recorded",
+      "status": "PASS"
+    }
+  ],
+  "created_at_utc": "2026-08-31T21:43:24+00:00",
+  "hostname": "haoyi-System-Product-Name",
+  "image_order_contract": "L[t-4],R[t-4],L[t-3],R[t-3],L[t-2],R[t-2],L[t-1],R[t-1],L[t],R[t]",
+  "inputs": [
+    {
+      "height": 800,
+      "index": 0,
+      "mode": "RGB",
+      "path": "/home/haoyi/Downloads/xd/datasets/xd_stereo_flashocc_teacher_video_5fps/samples_val/001165/left_rect.jpg",
+      "sha256": "340b1044a4bd08420c7e3d21fa09a0d0b344e489078e4dc80afe05ba13e5fcb9",
+      "view_label": "L[t-4]",
+      "width": 1280
+    },
+    {
+      "height": 800,
+      "index": 1,
+      "mode": "RGB",
+      "path": "/home/haoyi/Downloads/xd/datasets/xd_stereo_flashocc_teacher_video_5fps/samples_val/001165/right_rect.jpg",
+      "sha256": "13e7960a046db396d00c1061663248604da7ed125af538b1dc9db4a945e3dcb7",
+      "view_label": "R[t-4]",
+      "width": 1280
+    },
+    {
+      "height": 800,
+      "index": 2,
+      "mode": "RGB",
+      "path": "/home/haoyi/Downloads/xd/datasets/xd_stereo_flashocc_teacher_video_5fps/samples_val/001166/left_rect.jpg",
+      "sha256": "1078ebd3edb852c51111982c28389f7ba838ca4b7fd4ac52de9450c9c2b6f548",
+      "view_label": "L[t-3]",
+      "width": 1280
+    },
+    {
+      "height": 800,
+      "index": 3,
+      "mode": "RGB",
+      "path": "/home/haoyi/Downloads/xd/datasets/xd_stereo_flashocc_teacher_video_5fps/samples_val/001166/right_rect.jpg",
+      "sha256": "dca924e6b47d2eb6769ca13d15353ce7f8e2bbbb6252c651135b1957b37e511b",
+      "view_label": "R[t-3]",
+      "width": 1280
+    },
+    {
+      "height": 800,
+      "index": 4,
+      "mode": "RGB",
+      "path": "/home/haoyi/Downloads/xd/datasets/xd_stereo_flashocc_teacher_video_5fps/samples_val/001167/left_rect.jpg",
+      "sha256": "e609a046c42089f82c12a32eee99ffa069e451cead602cfee7d8b2ef0a806854",
+      "view_label": "L[t-2]",
+      "width": 1280
+    },
+    {
+      "height": 800,
+      "index": 5,
+      "mode": "RGB",
+      "path": "/home/haoyi/Downloads/xd/datasets/xd_stereo_flashocc_teacher_video_5fps/samples_val/001167/right_rect.jpg",
+      "sha256": "c15d6e0f70d54fce80c998c04b58454af40ba3a9d7976c3bc21b8b07b228cfb5",
+      "view_label": "R[t-2]",
+      "width": 1280
+    },
+    {
+      "height": 800,
+      "index": 6,
+      "mode": "RGB",
+      "path": "/home/haoyi/Downloads/xd/datasets/xd_stereo_flashocc_teacher_video_5fps/samples_val/001168/left_rect.jpg",
+      "sha256": "b68fdd897bd7b6fe18c8c04975f0a7692a22f5923bb6358b6d59690b27dd45b3",
+      "view_label": "L[t-1]",
+      "width": 1280
+    },
+    {
+      "height": 800,
+      "index": 7,
+      "mode": "RGB",
+      "path": "/home/haoyi/Downloads/xd/datasets/xd_stereo_flashocc_teacher_video_5fps/samples_val/001168/right_rect.jpg",
+      "sha256": "e41c9249418e5df3e480213b1db426b3d72ad8620f00019d0f0177a2dfe65ac8",
+      "view_label": "R[t-1]",
+      "width": 1280
+    },
+    {
+      "height": 800,
+      "index": 8,
+      "mode": "RGB",
+      "path": "/home/haoyi/Downloads/xd/datasets/xd_stereo_flashocc_teacher_video_5fps/samples_val/001169/left_rect.jpg",
+      "sha256": "e32b228f14d16f40ecb0afe0311a32f5aefc50db7ee92f0e87790da7d900bace",
+      "view_label": "L[t]",
+      "width": 1280
+    },
+    {
+      "height": 800,
+      "index": 9,
+      "mode": "RGB",
+      "path": "/home/haoyi/Downloads/xd/datasets/xd_stereo_flashocc_teacher_video_5fps/samples_val/001169/right_rect.jpg",
+      "sha256": "6393276b4106477bd03b42070f7433fbe90759710538c64dc78a7f5b2dfc4c3d",
+      "view_label": "R[t]",
+      "width": 1280
+    }
+  ],
+  "kind": "smoke:vggt-omega",
+  "outputs": {
+    "calibrated_intrinsics_model_geometry_owner": {
+      "dtype": "torch.float32",
+      "finite_fraction": 1.0,
+      "max": 386.3092346191406,
+      "mean": 142.13626098632812,
+      "min": 0.0,
+      "shape": [
+        1,
+        10,
+        3,
+        3
+      ]
+    },
+    "calibrated_intrinsics_original_geometry_owner": {
+      "dtype": "torch.float32",
+      "finite_fraction": 1.0,
+      "max": 772.6184692382812,
+      "mean": 284.1614074707031,
+      "min": 0.0,
+      "shape": [
+        1,
+        10,
+        3,
+        3
+      ]
+    },
+    "camera_tokens": {
+      "dtype": "torch.float32",
+      "finite_fraction": 1.0,
+      "max": 24.360767364501953,
+      "mean": 0.0315837636590004,
+      "min": -181.8645782470703,
+      "shape": [
+        1,
+        10,
+        1,
+        2048
+      ]
+    },
+    "depth_camera_z_arbitrary_scale": {
+      "dtype": "torch.float32",
+      "finite_fraction": 1.0,
+      "max": 6.955532073974609,
+      "mean": 1.753260850906372,
+      "min": 0.05114659294486046,
+      "shape": [
+        1,
+        10,
+        400,
+        640,
+        1
+      ]
+    },
+    "depth_confidence_unbounded_gt_one": {
+      "dtype": "torch.float32",
+      "finite_fraction": 1.0,
+      "max": 13.50728702545166,
+      "mean": 2.1615476608276367,
+      "min": 1.0000035762786865,
+      "shape": [
+        1,
+        10,
+        400,
+        640
+      ]
+    },
+    "extrinsics_camera_from_world_opencv": {
+      "dtype": "torch.float32",
+      "finite_fraction": 1.0,
+      "max": 0.9999998807907104,
+      "mean": 0.24631886184215546,
+      "min": -0.3006249666213989,
+      "shape": [
+        1,
+        10,
+        3,
+        4
+      ]
+    },
+    "pose_encoding": {
+      "dtype": "torch.float32",
+      "finite_fraction": 1.0,
+      "max": 1.3701430559158325,
+      "mean": 0.1614493429660797,
+      "min": -1.0005494356155396,
+      "shape": [
+        1,
+        10,
+        9
+      ]
+    },
+    "predicted_intrinsics_diagnostic_only": {
+      "dtype": "torch.float32",
+      "finite_fraction": 1.0,
+      "max": 395.5494384765625,
+      "mean": 145.26124572753906,
+      "min": 0.0,
+      "shape": [
+        1,
+        10,
+        3,
+        3
+      ]
+    },
+    "register_tokens": {
+      "dtype": "torch.float32",
+      "finite_fraction": 1.0,
+      "max": 29.624740600585938,
+      "mean": 0.029088957235217094,
+      "min": -178.75640869140625,
+      "shape": [
+        1,
+        10,
+        16,
+        2048
+      ]
+    }
+  },
+  "preprocessing": [
+    {
+      "crop_order": "left,top,right,bottom; right/bottom exclusive",
+      "crop_xyxy": [
+        0,
+        0,
+        1280,
+        800
+      ],
+      "cropped_size_hw": [
+        800,
+        1280
+      ],
+      "model_size_hw": [
+        400,
+        640
+      ],
+      "model_to_original_3x3": [
+        [
+          2.0,
+          0.0,
+          0.0
+        ],
+        [
+          0.0,
+          2.0,
+          0.0
+        ],
+        [
+          0.0,
+          0.0,
+          1.0
+        ]
+      ],
+      "original_size_hw": [
+        800,
+        1280
+      ],
+      "original_to_model_3x3": [
+        [
+          0.5,
+          0.0,
+          0.0
+        ],
+        [
+          0.0,
+          0.5,
+          0.0
+        ],
+        [
+          0.0,
+          0.0,
+          1.0
+        ]
+      ],
+      "padding_lrtb": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "resize_scale_xy": [
+        0.5,
+        0.5
+      ],
+      "resized_size_hw": [
+        400,
+        640
+      ],
+      "size_order": "height,width",
+      "source_path": "/home/haoyi/Downloads/xd/datasets/xd_stereo_flashocc_teacher_video_5fps/samples_val/001165/left_rect.jpg",
+      "transform_coordinate_convention": "continuous pixels; no half-pixel offset"
+    },
+    {
+      "crop_order": "left,top,right,bottom; right/bottom exclusive",
+      "crop_xyxy": [
+        0,
+        0,
+        1280,
+        800
+      ],
+      "cropped_size_hw": [
+        800,
+        1280
+      ],
+      "model_size_hw": [
+        400,
+        640
+      ],
+      "model_to_original_3x3": [
+        [
+          2.0,
+          0.0,
+          0.0
+        ],
+        [
+          0.0,
+          2.0,
+          0.0
+        ],
+        [
+          0.0,
+          0.0,
+          1.0
+        ]
+      ],
+      "original_size_hw": [
+        800,
+        1280
+      ],
+      "original_to_model_3x3": [
+        [
+          0.5,
+          0.0,
+          0.0
+        ],
+        [
+          0.0,
+          0.5,
+          0.0
+        ],
+        [
+          0.0,
+          0.0,
+          1.0
+        ]
+      ],
+      "padding_lrtb": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "resize_scale_xy": [
+        0.5,
+        0.5
+      ],
+      "resized_size_hw": [
+        400,
+        640
+      ],
+      "size_order": "height,width",
+      "source_path": "/home/haoyi/Downloads/xd/datasets/xd_stereo_flashocc_teacher_video_5fps/samples_val/001165/right_rect.jpg",
+      "transform_coordinate_convention": "continuous pixels; no half-pixel offset"
+    },
+    {
+      "crop_order": "left,top,right,bottom; right/bottom exclusive",
+      "crop_xyxy": [
+        0,
+        0,
+        1280,
+        800
+      ],
+      "cropped_size_hw": [
+        800,
+        1280
+      ],
+      "model_size_hw": [
+        400,
+        640
+      ],
+      "model_to_original_3x3": [
+        [
+          2.0,
+          0.0,
+          0.0
+        ],
+        [
+          0.0,
+          2.0,
+          0.0
+        ],
+        [
+          0.0,
+          0.0,
+          1.0
+        ]
+      ],
+      "original_size_hw": [
+        800,
+        1280
+      ],
+      "original_to_model_3x3": [
+        [
+          0.5,
+          0.0,
+          0.0
+        ],
+        [
+          0.0,
+          0.5,
+          0.0
+        ],
+        [
+          0.0,
+          0.0,
+          1.0
+        ]
+      ],
+      "padding_lrtb": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "resize_scale_xy": [
+        0.5,
+        0.5
+      ],
+      "resized_size_hw": [
+        400,
+        640
+      ],
+      "size_order": "height,width",
+      "source_path": "/home/haoyi/Downloads/xd/datasets/xd_stereo_flashocc_teacher_video_5fps/samples_val/001166/left_rect.jpg",
+      "transform_coordinate_convention": "continuous pixels; no half-pixel offset"
+    },
+    {
+      "crop_order": "left,top,right,bottom; right/bottom exclusive",
+      "crop_xyxy": [
+        0,
+        0,
+        1280,
+        800
+      ],
+      "cropped_size_hw": [
+        800,
+        1280
+      ],
+      "model_size_hw": [
+        400,
+        640
+      ],
+      "model_to_original_3x3": [
+        [
+          2.0,
+          0.0,
+          0.0
+        ],
+        [
+          0.0,
+          2.0,
+          0.0
+        ],
+        [
+          0.0,
+          0.0,
+          1.0
+        ]
+      ],
+      "original_size_hw": [
+        800,
+        1280
+      ],
+      "original_to_model_3x3": [
+        [
+          0.5,
+          0.0,
+          0.0
+        ],
+        [
+          0.0,
+          0.5,
+          0.0
+        ],
+        [
+          0.0,
+          0.0,
+          1.0
+        ]
+      ],
+      "padding_lrtb": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "resize_scale_xy": [
+        0.5,
+        0.5
+      ],
+      "resized_size_hw": [
+        400,
+        640
+      ],
+      "size_order": "height,width",
+      "source_path": "/home/haoyi/Downloads/xd/datasets/xd_stereo_flashocc_teacher_video_5fps/samples_val/001166/right_rect.jpg",
+      "transform_coordinate_convention": "continuous pixels; no half-pixel offset"
+    },
+    {
+      "crop_order": "left,top,right,bottom; right/bottom exclusive",
+      "crop_xyxy": [
+        0,
+        0,
+        1280,
+        800
+      ],
+      "cropped_size_hw": [
+        800,
+        1280
+      ],
+      "model_size_hw": [
+        400,
+        640
+      ],
+      "model_to_original_3x3": [
+        [
+          2.0,
+          0.0,
+          0.0
+        ],
+        [
+          0.0,
+          2.0,
+          0.0
+        ],
+        [
+          0.0,
+          0.0,
+          1.0
+        ]
+      ],
+      "original_size_hw": [
+        800,
+        1280
+      ],
+      "original_to_model_3x3": [
+        [
+          0.5,
+          0.0,
+          0.0
+        ],
+        [
+          0.0,
+          0.5,
+          0.0
+        ],
+        [
+          0.0,
+          0.0,
+          1.0
+        ]
+      ],
+      "padding_lrtb": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "resize_scale_xy": [
+        0.5,
+        0.5
+      ],
+      "resized_size_hw": [
+        400,
+        640
+      ],
+      "size_order": "height,width",
+      "source_path": "/home/haoyi/Downloads/xd/datasets/xd_stereo_flashocc_teacher_video_5fps/samples_val/001167/left_rect.jpg",
+      "transform_coordinate_convention": "continuous pixels; no half-pixel offset"
+    },
+    {
+      "crop_order": "left,top,right,bottom; right/bottom exclusive",
+      "crop_xyxy": [
+        0,
+        0,
+        1280,
+        800
+      ],
+      "cropped_size_hw": [
+        800,
+        1280
+      ],
+      "model_size_hw": [
+        400,
+        640
+      ],
+      "model_to_original_3x3": [
+        [
+          2.0,
+          0.0,
+          0.0
+        ],
+        [
+          0.0,
+          2.0,
+          0.0
+        ],
+        [
+          0.0,
+          0.0,
+          1.0
+        ]
+      ],
+      "original_size_hw": [
+        800,
+        1280
+      ],
+      "original_to_model_3x3": [
+        [
+          0.5,
+          0.0,
+          0.0
+        ],
+        [
+          0.0,
+          0.5,
+          0.0
+        ],
+        [
+          0.0,
+          0.0,
+          1.0
+        ]
+      ],
+      "padding_lrtb": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "resize_scale_xy": [
+        0.5,
+        0.5
+      ],
+      "resized_size_hw": [
+        400,
+        640
+      ],
+      "size_order": "height,width",
+      "source_path": "/home/haoyi/Downloads/xd/datasets/xd_stereo_flashocc_teacher_video_5fps/samples_val/001167/right_rect.jpg",
+      "transform_coordinate_convention": "continuous pixels; no half-pixel offset"
+    },
+    {
+      "crop_order": "left,top,right,bottom; right/bottom exclusive",
+      "crop_xyxy": [
+        0,
+        0,
+        1280,
+        800
+      ],
+      "cropped_size_hw": [
+        800,
+        1280
+      ],
+      "model_size_hw": [
+        400,
+        640
+      ],
+      "model_to_original_3x3": [
+        [
+          2.0,
+          0.0,
+          0.0
+        ],
+        [
+          0.0,
+          2.0,
+          0.0
+        ],
+        [
+          0.0,
+          0.0,
+          1.0
+        ]
+      ],
+      "original_size_hw": [
+        800,
+        1280
+      ],
+      "original_to_model_3x3": [
+        [
+          0.5,
+          0.0,
+          0.0
+        ],
+        [
+          0.0,
+          0.5,
+          0.0
+        ],
+        [
+          0.0,
+          0.0,
+          1.0
+        ]
+      ],
+      "padding_lrtb": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "resize_scale_xy": [
+        0.5,
+        0.5
+      ],
+      "resized_size_hw": [
+        400,
+        640
+      ],
+      "size_order": "height,width",
+      "source_path": "/home/haoyi/Downloads/xd/datasets/xd_stereo_flashocc_teacher_video_5fps/samples_val/001168/left_rect.jpg",
+      "transform_coordinate_convention": "continuous pixels; no half-pixel offset"
+    },
+    {
+      "crop_order": "left,top,right,bottom; right/bottom exclusive",
+      "crop_xyxy": [
+        0,
+        0,
+        1280,
+        800
+      ],
+      "cropped_size_hw": [
+        800,
+        1280
+      ],
+      "model_size_hw": [
+        400,
+        640
+      ],
+      "model_to_original_3x3": [
+        [
+          2.0,
+          0.0,
+          0.0
+        ],
+        [
+          0.0,
+          2.0,
+          0.0
+        ],
+        [
+          0.0,
+          0.0,
+          1.0
+        ]
+      ],
+      "original_size_hw": [
+        800,
+        1280
+      ],
+      "original_to_model_3x3": [
+        [
+          0.5,
+          0.0,
+          0.0
+        ],
+        [
+          0.0,
+          0.5,
+          0.0
+        ],
+        [
+          0.0,
+          0.0,
+          1.0
+        ]
+      ],
+      "padding_lrtb": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "resize_scale_xy": [
+        0.5,
+        0.5
+      ],
+      "resized_size_hw": [
+        400,
+        640
+      ],
+      "size_order": "height,width",
+      "source_path": "/home/haoyi/Downloads/xd/datasets/xd_stereo_flashocc_teacher_video_5fps/samples_val/001168/right_rect.jpg",
+      "transform_coordinate_convention": "continuous pixels; no half-pixel offset"
+    },
+    {
+      "crop_order": "left,top,right,bottom; right/bottom exclusive",
+      "crop_xyxy": [
+        0,
+        0,
+        1280,
+        800
+      ],
+      "cropped_size_hw": [
+        800,
+        1280
+      ],
+      "model_size_hw": [
+        400,
+        640
+      ],
+      "model_to_original_3x3": [
+        [
+          2.0,
+          0.0,
+          0.0
+        ],
+        [
+          0.0,
+          2.0,
+          0.0
+        ],
+        [
+          0.0,
+          0.0,
+          1.0
+        ]
+      ],
+      "original_size_hw": [
+        800,
+        1280
+      ],
+      "original_to_model_3x3": [
+        [
+          0.5,
+          0.0,
+          0.0
+        ],
+        [
+          0.0,
+          0.5,
+          0.0
+        ],
+        [
+          0.0,
+          0.0,
+          1.0
+        ]
+      ],
+      "padding_lrtb": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "resize_scale_xy": [
+        0.5,
+        0.5
+      ],
+      "resized_size_hw": [
+        400,
+        640
+      ],
+      "size_order": "height,width",
+      "source_path": "/home/haoyi/Downloads/xd/datasets/xd_stereo_flashocc_teacher_video_5fps/samples_val/001169/left_rect.jpg",
+      "transform_coordinate_convention": "continuous pixels; no half-pixel offset"
+    },
+    {
+      "crop_order": "left,top,right,bottom; right/bottom exclusive",
+      "crop_xyxy": [
+        0,
+        0,
+        1280,
+        800
+      ],
+      "cropped_size_hw": [
+        800,
+        1280
+      ],
+      "model_size_hw": [
+        400,
+        640
+      ],
+      "model_to_original_3x3": [
+        [
+          2.0,
+          0.0,
+          0.0
+        ],
+        [
+          0.0,
+          2.0,
+          0.0
+        ],
+        [
+          0.0,
+          0.0,
+          1.0
+        ]
+      ],
+      "original_size_hw": [
+        800,
+        1280
+      ],
+      "original_to_model_3x3": [
+        [
+          0.5,
+          0.0,
+          0.0
+        ],
+        [
+          0.0,
+          0.5,
+          0.0
+        ],
+        [
+          0.0,
+          0.0,
+          1.0
+        ]
+      ],
+      "padding_lrtb": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "resize_scale_xy": [
+        0.5,
+        0.5
+      ],
+      "resized_size_hw": [
+        400,
+        640
+      ],
+      "size_order": "height,width",
+      "source_path": "/home/haoyi/Downloads/xd/datasets/xd_stereo_flashocc_teacher_video_5fps/samples_val/001169/right_rect.jpg",
+      "transform_coordinate_convention": "continuous pixels; no half-pixel offset"
+    }
+  ],
+  "runtime": {
+    "compute_capability": [
+      12,
+      0
+    ],
+    "device": "NVIDIA GeForce RTX 5090",
+    "elapsed_seconds": 1.9383056900114752,
+    "peak_cuda_memory_bytes": 6035550208
+  },
+  "schema_version": 1,
+  "status": "PASS",
+  "upstream": {
+    "dirty": false,
+    "expected": {
+      "commit": "282ec70363edeff59424bf43731658092fba3d37",
+      "license": "VGGT-Omega License plus FAIR Acceptable Use Policy; non-commercial research only",
+      "path": "third_party/vggt-omega",
+      "remote": "https://github.com/facebookresearch/vggt-omega.git"
+    },
+    "head": "282ec70363edeff59424bf43731658092fba3d37",
+    "path": "/home/haoyi/ffs_omega_tsr/third_party/vggt-omega",
+    "remote": "https://github.com/facebookresearch/vggt-omega.git",
+    "status_porcelain": []
+  }
+}

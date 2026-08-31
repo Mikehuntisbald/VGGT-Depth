@@ -1,0 +1,221 @@
+# Decision log
+
+## D-001 — Project root
+
+- Date: 2026-09-01
+- Status: accepted
+- Context: `/home/haoyi` was not an empty repository and no project path was supplied.
+- Decision: create the repository at `/home/haoyi/ffs_omega_tsr`.
+- Rationale: it matches the agreed project name and avoids modifying the active ComfyUI repository.
+- Consequence: all runbook paths are rooted there.
+- Revisit trigger: the user explicitly requests relocation.
+- Evidence: M0 repository scaffold.
+
+## D-002 — Three isolated environments and cache boundary
+
+- Date: 2026-09-01
+- Status: accepted
+- Context: FFS and VGGT-Ω have independent upstream dependencies.
+- Decision: use `env-ffs`, `env-vggt`, and `env-tsr`; exchange only versioned disk caches.
+- Rationale: upstream dependency changes cannot silently alter training.
+- Consequence: backbone optimizer state is impossible in the default training environment.
+- Revisit trigger: a reproducible unified deployment environment is built after the PyTorch baseline.
+- Evidence: `reports/m0/env_*.json`.
+
+## D-003 — Blackwell PyTorch baseline
+
+- Date: 2026-09-01
+- Status: accepted
+- Context: the FFS README shows an older cu124 recipe unsuitable for this RTX 5090 target.
+- Decision: pin M0 to PyTorch 2.10.0+cu128 and torchvision 0.25.0+cu128.
+- Rationale: all three environments execute finite FP16/BF16 kernels on SM120.
+- Consequence: upstream installation must not resolve or downgrade Torch.
+- Revisit trigger: an intentional cu129/cu130 migration with new receipts.
+- Evidence: `reports/m0/env_*.json`.
+
+## D-004 — Read-only pinned upstreams
+
+- Date: 2026-09-01
+- Status: accepted
+- Context: adapters and hooks are required; upstream forks would weaken provenance.
+- Decision: use HTTPS submodules pinned in `third_party/LOCK.json` and reject dirty trees in smoke tests.
+- Rationale: exact source identity remains auditable.
+- Consequence: every extension lives outside `third_party`.
+- Revisit trigger: an upstream incompatibility that cannot be wrapped, requiring a separately reviewed patch set.
+- Evidence: `.gitmodules`, `third_party/LOCK.json`, smoke receipts.
+
+## D-005 — M0 status semantics; no fake fallbacks
+
+- Date: 2026-09-01
+- Status: accepted
+- Context: missing gated weights or real data must not look like successful inference.
+- Decision: use `PASS`, `PASS_WITH_FALLBACK`, `FAIL`, `BLOCKED`, and `NOT_RUN`; write receipts on every exit.
+- Rationale: experiment claims remain tied to executed evidence.
+- Consequence: M0 may pass only after both backbones have real receipts; this is now satisfied, with the FFS compatibility fallback kept visible.
+- Revisit trigger: never; schemas may version but meanings stay stable.
+- Evidence: `tools/_m0_status.py`, `reports/m0/`.
+
+## D-006 — FFS M0 checkpoint is provisional
+
+- Date: 2026-09-01
+- Status: accepted for interface smoke only
+- Context: the machine already had a `20-26-39` FFS artifact, but not the final `20-30-48` observation and `23-36-37` teacher pair. Upstream publishes no checksums.
+- Decision: copy the candidate into ignored project checkpoint storage, record source/size/hash, and use it only for a real M0 interface smoke.
+- Rationale: it validates current official code on the 5090 without pretending the final experiment identity exists.
+- Consequence: M1 cache generation is blocked on the two intended official model tiers.
+- Revisit trigger: official binaries become downloadable and are hashed.
+- Evidence: `reports/m0/smoke_ffs_local_20-26-39.json`.
+
+## D-007 — FFS backend and compilation
+
+- Date: 2026-09-01
+- Status: accepted
+- Context: the upstream Triton volume path is optional; the official `pytorch1` helpers still carry `torch.compile` decorators.
+- Decision: request `pytorch1` directly for MVP correctness and keep TSR `compile_model: false`.
+- Rationale: this removes the custom Triton volume dependency without mislabeling the upstream compiled helpers as eager execution.
+- Consequence: first-forward latency is not a steady-state speed measurement.
+- Revisit trigger: a separate matched backend benchmark after correctness.
+- Evidence: `configs/mvp_x2.yaml`, `reports/m0/smoke_ffs.json`.
+
+## D-008 — VGGT-Ω interface and checkpoint warning
+
+- Date: 2026-09-01
+- Status: accepted
+- Context: VGGT-Ω has no causal flag, its preprocessor omits transform metadata, and its 1B checkpoint is gated. The upstream README added a 2026-08-18 benchmark-contamination notice.
+- Decision: causality is enforced by the supplied five-pair window; the M2 adapter will reconstruct crop/resize/pad transforms; the released model may be used for unrelated downstream work, but affected Table 1/2 results will not support paper claims.
+- Rationale: this matches the real public API and its disclosed limitation.
+- Consequence: affected paper benchmarks remain excluded even though the M0 downstream smoke now passes.
+- Revisit trigger: upstream publishes a corrected checkpoint or updated notice.
+- Evidence: pinned VGGT-Ω README and `reports/m0/smoke_vggt.json`.
+
+## D-009 — Cache location capacity
+
+- Date: 2026-09-01
+- Status: accepted
+- Context: `/media/haoyi/T9` has only about 90 GiB free while `/home` has about 1.2 TiB free.
+- Decision: do not default a new large cache to T9 without an explicit capacity budget; select `CACHE_ROOT` before M1.
+- Rationale: offline FFS/VGGT caches can be much larger than checkpoints.
+- Consequence: M1 cannot start until dataset size and cache budget are known.
+- Revisit trigger: storage is cleared or a dedicated cache volume is supplied.
+- Evidence: M0 disk audit.
+
+## D-010 — NGC v1.2 checkpoint compatibility is explicit
+
+- Date: 2026-09-01
+- Status: accepted for M0 interface smoke only
+- Context: NVIDIA NGC publishes a signed/content-addressed v1.2 FFS checkpoint, but its serialized `args` lacks `normalize`; current GitHub source reads `self.args.normalize` directly.
+- Decision: preserve the strict FAIL receipt, then run a separate `PASS_WITH_FALLBACK` probe with `--missing-normalize true`, matching the upstream volume helper's legacy default. Never inject the field silently.
+- Rationale: official artifact provenance and source/checkpoint compatibility are two different facts, and both must remain visible.
+- Consequence: NGC v1.2 proves the official artifact can execute through the wrapped source but is not assigned to the final GitHub fast/teacher tier identities.
+- Revisit trigger: NVIDIA publishes a source-compatible checkpoint, tier mapping, or compatibility guidance.
+- Evidence: `reports/m0/smoke_ffs_ngc_strict.json`, `reports/m0/smoke_ffs_ngc_compat.json`.
+
+## D-011 — Reuse the verified ModelScope VGGT-Ω cache
+
+- Date: 2026-09-01
+- Status: accepted
+- Context: the required 1B-512 checkpoint already exists under the user's ModelScope cache, while the prior Hugging Face account check was not approved.
+- Decision: symlink the ignored project checkpoint path to the cached artifact instead of copying it; record its byte size and SHA-256 in every smoke/cache provenance record.
+- Rationale: this avoids a redundant 4.58 GB copy and uses the exact artifact the user identified.
+- Consequence: local runs depend on the cache path; portability requires restoring a file with the recorded hash.
+- Revisit trigger: the cache moves or an upstream checksum/new checkpoint is published.
+- Evidence: `reports/m0/smoke_vggt.json`.
+
+## D-012 — M0 VGGT window is a real causal rectified sequence
+
+- Date: 2026-09-01
+- Status: accepted for smoke evidence
+- Context: an interface PASS requires ten real ordered images rather than repeated placeholders.
+- Decision: use validation tokens `val_000033` through `val_000037`, ordered left/right at 21.7, 21.9, 22.1, 22.3, and 22.5 seconds from one source video.
+- Rationale: the per-frame metadata records a common source, 12-frame/0.2-second increments, `rectified: true`, and a 0.116124 m baseline.
+- Consequence: this window validates M0 I/O only; its pose scale/quality is not M2 evidence.
+- Revisit trigger: M2 selects the formal training/evaluation manifest.
+- Evidence: `reports/m0/vggt_smoke_window.json`, `reports/m0/smoke_vggt.json`.
+
+## D-013 — Video-isolated formal split
+
+- Date: 2026-09-01
+- Status: accepted
+- Context: the provided train/validation CSVs contain 0.1-second interleaved frames from the same three videos.
+- Decision: train uses videos `172530` and `191627` (2,787 frames); validation uses video `183939` (244 frames).
+- Rationale: an interleaved split would leak nearly adjacent views and inflate validation results.
+- Consequence: the formal manifests live under `/home/haoyi/ffs_omega_cache/manifests`; legacy CSV split labels are provenance only.
+- Revisit trigger: a larger dataset with an independently held-out capture is added.
+- Evidence: manifest hashes and sequence ranges in `REPORT.md`.
+
+## D-014 — Exact FFS role identities
+
+- Date: 2026-09-01
+- Status: accepted
+- Context: the agreed fast and teacher roles require different official family checkpoints.
+- Decision: bind observation to `20-30-48` SHA-256 `98b5a9...cf692`, four iterations, LR maxdisp 192; bind teacher to `23-36-37` SHA-256 `af0658...e990`, eight iterations, HR maxdisp 416.
+- Rationale: the HR teacher needs roughly twice the disparity search range to preserve the LR observation's physical minimum range.
+- Consequence: NGC v1.2 and local `20-26-39` remain M0 probes only and cannot satisfy cache identity.
+- Revisit trigger: a declared checkpoint ablation with a new cache namespace.
+- Evidence: `reports/m1/smoke_ffs_*.json`, cache run receipts.
+
+## D-015 — Formal cache root and legacy depth exclusion
+
+- Date: 2026-09-01
+- Status: accepted
+- Context: full FFS auxiliary caches require about 45 GiB and T9 has little headroom; dataset `depth_rect*.npy` lacks checkpoint identity.
+- Decision: use `/home/haoyi/ffs_omega_cache`, float16 dense cache fields, and versioned safe-load records. Never reuse legacy depth arrays as GT or the new teacher cache.
+- Rationale: `/home` has sufficient capacity and every pseudo-label must bind exact code/config/checkpoint/source identity.
+- Consequence: moving caches requires preserving receipts and hashes; a filename-only match is insufficient.
+- Revisit trigger: a compact-cache schema is benchmarked and versioned.
+- Evidence: `reports/m1/cache_audit_{train,val}.json` and cache receipts.
+
+## D-016 — VGGT confidence and quality gating
+
+- Date: 2026-09-01
+- Status: accepted
+- Context: upstream `depth_conf` is `1 + exp(logit)`, not a probability, and geometry-only pose checks cannot substitute for photometric/depth agreement.
+- Decision: cache the raw unbounded score with that semantic in its name; normalize only in a derived adapter. Overall temporal-pose validity requires baseline CV, stereo rotation, photometric reprojection, and FFS-aligned depth consistency. Missing required diagnostics means invalid.
+- Rationale: clamping the raw score to `[0,1]` destroys information, while implicit passes can contaminate temporal warps.
+- Consequence: a raw VGGT cache may be valid even when its temporal pose is later rejected.
+- Revisit trigger: upstream publishes a calibrated confidence definition or a validated learned quality model.
+- Evidence: `reports/m2/smoke_vggt_adapter.json`, derived-geometry tests/receipts.
+
+## D-017 — Initial TSR capacity
+
+- Date: 2026-09-01
+- Status: accepted for Stage-A smoke
+- Context: the specified 96-channel, two-layer ConvGRU architecture naturally totals 1,619,882 trainable parameters, below the broad 8–12M planning estimate and the hard 12M ceiling.
+- Decision: validate the smaller exact architecture first; do not add unused blocks merely to hit a parameter count.
+- Rationale: capacity should be increased only if matched training evidence shows underfitting.
+- Consequence: the paper model size is not fixed until Stage-A/Stage-B results are available.
+- Revisit trigger: training/validation curves demonstrate capacity-limited performance.
+- Evidence: `tests/test_model_shapes.py` and RTX 5090 forward/backward smoke.
+
+## D-018 — Near-zero-safe VGGT depth consistency gate
+
+- Date: 2026-09-01
+- Status: accepted
+- Context: in sampled far-range windows, 22–55% of trusted FFS pixels can have disparity below 0.1 HR px. Pointwise `abs(error)/disparity` then becomes arbitrarily large even when the median absolute disagreement is below one pixel.
+- Decision: always record median relative error, but gate it only when an explicit CLI threshold is supplied. Default depth consistency gates use weighted MAE and median absolute error in HR pixels, each capped at 2 px.
+- Rationale: disparity-domain absolute error remains defined at infinity, while a relative denominator approaching zero does not.
+- Consequence: the 954 probe passes default full pose quality with 1.989 px weighted MAE and 0.445 px median absolute error; a strict 10% relative ablation still rejects it and remains reproducible.
+- Revisit trigger: a physically justified far-depth floor or calibrated uncertainty-normalized residual is validated across held-out captures.
+- Evidence: `tests/test_pose_quality_pipeline.py`, `reports/m2/derive_geometry_954.json`, 12-window validation diagnostic sample.
+
+## D-019 — Preserve sequence-level pose-quality distribution
+
+- Date: 2026-09-01
+- Status: accepted
+- Context: aggregate train pose validity is 54.48%, but the two source videos differ sharply: `172530` passes 13.86% while `191627` passes 83.67%. Validation passes 74.17%.
+- Decision: keep invalid windows as explicit zero-gated training samples, and report pose/static-prior availability by sequence. Do not tune thresholds merely to equalize aggregate split rates.
+- Rationale: quality gates protect geometry correctness; collapsing the sequence distribution into one rate would hide a capture-dependent failure mode and make temporal gains hard to interpret.
+- Consequence: Stage-B reporting must retain sequence identity and should include source-availability coverage alongside accuracy.
+- Revisit trigger: diagnosis identifies a correctable preprocessing/calibration cause for `172530`, or a separately justified threshold ablation is run.
+- Evidence: `reports/m2/derive_geometry_train.json`, `reports/m2/derive_geometry_val.json`.
+
+## D-020 — Resolve temporal visibility on the HR grid
+
+- Date: 2026-09-01
+- Status: accepted
+- Context: the reconstruction model consumes geometry on the LR grid, but downsampling the previous prediction before forward splatting erases thin-surface collisions and changes fractional-offset units.
+- Decision: reproject the detached previous HR disparity with calibrated `K_hr`, resolve z-buffer winners/collisions and temporal loss at HR, then deterministically sample winner fields onto the LR model grid. Disparity and fractional offsets retain HR-pixel units.
+- Rationale: occlusion is a geometric visibility decision and must be made before spatial reduction; this also matches the declared data flow and loss.
+- Consequence: Stage-B uses a small FP32 geometry island and slightly more memory, while the trainable model remains BF16-capable.
+- Revisit trigger: an accelerated HR splat is proven numerically equivalent on collision/boundary tests.
+- Evidence: `tests/test_temporal_train.py`, `tests/test_zbuffer_identity.py`, Stage-B real-cache smoke receipt.

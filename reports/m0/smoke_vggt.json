@@ -1,0 +1,350 @@
+{
+  "arguments": {
+    "image_resolution": 512,
+    "input_mode": "balanced"
+  },
+  "checkpoint": {
+    "path": "/home/haoyi/.cache/modelscope/hub/models/facebook/VGGT-Omega/vggt_omega_1b_512.pt",
+    "sha256": "c02da418b18bb01d0392598d3f6147366bcde1bb70fd08a5e3bf7925b0667934",
+    "size_bytes": 4576706117
+  },
+  "checks": [
+    {
+      "detail": {
+        "dirty": false,
+        "head": "282ec70363edeff59424bf43731658092fba3d37",
+        "path": "/home/haoyi/ffs_omega_tsr/third_party/vggt-omega",
+        "remote": "https://github.com/facebookresearch/vggt-omega.git",
+        "status_porcelain": []
+      },
+      "name": "upstream_identity",
+      "status": "PASS"
+    },
+    {
+      "detail": {
+        "model": "vggt_omega.models.VGGTOmega",
+        "pose_decode": "vggt_omega.utils.pose_enc.encoding_to_camera",
+        "preprocess": "vggt_omega.utils.load_fn.load_and_preprocess_images",
+        "torch": "2.10.0+cu128"
+      },
+      "name": "official_api_import",
+      "status": "PASS"
+    },
+    {
+      "name": "required_inputs",
+      "status": "PASS"
+    },
+    {
+      "detail": true,
+      "name": "model_frozen_eval",
+      "status": "PASS"
+    },
+    {
+      "detail": {
+        "keys": [
+          "camera_and_register_tokens",
+          "depth",
+          "depth_conf",
+          "images",
+          "pose_enc"
+        ],
+        "missing": []
+      },
+      "name": "output_schema",
+      "status": "PASS"
+    },
+    {
+      "detail": true,
+      "name": "outputs_all_finite",
+      "status": "PASS"
+    },
+    {
+      "detail": true,
+      "name": "sequence_length_10",
+      "status": "PASS"
+    },
+    {
+      "detail": true,
+      "name": "camera_plus_register_tokens",
+      "status": "PASS"
+    }
+  ],
+  "created_at_utc": "2026-08-31T20:41:30+00:00",
+  "hostname": "haoyi-System-Product-Name",
+  "image_order_contract": "L[t-4],R[t-4],L[t-3],R[t-3],L[t-2],R[t-2],L[t-1],R[t-1],L[t],R[t]",
+  "inputs": [
+    {
+      "height": 800,
+      "index": 0,
+      "mode": "RGB",
+      "path": "/home/haoyi/Downloads/xd/datasets/xd_stereo_flashocc_teacher_video_5fps/samples_val/000033/left_rect.jpg",
+      "sha256": "ffd2a2a247712f0119a2dd885e570df8b80bc1c718210859e08c2991228f57fb",
+      "width": 1280
+    },
+    {
+      "height": 800,
+      "index": 1,
+      "mode": "RGB",
+      "path": "/home/haoyi/Downloads/xd/datasets/xd_stereo_flashocc_teacher_video_5fps/samples_val/000033/right_rect.jpg",
+      "sha256": "1fa499a3e454bd6cb73f81e5e179394aadd2a058d241a95edaf4a1638ab2feb5",
+      "width": 1280
+    },
+    {
+      "height": 800,
+      "index": 2,
+      "mode": "RGB",
+      "path": "/home/haoyi/Downloads/xd/datasets/xd_stereo_flashocc_teacher_video_5fps/samples_val/000034/left_rect.jpg",
+      "sha256": "25b80c12968df4d16287c0fce7a38369969b293387b053f0aa753a29d1fd8256",
+      "width": 1280
+    },
+    {
+      "height": 800,
+      "index": 3,
+      "mode": "RGB",
+      "path": "/home/haoyi/Downloads/xd/datasets/xd_stereo_flashocc_teacher_video_5fps/samples_val/000034/right_rect.jpg",
+      "sha256": "f0d85f4b7fd87fecd9ad3c6398f4187b2eb7c9bcfa26add3f6bcd0a9ff9b4bec",
+      "width": 1280
+    },
+    {
+      "height": 800,
+      "index": 4,
+      "mode": "RGB",
+      "path": "/home/haoyi/Downloads/xd/datasets/xd_stereo_flashocc_teacher_video_5fps/samples_val/000035/left_rect.jpg",
+      "sha256": "f4edbb61c17f4fbc1dc2e9cd22c5f547712fe4396e5f94f5786a90266b8c669d",
+      "width": 1280
+    },
+    {
+      "height": 800,
+      "index": 5,
+      "mode": "RGB",
+      "path": "/home/haoyi/Downloads/xd/datasets/xd_stereo_flashocc_teacher_video_5fps/samples_val/000035/right_rect.jpg",
+      "sha256": "cc6b56d1f52dc1e588b89858c0257ad9a2d2834e8fb9188c3354fc0290563175",
+      "width": 1280
+    },
+    {
+      "height": 800,
+      "index": 6,
+      "mode": "RGB",
+      "path": "/home/haoyi/Downloads/xd/datasets/xd_stereo_flashocc_teacher_video_5fps/samples_val/000036/left_rect.jpg",
+      "sha256": "55e456522395ff6cfa6457153bcfdd657e6f54b3fe694b6d2f6e7f2289a72e78",
+      "width": 1280
+    },
+    {
+      "height": 800,
+      "index": 7,
+      "mode": "RGB",
+      "path": "/home/haoyi/Downloads/xd/datasets/xd_stereo_flashocc_teacher_video_5fps/samples_val/000036/right_rect.jpg",
+      "sha256": "1bf92ffeed4a78174530125d42989c63f2beb682a2c2f07c95feda8a2bca0020",
+      "width": 1280
+    },
+    {
+      "height": 800,
+      "index": 8,
+      "mode": "RGB",
+      "path": "/home/haoyi/Downloads/xd/datasets/xd_stereo_flashocc_teacher_video_5fps/samples_val/000037/left_rect.jpg",
+      "sha256": "77d4803612f8365b6226c3bde2d490b9f26a02741af3da8d71eefb7175aba0a5",
+      "width": 1280
+    },
+    {
+      "height": 800,
+      "index": 9,
+      "mode": "RGB",
+      "path": "/home/haoyi/Downloads/xd/datasets/xd_stereo_flashocc_teacher_video_5fps/samples_val/000037/right_rect.jpg",
+      "sha256": "e9785a3cec500dda008e0fa19d5e5f8a5c43c2677a8a95d4e42a5fbc47c5d817",
+      "width": 1280
+    }
+  ],
+  "kind": "smoke:vggt-omega",
+  "outputs": {
+    "camera_and_register_tokens": {
+      "dtype": "torch.float32",
+      "finite_fraction": 1.0,
+      "max": 31.20979881286621,
+      "mean": -0.0035668339114636183,
+      "min": -183.38565063476562,
+      "shape": [
+        1,
+        10,
+        17,
+        2048
+      ]
+    },
+    "depth_camera_z": {
+      "dtype": "torch.float32",
+      "finite_fraction": 1.0,
+      "max": 12.864665031433105,
+      "mean": 1.6852691173553467,
+      "min": 0.015897978097200394,
+      "shape": [
+        1,
+        10,
+        400,
+        640,
+        1
+      ]
+    },
+    "depth_confidence_unbounded_gt_one": {
+      "dtype": "torch.float32",
+      "finite_fraction": 1.0,
+      "max": 9.468161582946777,
+      "mean": 2.038041830062866,
+      "min": 1.0,
+      "shape": [
+        1,
+        10,
+        400,
+        640
+      ]
+    },
+    "extrinsics_camera_from_world_opencv": {
+      "dtype": "torch.float32",
+      "finite_fraction": 1.0,
+      "max": 1.0,
+      "mean": 0.24736176431179047,
+      "min": -0.06038029491901398,
+      "shape": [
+        1,
+        10,
+        3,
+        4
+      ]
+    },
+    "pose_encoding": {
+      "dtype": "torch.float32",
+      "finite_fraction": 1.0,
+      "max": 1.410819411277771,
+      "mean": 0.15004181861877441,
+      "min": -0.9999718070030212,
+      "shape": [
+        1,
+        10,
+        9
+      ]
+    },
+    "predicted_intrinsics_diagnostic_only": {
+      "dtype": "torch.float32",
+      "finite_fraction": 1.0,
+      "max": 379.4352722167969,
+      "mean": 141.7777099609375,
+      "min": 0.0,
+      "shape": [
+        1,
+        10,
+        3,
+        3
+      ]
+    }
+  },
+  "preprocessed": {
+    "dtype": "torch.float32",
+    "metadata_scope": "M0 records model input size only; exact crop/resize/pad transforms are M2.",
+    "range": [
+      0.0,
+      1.0
+    ],
+    "shape": [
+      10,
+      3,
+      400,
+      640
+    ]
+  },
+  "runtime": {
+    "elapsed_seconds": 0.45734485099092126,
+    "peak_cuda_memory_bytes": 6035550208
+  },
+  "schema_version": 1,
+  "sequence_metadata": {
+    "content": {
+      "baseline_m": 0.11612416665784427,
+      "dataset_root": "/home/haoyi/Downloads/xd/datasets/xd_stereo_flashocc_teacher_video_5fps",
+      "declared_rectified": true,
+      "frames": [
+        {
+          "left": "samples_val/000033/left_rect.jpg",
+          "meta_sha256": "aa3e1a1682b8bbbb6b8ccff8d2cf748a977c2f225cb6daa16378813961c47908",
+          "right": "samples_val/000033/right_rect.jpg",
+          "source_frame_index": 1302,
+          "source_time_sec": 21.7,
+          "token": "val_000033"
+        },
+        {
+          "left": "samples_val/000034/left_rect.jpg",
+          "meta_sha256": "7abccff2b9526a7f1d678a58ce060a1035b6711d08061b91f3118018a12b1832",
+          "right": "samples_val/000034/right_rect.jpg",
+          "source_frame_index": 1314,
+          "source_time_sec": 21.9,
+          "token": "val_000034"
+        },
+        {
+          "left": "samples_val/000035/left_rect.jpg",
+          "meta_sha256": "718ec89ebd5d812effe73492b5c57eb0853344c1f74262ef2c891b4d7eb2fdea",
+          "right": "samples_val/000035/right_rect.jpg",
+          "source_frame_index": 1326,
+          "source_time_sec": 22.1,
+          "token": "val_000035"
+        },
+        {
+          "left": "samples_val/000036/left_rect.jpg",
+          "meta_sha256": "2debfcfdde4b5ffdd520240622722ff47e96504d4cf75056a911f65eb6f60ab1",
+          "right": "samples_val/000036/right_rect.jpg",
+          "source_frame_index": 1338,
+          "source_time_sec": 22.3,
+          "token": "val_000036"
+        },
+        {
+          "left": "samples_val/000037/left_rect.jpg",
+          "meta_sha256": "d7fe1c115c1af3c279b4bf804f25396d19b61e6cde34f182aa7d1112528111e8",
+          "right": "samples_val/000037/right_rect.jpg",
+          "source_frame_index": 1350,
+          "source_time_sec": 22.5,
+          "token": "val_000037"
+        }
+      ],
+      "image_size_wh": [
+        1280,
+        800
+      ],
+      "left_rect_K": [
+        [
+          772.6184797147923,
+          0.0,
+          623.7779235839844
+        ],
+        [
+          0.0,
+          772.6184797147923,
+          384.73791122436523
+        ],
+        [
+          0.0,
+          0.0,
+          1.0
+        ]
+      ],
+      "order": "L[t-4],R[t-4],L[t-3],R[t-3],L[t-2],R[t-2],L[t-1],R[t-1],L[t],R[t]",
+      "schema_version": 1,
+      "source_manifest": {
+        "path": "/home/haoyi/Downloads/xd/datasets/xd_stereo_flashocc_teacher_video_5fps/manifest_val.csv",
+        "sha256": "582794a70bbb610f9fa9bac929d2b232df47ea7cac4de3ce1a3df29f3d041f1b"
+      },
+      "source_video": "/media/haoyi/T9/uvc-nvdec-2560x800-60/recordings/uvc_20260706_172530_741_2560x800_60fps.mkv"
+    },
+    "path": "/home/haoyi/ffs_omega_tsr/reports/m0/vggt_smoke_window.json",
+    "sha256": "c449b81f839ed7df1267a860b2c2dbe8e4b493c98e25d803c9b784e53a638e0b"
+  },
+  "status": "PASS",
+  "upstream": {
+    "dirty": false,
+    "expected": {
+      "commit": "282ec70363edeff59424bf43731658092fba3d37",
+      "license": "VGGT-Omega License plus FAIR Acceptable Use Policy; non-commercial research only",
+      "path": "third_party/vggt-omega",
+      "remote": "https://github.com/facebookresearch/vggt-omega.git"
+    },
+    "head": "282ec70363edeff59424bf43731658092fba3d37",
+    "path": "/home/haoyi/ffs_omega_tsr/third_party/vggt-omega",
+    "remote": "https://github.com/facebookresearch/vggt-omega.git",
+    "status_porcelain": []
+  }
+}
