@@ -14,6 +14,15 @@ calibration_conditioning_v3:
   use_stereo_pose: true
   use_temporal_pose: true
 
+# V3.1 keeps metric ownership at the actual LR FFS observation centres.  It
+# does not promote bilinear HR interpolation to a frozen measurement field.
+measurement_ownership_v3_1:
+  enabled: true
+  protocol_version: lr_center_projection_bounded_subpixel_v3_1
+  minimum_subpixel_residual_hr_px: 1.0
+  maximum_subpixel_residual_hr_px: 8.0
+  boundary_relative_scale: 0.10
+
 train:
   micro_batch_size: 4
   grad_accumulation: 2

@@ -119,6 +119,224 @@ class GeometryEncoder(nn.Module):
         return self.encoder(geometry_lr)
 
 
+def _replicated_max_pool3x3(value: Tensor) -> Tensor:
+    """Return a same-shape 3x3 maximum without zero-padding border artefacts."""
+
+    return functional.max_pool2d(
+        functional.pad(value, (1, 1, 1, 1), mode="replicate"),
+        kernel_size=3,
+        stride=1,
+    )
+
+
+def project_ffs_measurement_ownership_v3_1(
+    proposal_disparity_hr_px: Tensor,
+    disparity_ffs_hr_px_lr_grid: Tensor,
+    confidence_ffs_lr: Tensor,
+    valid_ffs_lr: Tensor,
+    *,
+    scale: int,
+    trusted_confidence_threshold: float,
+    minimum_subpixel_residual_hr_px: float,
+    maximum_subpixel_residual_hr_px: float,
+    boundary_relative_scale: float,
+) -> tuple[Tensor, Tensor, Tensor]:
+    """Enforce FFS ownership in its native LR measurement domain.
+
+    FFS owns the metric observation at the continuous LR sample centre; its
+    bilinear HR interpolation does *not* own every HR subpixel. For a trusted
+    LR cell this projects proposed HR detail into the null space of the exact
+    ``align_corners=False`` centre-sampling operator. Consequently centre
+    sampling the output recovers ``disparity_ffs_hr_px_lr_grid`` exactly while
+    zero-mean subpixel structure remains trainable.
+
+    A single multiplier is applied to every HR sample in an LR footprint, so
+    the measurement-null property and non-negativity survive confidence- and
+    boundary-aware limiting. Untrusted valid cells retain a bounded proposal;
+    FFS holes remain for the explicit metric-support completion contract.
+
+    Returns ``(output, correction_limit_hr_px, trusted_ffs_hr)``.
+    """
+
+    if not isinstance(scale, int) or isinstance(scale, bool) or scale <= 0:
+        raise ValueError("scale must be a positive integer")
+    if proposal_disparity_hr_px.ndim != 4 or proposal_disparity_hr_px.shape[1] != 1:
+        raise ValueError("proposal_disparity_hr_px must have shape [B,1,sH,sW]")
+    if disparity_ffs_hr_px_lr_grid.ndim != 4 or disparity_ffs_hr_px_lr_grid.shape[1] != 1:
+        raise ValueError("disparity_ffs_hr_px_lr_grid must have shape [B,1,H,W]")
+    if confidence_ffs_lr.shape != disparity_ffs_hr_px_lr_grid.shape:
+        raise ValueError("confidence_ffs_lr must match the LR FFS disparity shape")
+    if valid_ffs_lr.shape != disparity_ffs_hr_px_lr_grid.shape:
+        raise ValueError("valid_ffs_lr must match the LR FFS disparity shape")
+    expected_hr = (
+        disparity_ffs_hr_px_lr_grid.shape[-2] * scale,
+        disparity_ffs_hr_px_lr_grid.shape[-1] * scale,
+    )
+    if (
+        proposal_disparity_hr_px.shape[:2]
+        != disparity_ffs_hr_px_lr_grid.shape[:2]
+        or proposal_disparity_hr_px.shape[-2:] != expected_hr
+    ):
+        raise ValueError(
+            "proposal/LR shapes do not obey the declared integer scale: "
+            f"{tuple(proposal_disparity_hr_px.shape)} vs "
+            f"{tuple(disparity_ffs_hr_px_lr_grid.shape)} at x{scale}"
+        )
+    if not all(
+        tensor.device == proposal_disparity_hr_px.device
+        for tensor in (disparity_ffs_hr_px_lr_grid, confidence_ffs_lr, valid_ffs_lr)
+    ):
+        raise ValueError("all measurement-ownership tensors must share one device")
+    if not all(
+        tensor.is_floating_point()
+        for tensor in (
+            proposal_disparity_hr_px,
+            disparity_ffs_hr_px_lr_grid,
+            confidence_ffs_lr,
+        )
+    ):
+        raise TypeError("proposal, disparity, and confidence must be floating point")
+    if valid_ffs_lr.dtype != torch.bool:
+        raise TypeError("valid_ffs_lr must be bool")
+    for name, value in (
+        ("trusted_confidence_threshold", trusted_confidence_threshold),
+        ("minimum_subpixel_residual_hr_px", minimum_subpixel_residual_hr_px),
+        ("maximum_subpixel_residual_hr_px", maximum_subpixel_residual_hr_px),
+        ("boundary_relative_scale", boundary_relative_scale),
+    ):
+        if (
+            isinstance(value, bool)
+            or not isinstance(value, (int, float))
+            or not math.isfinite(float(value))
+        ):
+            raise ValueError(f"{name} must be finite")
+    if not 0.0 < float(trusted_confidence_threshold) < 1.0:
+        raise ValueError("trusted_confidence_threshold must be in (0,1)")
+    if float(minimum_subpixel_residual_hr_px) < 0.0:
+        raise ValueError("minimum_subpixel_residual_hr_px must be non-negative")
+    if float(maximum_subpixel_residual_hr_px) < float(
+        minimum_subpixel_residual_hr_px
+    ):
+        raise ValueError("maximum_subpixel_residual_hr_px must be >= minimum")
+    if float(boundary_relative_scale) <= 0.0:
+        raise ValueError("boundary_relative_scale must be positive")
+
+    finite_valid_ffs_lr = (
+        valid_ffs_lr
+        & torch.isfinite(disparity_ffs_hr_px_lr_grid)
+        & (disparity_ffs_hr_px_lr_grid > 0)
+        & torch.isfinite(confidence_ffs_lr)
+    )
+    confidence_lr = torch.nan_to_num(
+        confidence_ffs_lr, nan=0.0, posinf=0.0, neginf=0.0
+    ).clamp(0.0, 1.0)
+    trusted_ffs_lr = finite_valid_ffs_lr & (
+        confidence_lr >= float(trusted_confidence_threshold)
+    )
+    safe_ffs_lr = torch.where(
+        finite_valid_ffs_lr,
+        disparity_ffs_hr_px_lr_grid,
+        torch.zeros_like(disparity_ffs_hr_px_lr_grid),
+    )
+
+    local_max = _replicated_max_pool3x3(safe_ffs_lr)
+    local_min = -_replicated_max_pool3x3(-safe_ffs_lr)
+    relative_disparity_spread = (
+        (local_max - local_min).clamp_min(0.0)
+        / safe_ffs_lr.abs().clamp_min(1.0)
+        / float(boundary_relative_scale)
+    ).clamp(0.0, 1.0)
+    valid_float = finite_valid_ffs_lr.to(dtype=safe_ffs_lr.dtype)
+    valid_boundary = (
+        _replicated_max_pool3x3(valid_float)
+        + _replicated_max_pool3x3(-valid_float)
+    ).clamp(0.0, 1.0)
+    boundary_uncertainty_lr = torch.maximum(
+        relative_disparity_spread, valid_boundary
+    )
+    reconstruction_uncertainty_lr = torch.maximum(
+        1.0 - confidence_lr, boundary_uncertainty_lr
+    )
+    correction_limit_lr = float(minimum_subpixel_residual_hr_px) + (
+        float(maximum_subpixel_residual_hr_px)
+        - float(minimum_subpixel_residual_hr_px)
+    ) * reconstruction_uncertainty_lr
+    correction_limit_hr = functional.interpolate(
+        correction_limit_lr, size=expected_hr, mode="nearest"
+    )
+
+    bilinear_ffs_hr = functional.interpolate(
+        safe_ffs_lr,
+        size=expected_hr,
+        mode="bilinear",
+        align_corners=False,
+    )
+    bounded_valid_proposal = bilinear_ffs_hr + (
+        proposal_disparity_hr_px - bilinear_ffs_hr
+    ).clamp(-correction_limit_hr, correction_limit_hr)
+
+    # Nearest replication is a right inverse of align_corners=False centre
+    # sampling for integer scales. Subtract its sampled residual to leave an
+    # exactly measurement-null high-frequency component.
+    target_nearest_hr = functional.interpolate(
+        safe_ffs_lr, size=expected_hr, mode="nearest"
+    )
+    detail_hr = bounded_valid_proposal - target_nearest_hr
+    sampled_detail_lr = functional.interpolate(
+        detail_hr,
+        size=safe_ffs_lr.shape[-2:],
+        mode="bilinear",
+        align_corners=False,
+    )
+    detail_null_hr = detail_hr - functional.interpolate(
+        sampled_detail_lr, size=expected_hr, mode="nearest"
+    )
+
+    # Uniform per-cell scaling preserves the null-space property. It supplies
+    # both a hard detail bound and a differentiable non-negative magnitude.
+    maximum_detail_lr = functional.max_pool2d(
+        detail_null_hr.abs(), kernel_size=scale, stride=scale
+    )
+    cap_factor_lr = torch.minimum(
+        torch.ones_like(maximum_detail_lr),
+        correction_limit_lr / maximum_detail_lr.clamp_min(1.0e-6),
+    )
+    minimum_detail_lr = -functional.max_pool2d(
+        -detail_null_hr, kernel_size=scale, stride=scale
+    )
+    positivity_factor_lr = torch.where(
+        minimum_detail_lr < 0,
+        (
+            safe_ffs_lr.clamp_min(0.0)
+            * (1.0 - 1.0e-6)
+            / (-minimum_detail_lr).clamp_min(1.0e-6)
+        ).clamp(0.0, 1.0),
+        torch.ones_like(minimum_detail_lr),
+    )
+    detail_factor_hr = functional.interpolate(
+        torch.minimum(cap_factor_lr, positivity_factor_lr),
+        size=expected_hr,
+        mode="nearest",
+    )
+    trusted_proposal_hr = target_nearest_hr + detail_null_hr * detail_factor_hr
+    trusted_ffs_hr = functional.interpolate(
+        trusted_ffs_lr.to(dtype=proposal_disparity_hr_px.dtype),
+        size=expected_hr,
+        mode="nearest",
+    ).to(dtype=torch.bool)
+    valid_ffs_hr = functional.interpolate(
+        finite_valid_ffs_lr.to(dtype=proposal_disparity_hr_px.dtype),
+        size=expected_hr,
+        mode="nearest",
+    ).to(dtype=torch.bool)
+    output = torch.where(
+        trusted_ffs_hr,
+        trusted_proposal_hr,
+        torch.where(valid_ffs_hr, bounded_valid_proposal, proposal_disparity_hr_px),
+    )
+    return output, correction_limit_hr, trusted_ffs_hr
+
+
 class FFSOmegaTSR(nn.Module):
     """Lightweight causal disparity super-resolution model for the x2 MVP.
 
@@ -150,6 +368,10 @@ class FFSOmegaTSR(nn.Module):
         use_rays: bool = True,
         use_stereo_pose: bool = True,
         use_temporal_pose: bool = True,
+        measurement_ownership_v3_1: bool = False,
+        measurement_minimum_subpixel_residual_hr_px: float = 1.0,
+        measurement_maximum_subpixel_residual_hr_px: float = 8.0,
+        measurement_boundary_relative_scale: float = 0.10,
     ) -> None:
         super().__init__()
         if rgb_channels != (32, 64, 96):
@@ -203,9 +425,43 @@ class FFSOmegaTSR(nn.Module):
             ("use_rays", use_rays),
             ("use_stereo_pose", use_stereo_pose),
             ("use_temporal_pose", use_temporal_pose),
+            ("measurement_ownership_v3_1", measurement_ownership_v3_1),
         ):
             if not isinstance(value, bool):
                 raise TypeError(f"{name} must be a bool")
+        if measurement_ownership_v3_1 and not physical_output_v2:
+            raise ValueError(
+                "measurement_ownership_v3_1 requires physical_output_v2=True"
+            )
+        for name, value in (
+            (
+                "measurement_minimum_subpixel_residual_hr_px",
+                measurement_minimum_subpixel_residual_hr_px,
+            ),
+            (
+                "measurement_maximum_subpixel_residual_hr_px",
+                measurement_maximum_subpixel_residual_hr_px,
+            ),
+            ("measurement_boundary_relative_scale", measurement_boundary_relative_scale),
+        ):
+            if (
+                isinstance(value, bool)
+                or not isinstance(value, (int, float))
+                or not math.isfinite(float(value))
+            ):
+                raise ValueError(f"{name} must be finite")
+        if float(measurement_minimum_subpixel_residual_hr_px) < 0:
+            raise ValueError(
+                "measurement_minimum_subpixel_residual_hr_px must be non-negative"
+            )
+        if float(measurement_maximum_subpixel_residual_hr_px) < float(
+            measurement_minimum_subpixel_residual_hr_px
+        ):
+            raise ValueError(
+                "measurement_maximum_subpixel_residual_hr_px must be >= minimum"
+            )
+        if float(measurement_boundary_relative_scale) <= 0:
+            raise ValueError("measurement_boundary_relative_scale must be positive")
 
         self.scale = scale
         self.residual_limit_hr_px = float(residual_limit_hr_px)
@@ -230,6 +486,16 @@ class FFSOmegaTSR(nn.Module):
         self.use_rays = use_rays
         self.use_stereo_pose = use_stereo_pose
         self.use_temporal_pose = use_temporal_pose
+        self.measurement_ownership_v3_1 = measurement_ownership_v3_1
+        self.measurement_minimum_subpixel_residual_hr_px = float(
+            measurement_minimum_subpixel_residual_hr_px
+        )
+        self.measurement_maximum_subpixel_residual_hr_px = float(
+            measurement_maximum_subpixel_residual_hr_px
+        )
+        self.measurement_boundary_relative_scale = float(
+            measurement_boundary_relative_scale
+        )
         self.calibration_conditioner: CalibrationConditionerV3 | None = None
         self.rgb_encoder = RGBPyramidEncoder(rgb_channels)
         self.geometry_encoder = GeometryEncoder(geometry_channels)
@@ -824,13 +1090,63 @@ class FFSOmegaTSR(nn.Module):
                     - disparity_ffs_bilinear_hr_px.float()
                 )
             )
-            # High-confidence FFS ownership is an exact conservation rule in
-            # V2, not merely a small correction gate.
-            anchored_magnitude_hr_px = torch.where(
-                trusted_ffs_hr,
-                disparity_ffs_bilinear_hr_px.float(),
-                anchored_magnitude_hr_px,
-            )
+            if self.measurement_ownership_v3_1:
+                # A current FFS hole may only become a metric completion when
+                # VGGT or transported history supports it. Appearance alone
+                # cannot produce a valid disparity point.
+                completion_metric_support_hr = functional.interpolate(
+                    (source_valid_masks[1] | source_valid_masks[2]).to(
+                        dtype=torch.float32
+                    ),
+                    size=rgb_hr.shape[-2:],
+                    mode="nearest",
+                ).to(dtype=torch.bool)
+                completion_probability = torch.where(
+                    completion_metric_support_hr & hole_hr,
+                    raw_completion_probability,
+                    torch.zeros_like(raw_completion_probability),
+                )
+                completion_mask = (
+                    hole_hr
+                    & completion_metric_support_hr
+                    & (completion_probability >= self.completion_threshold)
+                )
+                anchored_magnitude_hr_px, _, trusted_ffs_hr = (
+                    project_ffs_measurement_ownership_v3_1(
+                        anchored_magnitude_hr_px,
+                        safe_disparities_hr_px[0].float(),
+                        safe_confidences[0].float(),
+                        source_valid_masks[0],
+                        scale=self.scale,
+                        trusted_confidence_threshold=(
+                            self.trusted_ffs_confidence_threshold
+                        ),
+                        minimum_subpixel_residual_hr_px=(
+                            self.measurement_minimum_subpixel_residual_hr_px
+                        ),
+                        maximum_subpixel_residual_hr_px=(
+                            self.measurement_maximum_subpixel_residual_hr_px
+                        ),
+                        boundary_relative_scale=(
+                            self.measurement_boundary_relative_scale
+                        ),
+                    )
+                )
+                # The LR-domain threshold is authoritative in v3.1. Rebuild
+                # the validity request from the exact projected trusted mask.
+                requested_valid = (
+                    trusted_ffs_hr
+                    | (valid_ffs_hr & predicted_valid)
+                    | completion_mask
+                )
+            else:
+                # Legacy V2 behaviour: exact HR-wide bilinear overwrite. It
+                # intentionally remains unchanged for old configs/checkpoints.
+                anchored_magnitude_hr_px = torch.where(
+                    trusted_ffs_hr,
+                    disparity_ffs_bilinear_hr_px.float(),
+                    anchored_magnitude_hr_px,
+                )
             output_valid_mask = requested_valid & torch.isfinite(
                 anchored_magnitude_hr_px
             ) & (anchored_magnitude_hr_px > 0)
