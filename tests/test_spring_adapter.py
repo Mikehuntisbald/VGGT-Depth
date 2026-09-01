@@ -111,3 +111,21 @@ def test_spring_sidecar_row_count_mismatch_is_rejected(tmp_path: Path) -> None:
             require_images=False,
             require_disparity=False,
         )
+
+
+def test_spring_dsp5_image_sampling_keeps_full_hd_disparity_units(
+    tmp_path: Path,
+) -> None:
+    h5py = pytest.importorskip("h5py")
+    from data.spring import load_spring_disparity
+
+    path = tmp_path / "disp1_left" / "disp1_left_0001.dsp5"
+    path.parent.mkdir()
+    with h5py.File(path, "w") as handle:
+        handle["disparity"] = np.arange(16, dtype=np.float16).reshape(4, 4)
+    sampled = load_spring_disparity(path, resolution="image")
+    np.testing.assert_array_equal(sampled, [[0.0, 2.0], [8.0, 10.0]])
+    np.testing.assert_array_equal(
+        load_spring_disparity(path, sign="left_to_right"),
+        -np.arange(16, dtype=np.float32).reshape(4, 4),
+    )
