@@ -1437,6 +1437,41 @@ def _extract_metrics(
     """
 
     result = _empty_metric_contract()
+    # Prefer the explicit native Spring side-channel when a bounded evaluator
+    # was run with --spring-native-metrics.  This keeps the runner's state
+    # summary aligned with compose_spring_screening_report while preserving
+    # the legacy fallback for older artifacts.
+    native = report.get("spring_native_metrics")
+    if isinstance(native, Mapping) and native.get("status") == "AVAILABLE":
+        native_methods = native.get("methods")
+        if isinstance(native_methods, Mapping):
+            candidate = (
+                native_methods.get(preferred_method)
+                if preferred_method is not None
+                else None
+            )
+            if not isinstance(candidate, Mapping):
+                for method_name in ("T3_VGGT", "T3", "T1", "bilinear"):
+                    value = native_methods.get(method_name)
+                    if isinstance(value, Mapping):
+                        candidate = value
+                        break
+            if isinstance(candidate, Mapping):
+                for name in result:
+                    if name in candidate:
+                        value = candidate[name]
+                        if isinstance(value, Mapping) and "value" in value:
+                            value = value.get("value")
+                        result[name] = value
+                topk = native.get("topk_diagnostics")
+                if isinstance(topk, Mapping):
+                    for name in TOPK_DIAGNOSTICS:
+                        if name in topk:
+                            value = topk[name]
+                            if isinstance(value, Mapping) and "value" in value:
+                                value = value.get("value")
+                            result[name] = value
+                return result
     direct = report.get("metrics")
     if isinstance(direct, Mapping):
         for name in result:
