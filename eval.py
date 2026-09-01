@@ -71,6 +71,7 @@ from train import (  # noqa: E402
     build_temporal_transport,
     load_receipt_identity,
 )
+from utils.checkpoint import repository_git_hash  # noqa: E402
 from utils.seed import seed_everything  # noqa: E402
 from utils.visualization import (  # noqa: E402
     grayscale_to_rgb_uint8,
@@ -1669,6 +1670,15 @@ def run(args: argparse.Namespace) -> int:
     report = {
         "schema_version": 1,
         "stage": stage_label,
+        "evaluator": {
+            "git_hash": repository_git_hash(PROJECT_ROOT),
+            "eval_py_sha256": sha256_file(Path(__file__).resolve()),
+            "evaluation_module_sha256": sha256_file(
+                (SRC_ROOT / "evaluation.py").resolve()
+            ),
+            "torch_version": str(torch.__version__),
+            "cuda_version": torch.version.cuda,
+        },
         "target": {
             "type": PSEUDO_GT_LABEL,
             "paper_accuracy": False,
