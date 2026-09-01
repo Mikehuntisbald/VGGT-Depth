@@ -1,0 +1,37 @@
+# Controlled Stage-C positivity arm. This does not replace or repair the
+# canonical Stage-C result and cannot start until the full D-025 Stage-B arm
+# independently completes and passes its raw held-out gates.
+experiment: ffs_omega_tsr_epipolar_x2_d025_positivity
+defaults_from: configs/epipolar_x2.yaml
+
+ablation_protocol:
+  name: stage_c_physical_positivity_from_passing_d025
+  required_base: full_stage_b_d025_15000_and_holdout_pass
+  canonical_stage_c_replacement: false
+
+# These fields instantiate the exact behavior used by the frozen D-025 base.
+# They must equal the selected Stage-B checkpoint's resolved config.
+positivity_ablation:
+  enabled: true
+  sanitize_invalid_sources: true
+  lower_bound_hr_px: 0.0
+  lr_negative_penalty_weight: 0.10
+  raw_negative_penalty_weight: 0.01
+
+stage_c_positivity_ablation:
+  enabled: true
+  protocol_version: d025_stage_c_physical_positivity_v1
+  requires_passing_d025_base: true
+  # Exact zero is the physical invalid boundary. No epsilon/softplus fill.
+  correction_lower_bound_hr_px: 0.0
+  # Squared hinge on base + pre-bound correction over candidate-any-valid pixels.
+  pre_lower_bound_negative_penalty_weight: 0.10
+  # Supply immutable completed receipts with CLI arguments after D-025 passes.
+  d025_training_audit_path: null
+  d025_evaluation_audit_path: null
+
+train:
+  stage: epipolar
+  init_from_stage: temporal
+  steps_epipolar: 5000
+  epipolar_output_dir: null

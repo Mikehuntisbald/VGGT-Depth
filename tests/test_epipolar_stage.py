@@ -249,3 +249,146 @@ def test_loss_rejects_negative_regularizer_weight() -> None:
             torch.ones_like(target, dtype=torch.bool),
             correction_regularizer_weight=-1.0,
         )
+
+
+def test_opt_in_pre_clamp_positivity_penalty_has_gradient_and_zero_is_invalid() -> None:
+    base = _Base()
+
+    def predictor(module: nn.Module, batch: dict[str, torch.Tensor]) -> torch.Tensor:
+        del module
+        return torch.full(
+            (batch["rgb_hr_sequence"].shape[0], 1, 6, 10),
+            0.1,
+        )
+
+    refiner = HREpipolarRefiner(
+        feature_channels=8,
+        correlation_groups=2,
+        head_channels=12,
+        positivity_floor_hr_px=0.0,
+    )
+    final_layer = refiner.correction_head[-1]
+    assert isinstance(final_layer, nn.Conv2d)
+    with torch.no_grad():
+        final_layer.bias.fill_(-2.0)
+    stage = FrozenTemporalEpipolarStage(base, refiner, predictor)
+    output = stage(_batch(batch_size=1))
+    target = torch.full_like(output.refined_disparity_hr_px, 0.2)
+
+    loss = compute_epipolar_stage_loss(
+        output,
+        target,
+        torch.ones_like(target, dtype=torch.bool),
+        pre_lower_bound_negative_penalty_weight=0.25,
+    )
+
+    assert loss.positivity_penalty is not None
+    assert loss.positivity_penalty.item() > 0
+    assert "positivity_penalty" in loss.detached_scalars()
+    assert torch.all(output.refined_disparity_hr_px >= 0)
+    assert torch.any(output.refined_disparity_hr_px == 0)
+    loss.total.backward()
+    assert final_layer.bias.grad is not None
+    assert torch.isfinite(final_layer.bias.grad).all()
+    assert final_layer.bias.grad.abs().item() > 0
+
+
+def test_default_stage_loss_schema_and_math_ignore_positivity_taps() -> None:
+    stage, _ = _stage()
+    output = stage(_batch(batch_size=1))
+    target = torch.full_like(output.refined_disparity_hr_px, 2.0)
+    baseline = compute_epipolar_stage_loss(
+        output,
+        target,
+        torch.ones_like(target, dtype=torch.bool),
+    )
+    explicit_disabled = compute_epipolar_stage_loss(
+        output,
+        target,
+        torch.ones_like(target, dtype=torch.bool),
+        pre_lower_bound_negative_penalty_weight=0.0,
+    )
+
+    assert baseline.detached_scalars() == explicit_disabled.detached_scalars()
+    assert "positivity_penalty" not in baseline.detached_scalars()
+    assert baseline.positivity_penalty is None
+
+
+def test_positivity_penalty_rejects_nonfinite_pre_bound_candidate_value() -> None:
+    base = _Base()
+
+    def predictor(module: nn.Module, batch: dict[str, torch.Tensor]) -> torch.Tensor:
+        del module
+        return torch.full(
+            (batch["rgb_hr_sequence"].shape[0], 1, 6, 10),
+            0.1,
+        )
+
+    stage = FrozenTemporalEpipolarStage(
+        base,
+        HREpipolarRefiner(
+            feature_channels=8,
+            correlation_groups=2,
+            head_channels=12,
+            positivity_floor_hr_px=0.0,
+        ),
+        predictor,
+    )
+    output = stage(_batch(batch_size=1))
+    pre_bound = output.refinement.pre_lower_bound_disparity_hr_px
+    assert pre_bound is not None
+    broken = pre_bound.clone()
+    search_valid = output.refinement.candidate_valid_mask.any(dim=1, keepdim=True)
+    index = search_valid.nonzero(as_tuple=False)[0]
+    broken[tuple(index)] = torch.nan
+    output = replace(
+        output,
+        refinement=replace(
+            output.refinement,
+            pre_lower_bound_disparity_hr_px=broken,
+        ),
+    )
+    target = torch.ones_like(output.refined_disparity_hr_px)
+
+    with pytest.raises(FloatingPointError, match="pre-lower-bound disparity"):
+        compute_epipolar_stage_loss(
+            output,
+            target,
+            torch.ones_like(target, dtype=torch.bool),
+            pre_lower_bound_negative_penalty_weight=0.1,
+        )
+
+
+def test_positivity_penalty_empty_candidate_domain_is_finite_zero() -> None:
+    base = _Base()
+
+    def predictor(module: nn.Module, batch: dict[str, torch.Tensor]) -> torch.Tensor:
+        del module
+        return torch.full(
+            (batch["rgb_hr_sequence"].shape[0], 1, 6, 10),
+            100.0,
+        )
+
+    stage = FrozenTemporalEpipolarStage(
+        base,
+        HREpipolarRefiner(
+            feature_channels=8,
+            correlation_groups=2,
+            head_channels=12,
+            positivity_floor_hr_px=0.0,
+        ),
+        predictor,
+    )
+    output = stage(_batch(batch_size=1))
+    assert not output.refinement.candidate_valid_mask.any()
+    target = torch.ones_like(output.refined_disparity_hr_px)
+    loss = compute_epipolar_stage_loss(
+        output,
+        target,
+        torch.ones_like(target, dtype=torch.bool),
+        pre_lower_bound_negative_penalty_weight=0.1,
+    )
+
+    assert loss.positivity_penalty is not None
+    assert loss.positivity_penalty.item() == 0.0
+    assert torch.isfinite(loss.total)

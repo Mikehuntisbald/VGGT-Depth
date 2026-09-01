@@ -76,7 +76,12 @@ from train_epipolar import (  # noqa: E402
     _validated_rectification_audit,
     predict_frozen_stage_b_endpoint,
     resolve_epipolar_config,
+    stage_c_high_vram_from_config,
+    stage_c_positivity_ablation_from_config,
+    stage_c_runtime_git_scopes,
     stage_c_runtime_relative_paths,
+    validate_d025_stage_b_prerequisites,
+    validate_stage_c_high_vram_preflight_receipt,
     validate_epipolar_config,
 )
 from utils.checkpoint import CheckpointMismatchError, repository_git_hash  # noqa: E402
@@ -485,22 +490,31 @@ def checkpoint_completion_status(
     )
     stage_c_execution_complete = actual_stage_c == expected_stage_c
     stage_c_canonical_schedule = expected_stage_c == FORMAL_STAGE_C_STEPS
-    stage_c_complete = stage_c_execution_complete and stage_c_canonical_schedule
+    controlled_ablation = stage_c_positivity_ablation_from_config(
+        stage_c_config
+    ).enabled
+    high_vram = stage_c_high_vram_from_config(stage_c_config).enabled
+    stage_c_complete = (
+        stage_c_execution_complete
+        and stage_c_canonical_schedule
+        and not controlled_ablation
+    )
     base_execution_complete = actual_base == expected_base
     base_canonical_schedule = (
         expected_base == FORMAL_STAGE_B_STEPS
         and declared_base_schedule == FORMAL_STAGE_B_STEPS
     )
     base_complete = base_execution_complete and base_canonical_schedule
-    return {
-        "stage_c": {
-            "actual_step": actual_stage_c,
-            "configured_steps": expected_stage_c,
-            "declared_epipolar_schedule_steps": FORMAL_STAGE_C_STEPS,
-            "execution_complete": stage_c_execution_complete,
-            "canonical_schedule": stage_c_canonical_schedule,
-            "complete": stage_c_complete,
-        },
+    stage_c_status: dict[str, Any] = {
+        "actual_step": actual_stage_c,
+        "configured_steps": expected_stage_c,
+        "declared_epipolar_schedule_steps": FORMAL_STAGE_C_STEPS,
+        "execution_complete": stage_c_execution_complete,
+        "canonical_schedule": stage_c_canonical_schedule,
+        "complete": stage_c_complete,
+    }
+    result: dict[str, Any] = {
+        "stage_c": stage_c_status,
         "stage_b_base": {
             "actual_step": actual_base,
             "configured_steps": expected_base,
@@ -511,6 +525,27 @@ def checkpoint_completion_status(
         },
         "all_complete": stage_c_complete and base_complete,
     }
+    if controlled_ablation:
+        controlled_complete = (
+            stage_c_execution_complete and stage_c_canonical_schedule
+        )
+        stage_c_status.update(
+            {
+                "controlled_ablation": True,
+                "controlled_ablation_execution_complete": controlled_complete,
+                "canonical_stage_c_replacement": False,
+            }
+        )
+        result["controlled_ablation_all_complete"] = bool(
+            controlled_complete and base_complete
+        )
+        if high_vram:
+            stage_c_status["high_vram_preflight_passed"] = bool(
+                isinstance(stage_c_metadata.get("high_vram_preflight"), Mapping)
+                and stage_c_metadata["high_vram_preflight"].get("status")
+                == "PREFLIGHT_PASS"
+            )
+    return result
 
 
 def validate_formal_crop_contract(
@@ -613,7 +648,11 @@ def validate_formal_execution_contract(
         stage_train.get("micro_batch_size"),
         stage_train.get("grad_accumulation"),
     )
-    canonical_batch_schedule = batch_schedule in {(2, 4), (1, 8)}
+    high_vram = stage_c_high_vram_from_config(stage_config).enabled
+    allowed_batch_schedules = [(2, 4), (1, 8)]
+    if high_vram:
+        allowed_batch_schedules.append((4, 2))
+    canonical_batch_schedule = batch_schedule in allowed_batch_schedules
     cuda_bf16 = (
         device.type == "cuda"
         and torch.cuda.is_available()
@@ -701,7 +740,7 @@ def validate_formal_execution_contract(
         "expected_training_values": expected_training_values,
         "canonical_training_values": canonical_training_values,
         "batch_schedule": list(batch_schedule),
-        "allowed_batch_schedules": [[2, 4], [1, 8]],
+        "allowed_batch_schedules": [list(value) for value in allowed_batch_schedules],
         "canonical_batch_schedule": canonical_batch_schedule,
         "recorded_training_runtime": dict(recorded_runtime),
         "recorded_training_eligible": recorded_training_eligible,
@@ -1510,6 +1549,7 @@ def _refiner_config(config: Mapping[str, Any]) -> dict[str, Any]:
     model = config.get("model")
     if not isinstance(model, Mapping):
         raise CheckpointMismatchError("Stage-C checkpoint model config is missing")
+    positivity = stage_c_positivity_ablation_from_config(config)
     return {
         "feature_channels": int(model["epipolar_feature_channels"]),
         "correlation_groups": int(model["epipolar_correlation_groups"]),
@@ -1523,6 +1563,7 @@ def _refiner_config(config: Mapping[str, Any]) -> dict[str, Any]:
             model["epipolar_confidence_temperature"]
         ),
         "head_channels": int(model["epipolar_head_channels"]),
+        "positivity_floor_hr_px": positivity.correction_lower_bound_hr_px,
     }
 
 
@@ -1801,6 +1842,66 @@ def load_stage_c_checkpoint(
         raise CheckpointMismatchError("checkpoint is not a Stage-C epipolar run")
     if payload["supervision"] != PSEUDO_GT_SUPERVISION:
         raise CheckpointMismatchError("Stage-C pseudo-GT supervision contract differs")
+    saved_positivity = stage_c_positivity_ablation_from_config(config)
+    if saved_positivity.enabled:
+        prerequisite = payload.get("d025_prerequisite")
+        formal_audit = (
+            prerequisite.get("formal_evaluation_audit")
+            if isinstance(prerequisite, Mapping)
+            else None
+        )
+        final_gate = (
+            formal_audit.get("final_gate")
+            if isinstance(formal_audit, Mapping)
+            else None
+        )
+        if (
+            payload.get("experiment_role")
+            != "CONTROLLED_D025_STAGE_C_ABLATION"
+            or not isinstance(prerequisite, Mapping)
+            or prerequisite.get("status") != "PASS"
+            or prerequisite.get("canonical_stage_c_replacement") is not False
+            or not isinstance(formal_audit, Mapping)
+            or formal_audit.get("component")
+            != "d025-positivity-final-evaluation-audit"
+            or formal_audit.get("status")
+            != "D025_FINAL_CONTROLLED_COMPARISON_PASS"
+            or not isinstance(formal_audit.get("path"), str)
+            or not str(formal_audit.get("path")).strip()
+            or not isinstance(formal_audit.get("sha256"), str)
+            or len(str(formal_audit.get("sha256"))) != 64
+            or any(
+                character not in "0123456789abcdef"
+                for character in str(formal_audit.get("sha256"))
+            )
+            or not isinstance(final_gate, Mapping)
+            or final_gate.get("eligible") is not True
+            or final_gate.get("result") != "PASS"
+        ):
+            raise CheckpointMismatchError(
+                "Stage-C positivity checkpoint lacks its formal passing D-025 lineage"
+            )
+    elif "d025_prerequisite" in payload or "experiment_role" in payload:
+        raise CheckpointMismatchError(
+            "canonical Stage-C checkpoint unexpectedly declares D-025 lineage"
+        )
+    saved_high_vram = stage_c_high_vram_from_config(config)
+    if saved_high_vram.enabled:
+        high_vram_preflight = payload.get("high_vram_preflight")
+        if (
+            not isinstance(high_vram_preflight, Mapping)
+            or high_vram_preflight.get("status") != "PREFLIGHT_PASS"
+            or high_vram_preflight.get("formal_training_authorized") is not True
+            or high_vram_preflight.get("protocol_version")
+            != "d025_stage_c_high_vram_cuda_preflight_v1"
+        ):
+            raise CheckpointMismatchError(
+                "high-VRAM Stage-C checkpoint lacks its PASS preflight"
+            )
+    elif "high_vram_preflight" in payload:
+        raise CheckpointMismatchError(
+            "standard Stage-C checkpoint unexpectedly declares high-VRAM preflight"
+        )
     if payload["geometry_contract"] != EPIPOLAR_GEOMETRY_CONTRACT:
         raise CheckpointMismatchError("Stage-C epipolar geometry contract differs")
     rectification_audit = payload["rectification_audit"]
@@ -1892,6 +1993,14 @@ def load_stage_c_checkpoint(
         "training_runtime_receipt": training_runtime_receipt,
         "supervision": payload["supervision"],
     }
+    if saved_positivity.enabled:
+        # Preserve the already-validated controlled lineage for the subsequent
+        # base-binding check and controlled evaluation receipt. Canonical/old
+        # metadata stays byte-for-schema identical.
+        metadata["d025_prerequisite"] = dict(payload["d025_prerequisite"])
+        metadata["experiment_role"] = payload["experiment_role"]
+    if saved_high_vram.enabled:
+        metadata["high_vram_preflight"] = dict(payload["high_vram_preflight"])
     return refiner, metadata
 
 
@@ -2011,15 +2120,11 @@ def validate_runtime_source_bundle(
     }
 
 
-def _validate_stage_c_and_base_lineage(
-    *,
+def validate_controlled_d025_prerequisite(
     stage_c_metadata: Mapping[str, Any],
     base_metadata: Mapping[str, Any],
-    recomputed_base_lineage: Mapping[str, Any],
-    validation_dataset: CachedTemporalTrainingDataset,
-    holdout_lineage: Mapping[str, Any],
-) -> dict[str, Any]:
-    """Bind Stage C to the exact base and a video-disjoint validation split."""
+) -> dict[str, Any] | None:
+    """Recompute controlled D-025 provenance before any evaluation forward."""
 
     recorded_base = stage_c_metadata.get("base_checkpoint")
     if not isinstance(recorded_base, Mapping):
@@ -2032,11 +2137,127 @@ def _validate_stage_c_and_base_lineage(
             raise CheckpointMismatchError(
                 f"Stage-C frozen base {name} differs from loaded Stage-B checkpoint"
             )
+    stage_c_config = stage_c_metadata.get("config")
+    stage_c_positivity = (
+        stage_c_positivity_ablation_from_config(stage_c_config)
+        if isinstance(stage_c_config, Mapping)
+        else None
+    )
+    if stage_c_positivity is None or not stage_c_positivity.enabled:
+        return None
+    prerequisite = stage_c_metadata.get("d025_prerequisite")
+    prerequisite_base = (
+        prerequisite.get("base_checkpoint")
+        if isinstance(prerequisite, Mapping)
+        else None
+    )
+    if not isinstance(prerequisite_base, Mapping) or any(
+        prerequisite_base.get(name) != base_metadata.get(actual_name)
+        for name, actual_name in (
+            ("sha256", "checkpoint_sha256"),
+            ("step", "step"),
+        )
+    ):
+        raise CheckpointMismatchError(
+            "Stage-C positivity D-025 prerequisite differs from loaded base"
+        )
+    if (
+        stage_c_positivity.d025_training_audit_path is None
+        or stage_c_positivity.d025_evaluation_audit_path is None
+    ):
+        raise CheckpointMismatchError(
+            "Stage-C positivity D-025 prerequisite paths are missing"
+        )
+    try:
+        recomputed = validate_d025_stage_b_prerequisites(
+            base_metadata=base_metadata,
+            stage_c_config=stage_c_config,
+            training_audit_path=stage_c_positivity.d025_training_audit_path,
+            evaluation_audit_path=stage_c_positivity.d025_evaluation_audit_path,
+        )
+    except (FileNotFoundError, OSError, ValueError) as exc:
+        raise CheckpointMismatchError(
+            f"Stage-C D-025 prerequisite no longer verifies: {exc}"
+        ) from exc
+    if not isinstance(prerequisite, Mapping) or dict(recomputed) != dict(
+        prerequisite
+    ):
+        raise CheckpointMismatchError(
+            "Stage-C embedded D-025 prerequisite differs from recomputation"
+        )
+    return dict(recomputed)
+
+
+def validate_controlled_high_vram_preflight(
+    stage_c_metadata: Mapping[str, Any],
+    base_metadata: Mapping[str, Any],
+    d025_prerequisite: Mapping[str, Any] | None,
+) -> dict[str, Any] | None:
+    """Revalidate the CUDA memory receipt before high-VRAM evaluation."""
+
+    config = stage_c_metadata.get("config")
+    if not isinstance(config, Mapping):
+        raise CheckpointMismatchError("Stage-C config is missing")
+    high_vram = stage_c_high_vram_from_config(config)
+    if not high_vram.enabled:
+        return None
+    if high_vram.receipt_path is None:
+        raise CheckpointMismatchError("Stage-C high-VRAM preflight path is missing")
+    embedded = stage_c_metadata.get("high_vram_preflight")
+    if not isinstance(embedded, Mapping) or d025_prerequisite is None:
+        raise CheckpointMismatchError("Stage-C high-VRAM preflight lineage is missing")
+    source = stage_c_metadata.get("runtime_source_bundle")
+    runtime = stage_c_metadata.get("training_runtime")
+    if not isinstance(source, Mapping) or not isinstance(runtime, Mapping):
+        raise CheckpointMismatchError("Stage-C high-VRAM runtime lineage is missing")
+    try:
+        recomputed = validate_stage_c_high_vram_preflight_receipt(
+            path=high_vram.receipt_path,
+            config=config,
+            base_checkpoint={
+                "path": base_metadata["path"],
+                "sha256": base_metadata["checkpoint_sha256"],
+                "step": base_metadata["step"],
+            },
+            d025_prerequisite=d025_prerequisite,
+            runtime_source_bundle=source,
+            training_runtime=runtime,
+        )
+    except (FileNotFoundError, OSError, ValueError) as exc:
+        raise CheckpointMismatchError(
+            f"Stage-C high-VRAM preflight no longer verifies: {exc}"
+        ) from exc
+    if dict(recomputed) != dict(embedded):
+        raise CheckpointMismatchError(
+            "Stage-C embedded high-VRAM preflight differs from recomputation"
+        )
+    return dict(recomputed)
+
+
+def _validate_stage_c_and_base_lineage(
+    *,
+    stage_c_metadata: Mapping[str, Any],
+    base_metadata: Mapping[str, Any],
+    recomputed_base_lineage: Mapping[str, Any],
+    validation_dataset: CachedTemporalTrainingDataset,
+    holdout_lineage: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Bind Stage C to the exact base and a video-disjoint validation split."""
+
+    recomputed_d025_prerequisite = validate_controlled_d025_prerequisite(
+        stage_c_metadata,
+        base_metadata,
+    )
+    recomputed_high_vram_preflight = validate_controlled_high_vram_preflight(
+        stage_c_metadata,
+        base_metadata,
+        recomputed_d025_prerequisite,
+    )
+    stage_c_config = stage_c_metadata.get("config")
     if stage_c_metadata.get("base_lineage") != recomputed_base_lineage:
         raise CheckpointMismatchError(
             "Stage-C recorded base lineage differs from recomputed validation lineage"
         )
-    stage_c_config = stage_c_metadata.get("config")
     stage_c_data = (
         stage_c_config.get("data") if isinstance(stage_c_config, Mapping) else None
     )
@@ -2083,7 +2304,7 @@ def _validate_stage_c_and_base_lineage(
         raise CheckpointMismatchError(
             "Stage-C training and validation raw VGGT identities differ"
         )
-    return {
+    result = {
         "stage_c_training_manifest": str(training_manifest),
         "stage_c_training_manifest_sha256": sha256_file(training_manifest),
         "stage_c_training_sequences": sorted(training_sequences),
@@ -2093,6 +2314,12 @@ def _validate_stage_c_and_base_lineage(
         "base_checkpoint_step": base_metadata["step"],
         "raw_vggt_identity": evaluation_raw["identity"],
     }
+    if recomputed_d025_prerequisite is not None:
+        result["d025_prerequisite"] = dict(recomputed_d025_prerequisite)
+        result["canonical_stage_c_replacement"] = False
+    if recomputed_high_vram_preflight is not None:
+        result["high_vram_preflight"] = dict(recomputed_high_vram_preflight)
+    return result
 
 
 def _move_batch(batch: Mapping[str, Any], device: torch.device) -> dict[str, Any]:
@@ -2400,9 +2627,23 @@ def run(args: argparse.Namespace) -> int:
         args.checkpoint,
         evaluation_config=evaluation_config,
     )
+    controlled_ablation = stage_c_positivity_ablation_from_config(
+        stage_c_metadata["config"]
+    ).enabled
+    high_vram = stage_c_high_vram_from_config(
+        stage_c_metadata["config"]
+    ).enabled
     runtime_source_bundle = validate_runtime_source_bundle(
         stage_c_metadata["runtime_source_bundle"],
         checkpoint_git_hash=str(stage_c_metadata["git_hash"]),
+        expected_scopes=stage_c_runtime_git_scopes(
+            controlled_ablation=controlled_ablation,
+            high_vram=high_vram,
+        ),
+        expected_paths=stage_c_runtime_relative_paths(
+            controlled_ablation=controlled_ablation,
+            high_vram=high_vram,
+        ),
     )
     crop_contract = validate_formal_crop_contract(
         stage_c_metadata,
@@ -2812,8 +3053,20 @@ def run(args: argparse.Namespace) -> int:
         and bool(crop_contract["eligible"])
         and bool(execution_contract["eligible"])
     )
+    controlled_ablation = bool(
+        completion["stage_c"].get("controlled_ablation", False)
+    )
+    controlled_evaluation_eligible = bool(
+        controlled_ablation
+        and full_selection
+        and completion.get("controlled_ablation_all_complete") is True
+        and bool(crop_contract["eligible"])
+        and bool(execution_contract["eligible"])
+    )
     if acceptance_eligible:
         status = "EVALUATION_COMPLETE"
+    elif controlled_evaluation_eligible:
+        status = "CONTROLLED_ABLATION_EVALUATION_COMPLETE"
     elif not full_selection:
         status = "LIMITED_SMOKE_ONLY"
     else:
@@ -2834,6 +3087,16 @@ def run(args: argparse.Namespace) -> int:
             "primary_claim_variant": "RAW_MODEL_OUTPUT",
             "primary_comparison": "raw_refined_vs_base",
             "clamp0_acceptance_owner": False,
+            **(
+                {
+                    "controlled_ablation_evaluation_eligible": (
+                        controlled_evaluation_eligible
+                    ),
+                    "canonical_stage_c_replacement": False,
+                }
+                if controlled_ablation
+                else {}
+            ),
             "primary_raw_output_health": {
                 name: methods["T3_VGGT_epipolar"][name]
                 for name in (

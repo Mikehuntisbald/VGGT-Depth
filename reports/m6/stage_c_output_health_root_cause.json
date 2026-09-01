@@ -1,0 +1,106 @@
+{
+  "schema_version": 1,
+  "component": "stage-c-output-health-root-cause-audit",
+  "status": "ROOT_CAUSE_SUPPORTED_WITH_AGGREGATE_BOUNDS",
+  "read_only": true,
+  "gpu_used": false,
+  "canonical_stage_c_result_changed": false,
+  "sources": {
+    "metrics": {
+      "path": "outputs/ffs_omega_tsr_x2/stage_c_eval/metrics.json",
+      "sha256": "c060d3e0213db33d7643004b76d9bd2592a164278e1451f987d92735e66edf11"
+    },
+    "evaluation_audit": {
+      "path": "reports/m6/stage_c_eval_final.json",
+      "sha256": "e674ce00ed77df1c611e255daeafcb91bf610aca95776db33b97ca0958d8c5f3"
+    },
+    "stage_c_checkpoint": {
+      "path": "outputs/ffs_omega_tsr_x2/stage_c/final.pt",
+      "sha256": "b4e916ac0b8150d374d85efa0389e29b0ad455b5064d0693901d272ac278a31a",
+      "step": 5000
+    },
+    "base_checkpoint": {
+      "path": "outputs/ffs_omega_tsr_x2/stage_b/final.pt",
+      "sha256": "1b9a35ebc77784c7ef62c6d03af4fc956b2f28406dc94789056d14fa35ae8637",
+      "step": 15000,
+      "lineage": "canonical_stage_b_not_d025"
+    }
+  },
+  "domains": {
+    "all_output_pixels": 70189056,
+    "candidate_any_valid_pixels": 68924610,
+    "candidate_any_valid_fraction": 0.9819851402475053,
+    "candidate_boundary_band_pixels": 375334,
+    "teacher_trusted_pixels": 31189933,
+    "completeness_pixels": 949074,
+    "completeness_definition": "teacher_trusted and not ffs_valid"
+  },
+  "output_health": {
+    "base": {
+      "invalid_count": 1954395,
+      "invalid_rate": 0.027844725536699054,
+      "negative_count": 1954395,
+      "nan_count": 0,
+      "infinite_count": 0
+    },
+    "refined": {
+      "invalid_count": 3102135,
+      "invalid_rate": 0.044196847440147936,
+      "negative_count": 3102133,
+      "zero_count": 2,
+      "nan_count": 0,
+      "infinite_count": 0
+    },
+    "net_invalid_increase": 1147740,
+    "net_negative_increase": 1147738,
+    "claim_limit": "Aggregate counts do not contain a sign-transition matrix; net increase is not labeled exact newly-negative."
+  },
+  "completeness": {
+    "base_positive_count": 614227,
+    "base_rate": 0.6471855724632642,
+    "refined_positive_count": 472128,
+    "refined_rate": 0.4974617363872575,
+    "positive_count_loss": 142099,
+    "relative_change_percent": -23.13460658681563,
+    "share_of_global_invalid_net_increase_percent": 12.380765678638019
+  },
+  "correction": {
+    "nonzero_count": 68917600,
+    "nonzero_rate_on_candidate_domain": 0.9998982946729768,
+    "minimum_hr_px": -1.6484375,
+    "maximum_hr_px": 1.859375,
+    "mean_hr_px": 0.0016899069434334636,
+    "mean_absolute_hr_px": 0.03392579443007363,
+    "reported_saturated_count_at_abs_ge_1_98": 0,
+    "all_candidate_invalid_correction": "exact_zero"
+  },
+  "excluded_causes": {
+    "checkpoint_misbinding": false,
+    "nan_or_infinite_output": false,
+    "global_negative_correction_mean": false,
+    "plus_minus_2_saturation": false,
+    "candidate_boundary_or_correspondence_oob_primary_cause": false,
+    "oob_count_change_refined_minus_base": -124,
+    "minimum_negative_net_increase_outside_candidate_boundary_band": 772404,
+    "minimum_fraction_outside_candidate_boundary_band_percent": 67.29793733413027
+  },
+  "root_cause": {
+    "formula": "refined_disparity_hr_px = base_disparity_hr_px + bounded_correction_hr_px * candidate_any_valid",
+    "finding": "A nearly dense unconstrained additive correction is evaluated for sign over the full image, while disparity and correction regularization are limited to trusted positive-target search-valid pixels. Negative correction therefore crosses near-zero base disparity outside the direct supervision domain.",
+    "strict_transition_bound": "Every non-negative-base to negative-refined transition lies in candidate_any_valid and 0 <= base_disparity_hr_px < 1.6484375."
+  },
+  "gate_arithmetic": {
+    "invalid_rate_threshold": 0.005,
+    "maximum_passing_invalid_count": 350945,
+    "base_invalid_excess_before_stage_c": 1603450,
+    "refined_invalid_reduction_required": 2751190,
+    "consequence": "Preventing Stage-C from introducing negatives is necessary but cannot make the canonical Stage-B base pass. D-025 must pass first."
+  },
+  "d025_state_at_audit": {
+    "status": "IN_PROGRESS",
+    "latest_archived_audit": "reports/m4/d025_training_audit_step500.json",
+    "final_checkpoint_available": false,
+    "held_out_pass_available": false,
+    "eligible_as_stage_c_base": false
+  }
+}

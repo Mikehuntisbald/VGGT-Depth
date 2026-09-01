@@ -41,6 +41,13 @@ if str(SRC_ROOT) not in sys.path:
 
 from geometry.epipolar import EPIPOLAR_GEOMETRY_CONTRACT  # noqa: E402
 from models.epipolar_refiner import HREpipolarRefiner  # noqa: E402
+from tools.audit_d025_evaluation import (  # noqa: E402
+    D025EvaluationAuditError,
+    audit_d025_evaluation,
+)
+from train_epipolar import (  # noqa: E402
+    validate_stage_c_high_vram_preflight_receipt,
+)
 
 
 AUDIT_SCHEMA_VERSION = 1
@@ -53,8 +60,13 @@ AUDIT_COMPONENT = "ffs-omega-tsr-epipolar-training-audit"
 EXPECTED_REFINER_PARAMETERS = 69_905
 FORMAL_STAGE_B_STEPS = 15_000
 FORMAL_STAGE_C_STEPS = 5_000
-EXPECTED_SOURCE_FILE_COUNT = 52
+LEGACY_SOURCE_FILE_COUNT = 52
+CONTROLLED_SOURCE_FILE_COUNT = 55
+HIGH_VRAM_SOURCE_FILE_COUNT = 56
 STRICT_CUBLAS_WORKSPACE_CONFIG = ":4096:8"
+STAGE_C_D025_POSITIVITY_PROTOCOL = "d025_stage_c_physical_positivity_v1"
+CANONICAL_STAGE_C_ROLE = "CANONICAL_STAGE_C"
+CONTROLLED_D025_STAGE_C_ROLE = "CONTROLLED_D025_STAGE_C_ABLATION"
 SHA256_PATTERN = re.compile(r"^[0-9a-f]{64}$")
 GIT_HASH_PATTERN = re.compile(r"^[0-9a-f]{40}$")
 EXPECTED_RUNTIME_FIELDS = {
@@ -87,6 +99,26 @@ RUNTIME_ROOT_FILES = (
     "pyproject.toml",
 )
 RUNTIME_GIT_SCOPES = (*RUNTIME_ROOT_FILES, "src")
+CONTROLLED_RUNTIME_ADDITIONS = (
+    "configs/ablations/d025_positivity_t3.yaml",
+    "configs/ablations/d025_stage_c_positivity.yaml",
+    "tools/audit_d025_evaluation.py",
+)
+HIGH_VRAM_RUNTIME_ADDITIONS = (
+    "configs/ablations/d025_stage_c_positivity_high_vram.yaml",
+)
+CONTROLLED_RUNTIME_ROOT_FILES = (
+    *RUNTIME_ROOT_FILES[:-1],
+    *CONTROLLED_RUNTIME_ADDITIONS,
+    RUNTIME_ROOT_FILES[-1],
+)
+CONTROLLED_RUNTIME_GIT_SCOPES = (*CONTROLLED_RUNTIME_ROOT_FILES, "src")
+HIGH_VRAM_RUNTIME_ROOT_FILES = (
+    *CONTROLLED_RUNTIME_ROOT_FILES[:-1],
+    *HIGH_VRAM_RUNTIME_ADDITIONS,
+    CONTROLLED_RUNTIME_ROOT_FILES[-1],
+)
+HIGH_VRAM_RUNTIME_GIT_SCOPES = (*HIGH_VRAM_RUNTIME_ROOT_FILES, "src")
 
 
 class EpipolarTrainingAuditError(RuntimeError):
@@ -316,6 +348,163 @@ def _canonical_config_sha256(config: Mapping[str, Any]) -> str:
     return hashlib.sha256(encoded).hexdigest()
 
 
+def _validate_stage_c_positivity_config(
+    config: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Return the isolated Stage-C positivity role without changing baseline defaults."""
+
+    section = config.get("stage_c_positivity_ablation")
+    if section is None:
+        enabled = False
+    else:
+        _require(
+            isinstance(section, Mapping),
+            "checkpoint stage_c_positivity_ablation is not a mapping",
+        )
+        enabled_value = section.get("enabled")
+        _require(
+            isinstance(enabled_value, bool),
+            "checkpoint stage_c_positivity_ablation.enabled is not boolean",
+        )
+        enabled = bool(enabled_value)
+
+    base_positivity = config.get("positivity_ablation")
+    base_enabled = bool(
+        isinstance(base_positivity, Mapping)
+        and base_positivity.get("enabled") is True
+    )
+    _require(
+        base_enabled == enabled,
+        "Stage-C and frozen-base positivity opt-ins are not enabled together",
+    )
+    if not enabled:
+        return {
+            "enabled": False,
+            "experiment_role": CANONICAL_STAGE_C_ROLE,
+        }
+
+    assert isinstance(section, Mapping)
+    _require(
+        section.get("protocol_version") == STAGE_C_D025_POSITIVITY_PROTOCOL
+        and section.get("requires_passing_d025_base") is True,
+        "Stage-C positivity protocol/prerequisite config differs",
+    )
+    floor = _finite_float(
+        section.get("correction_lower_bound_hr_px"),
+        "stage_c_positivity_ablation.correction_lower_bound_hr_px",
+    )
+    _require(
+        floor == 0.0,
+        "Stage-C positivity lower bound must be exactly zero",
+    )
+    penalty_weight = _finite_float(
+        section.get("pre_lower_bound_negative_penalty_weight"),
+        "stage_c_positivity_ablation.pre_lower_bound_negative_penalty_weight",
+    )
+    _require(
+        penalty_weight > 0.0,
+        "Stage-C positivity penalty weight must be positive",
+    )
+    _require(
+        "d025_evaluation_metrics_path" not in section,
+        "Stage-C positivity config must not trust raw D-025 metrics directly",
+    )
+    for name in ("d025_training_audit_path", "d025_evaluation_audit_path"):
+        value = section.get(name)
+        _require(
+            isinstance(value, str) and bool(value.strip()),
+            f"stage_c_positivity_ablation.{name} is not a bound path",
+        )
+    assert isinstance(base_positivity, Mapping)
+    _require(
+        base_positivity.get("sanitize_invalid_sources") is True
+        and _finite_float(
+            base_positivity.get("lower_bound_hr_px"),
+            "positivity_ablation.lower_bound_hr_px",
+        )
+        == 0.0,
+        "Stage-C positivity config does not retain the D-025 physical base path",
+    )
+    protocol = config.get("ablation_protocol")
+    _require(
+        isinstance(protocol, Mapping)
+        and protocol.get("name") == "stage_c_physical_positivity_from_passing_d025"
+        and protocol.get("required_base")
+        == "full_stage_b_d025_15000_and_holdout_pass"
+        and protocol.get("canonical_stage_c_replacement") is False,
+        "Stage-C positivity controlled-ablation protocol differs",
+    )
+    return {
+        "enabled": True,
+        "experiment_role": CONTROLLED_D025_STAGE_C_ROLE,
+        "protocol_version": STAGE_C_D025_POSITIVITY_PROTOCOL,
+        "correction_lower_bound_hr_px": floor,
+        "pre_lower_bound_negative_penalty_weight": penalty_weight,
+    }
+
+
+def _validate_stage_c_high_vram_config(
+    config: Mapping[str, Any],
+    *,
+    controlled_ablation: bool,
+) -> dict[str, Any]:
+    section = config.get("stage_c_high_vram")
+    if section is None:
+        return {"enabled": False}
+    _require(isinstance(section, Mapping), "stage_c_high_vram is not a mapping")
+    enabled = section.get("enabled")
+    _require(isinstance(enabled, bool), "stage_c_high_vram.enabled is not boolean")
+    if not enabled:
+        return {"enabled": False}
+    _require(controlled_ablation, "high-VRAM Stage C is not a controlled D-025 arm")
+    _require(
+        section.get("protocol_version")
+        == "d025_stage_c_high_vram_cuda_preflight_v1"
+        and section.get("requires_cuda_memory_preflight") is True,
+        "Stage-C high-VRAM protocol differs",
+    )
+    minimum = section.get("minimum_headroom_bytes")
+    _require(
+        _is_int(minimum) and int(minimum) > 0,
+        "Stage-C high-VRAM minimum headroom is malformed",
+    )
+    receipt_path = section.get("preflight_receipt_path")
+    _require(
+        isinstance(receipt_path, str) and bool(receipt_path.strip()),
+        "Stage-C high-VRAM preflight receipt path is not bound",
+    )
+    _require(
+        section.get("oom_fallback")
+        == {
+            "micro_batch_size": 2,
+            "grad_accumulation": 4,
+            "effective_batch_size": 8,
+        },
+        "Stage-C high-VRAM OOM fallback differs",
+    )
+    train = config.get("train")
+    _require(
+        isinstance(train, Mapping)
+        and {
+            "micro_batch_size": train.get("micro_batch_size"),
+            "grad_accumulation": train.get("grad_accumulation"),
+            "effective_batch_size": train.get("effective_batch_size"),
+        }
+        == {
+            "micro_batch_size": 4,
+            "grad_accumulation": 2,
+            "effective_batch_size": 8,
+        },
+        "Stage-C high-VRAM schedule is not 4x2=8",
+    )
+    return {
+        "enabled": True,
+        "protocol_version": "d025_stage_c_high_vram_cuda_preflight_v1",
+        "preflight_receipt_path": str(receipt_path),
+        "minimum_headroom_bytes": int(minimum),
+    }
+
+
 def _learning_rate_multiplier(
     update_index: int, *, total_steps: int, warmup_steps: int
 ) -> float:
@@ -330,6 +519,11 @@ def _learning_rate_multiplier(
 
 def _validate_config(config: object) -> tuple[Mapping[str, Any], dict[str, Any]]:
     _require(isinstance(config, Mapping), "checkpoint config is not a mapping")
+    positivity = _validate_stage_c_positivity_config(config)
+    high_vram = _validate_stage_c_high_vram_config(
+        config,
+        controlled_ablation=bool(positivity["enabled"]),
+    )
     data = config.get("data")
     model = config.get("model")
     train = config.get("train")
@@ -352,8 +546,8 @@ def _validate_config(config: object) -> tuple[Mapping[str, Any], dict[str, Any]]
     )
     _require(
         (train.get("micro_batch_size"), train.get("grad_accumulation"))
-        in {(2, 4), (1, 8)},
-        "formal Stage-C batch schedule must be (2,4) or OOM fallback (1,8)",
+        in ({(4, 2)} if high_vram["enabled"] else {(2, 4), (1, 8)}),
+        "formal Stage-C batch schedule differs from its execution profile",
     )
     _require(
         train.get("effective_batch_size") == 8
@@ -428,6 +622,8 @@ def _validate_config(config: object) -> tuple[Mapping[str, Any], dict[str, Any]]
         "weight_decay": float(train["weight_decay"]),
         "warmup_steps": int(train["warmup_steps"]),
         "grad_accumulation": int(train["grad_accumulation"]),
+        "stage_c_positivity_ablation": positivity,
+        "stage_c_high_vram": high_vram,
     }
 
 
@@ -907,9 +1103,110 @@ def _validate_rectification_audit(
     }
 
 
-def _expected_runtime_paths() -> tuple[str, ...]:
+def _git_tree_contains(git_hash: str, relative: str) -> bool:
+    result = subprocess.run(
+        ["git", "cat-file", "-e", f"{git_hash}:{relative}"],
+        cwd=PROJECT_ROOT,
+        check=False,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.PIPE,
+    )
+    return result.returncode == 0
+
+
+def _git_tree_declares_runtime_additions(git_hash: str) -> tuple[bool, ...]:
+    shown = subprocess.run(
+        ["git", "show", f"{git_hash}:train_epipolar.py"],
+        cwd=PROJECT_ROOT,
+        check=False,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    _require(
+        shown.returncode == 0,
+        "Stage-C checkpoint Git tree lacks train_epipolar.py",
+    )
+    return tuple(
+        relative.encode("utf-8") in shown.stdout
+        for relative in CONTROLLED_RUNTIME_ADDITIONS
+    )
+
+
+def _runtime_source_contract(
+    git_hash: str,
+    *,
+    controlled_ablation: bool,
+    high_vram: bool = False,
+) -> tuple[tuple[str, ...], tuple[str, ...], int]:
+    _require(
+        not high_vram or controlled_ablation,
+        "high-VRAM runtime requires controlled D-025 Stage C",
+    )
+    if not controlled_ablation:
+        # The canonical/default producer deliberately ignores D-025-only files,
+        # even when they exist in the same Git tree.
+        return RUNTIME_ROOT_FILES, RUNTIME_GIT_SCOPES, LEGACY_SOURCE_FILE_COUNT
+    additions_declared = _git_tree_declares_runtime_additions(git_hash)
+    _require(
+        all(additions_declared) or not any(additions_declared),
+        "Stage-C producer declares only part of the controlled runtime bundle",
+    )
+    _require(
+        all(additions_declared),
+        "controlled Stage-C producer does not declare its runtime additions",
+    )
+    _require(
+        all(
+            _git_tree_contains(git_hash, relative)
+            for relative in CONTROLLED_RUNTIME_ADDITIONS
+        ),
+        "Stage-C controlled runtime file is absent from the checkpoint Git tree",
+    )
+    if high_vram:
+        _require(
+            all(
+                _git_tree_contains(git_hash, relative)
+                for relative in HIGH_VRAM_RUNTIME_ADDITIONS
+            ),
+            "Stage-C high-VRAM runtime file is absent from the checkpoint Git tree",
+        )
+        return (
+            HIGH_VRAM_RUNTIME_ROOT_FILES,
+            HIGH_VRAM_RUNTIME_GIT_SCOPES,
+            HIGH_VRAM_SOURCE_FILE_COUNT,
+        )
     return (
-        *RUNTIME_ROOT_FILES,
+        CONTROLLED_RUNTIME_ROOT_FILES,
+        CONTROLLED_RUNTIME_GIT_SCOPES,
+        CONTROLLED_SOURCE_FILE_COUNT,
+    )
+
+
+def _expected_runtime_paths(
+    *,
+    git_hash: str | None = None,
+    controlled_ablation: bool = False,
+    high_vram: bool = False,
+) -> tuple[str, ...]:
+    root_files = (
+        (
+            HIGH_VRAM_RUNTIME_ROOT_FILES
+            if high_vram
+            else (
+                CONTROLLED_RUNTIME_ROOT_FILES
+                if controlled_ablation
+                else RUNTIME_ROOT_FILES
+            )
+        )
+        if git_hash is None
+        else _runtime_source_contract(
+            git_hash,
+            controlled_ablation=controlled_ablation,
+            high_vram=high_vram,
+        )[0]
+    )
+    return (
+        *root_files,
         *(
             str(path.relative_to(PROJECT_ROOT))
             for path in sorted((PROJECT_ROOT / "src").rglob("*.py"))
@@ -917,8 +1214,37 @@ def _expected_runtime_paths() -> tuple[str, ...]:
     )
 
 
-def _validate_source_bundle(value: object, *, git_hash: str) -> dict[str, Any]:
+def _validate_source_bundle(
+    value: object,
+    *,
+    git_hash: str,
+    controlled_ablation: bool,
+    high_vram: bool = False,
+) -> dict[str, Any]:
     _require(isinstance(value, Mapping), "Stage-C runtime source bundle is missing")
+    result = subprocess.run(
+        ["git", "cat-file", "-e", f"{git_hash}^{{commit}}"],
+        cwd=PROJECT_ROOT,
+        check=False,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.PIPE,
+    )
+    _require(result.returncode == 0, "Stage-C source Git commit is unavailable locally")
+    _, expected_scopes, expected_file_count = _runtime_source_contract(
+        git_hash,
+        controlled_ablation=controlled_ablation,
+        high_vram=high_vram,
+    )
+    _require(
+        not controlled_ablation
+        or expected_file_count
+        == (
+            HIGH_VRAM_SOURCE_FILE_COUNT
+            if high_vram
+            else CONTROLLED_SOURCE_FILE_COUNT
+        ),
+        "controlled Stage-C runtime source bundle has the wrong role-specific contract",
+    )
     required = {
         "schema_version",
         "git_head",
@@ -935,18 +1261,22 @@ def _validate_source_bundle(value: object, *, git_hash: str) -> dict[str, Any]:
         "Stage-C runtime source bundle header is malformed",
     )
     _require(
-        value.get("git_scopes") == list(RUNTIME_GIT_SCOPES),
+        value.get("git_scopes") == list(expected_scopes),
         "Stage-C runtime source Git scopes are non-canonical",
     )
     files = value.get("files")
     _require(
-        isinstance(files, list) and len(files) == EXPECTED_SOURCE_FILE_COUNT,
-        "Stage-C runtime source bundle must contain exactly 52 files",
+        isinstance(files, list) and len(files) == expected_file_count,
+        "Stage-C runtime source bundle has the wrong file count for its Git tree",
     )
-    expected_paths = _expected_runtime_paths()
+    expected_paths = _expected_runtime_paths(
+        git_hash=git_hash,
+        controlled_ablation=controlled_ablation,
+        high_vram=high_vram,
+    )
     _require(
-        len(expected_paths) == EXPECTED_SOURCE_FILE_COUNT,
-        "auditor canonical Stage-C runtime path set is not 52 files",
+        len(expected_paths) == expected_file_count,
+        "auditor Stage-C runtime path count differs from its Git-tree contract",
     )
     actual_paths = [item.get("path") if isinstance(item, Mapping) else None for item in files]
     _require(
@@ -962,14 +1292,6 @@ def _validate_source_bundle(value: object, *, git_hash: str) -> dict[str, Any]:
     ).encode("utf-8")
     bundle_sha = _require_sha256(value.get("bundle_sha256"), "runtime bundle SHA-256")
     _require(_sha256_bytes(encoded) == bundle_sha, "runtime source bundle SHA-256 differs")
-    result = subprocess.run(
-        ["git", "cat-file", "-e", f"{git_hash}^{{commit}}"],
-        cwd=PROJECT_ROOT,
-        check=False,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.PIPE,
-    )
-    _require(result.returncode == 0, "Stage-C source Git commit is unavailable locally")
     for record, relative in zip(files, expected_paths, strict=True):
         _require(isinstance(record, Mapping), f"runtime source record is malformed: {relative}")
         recorded_sha = _require_sha256(record.get("sha256"), f"runtime source {relative}")
@@ -993,10 +1315,145 @@ def _validate_source_bundle(value: object, *, git_hash: str) -> dict[str, Any]:
     }
 
 
+def _validate_d025_prerequisite(
+    value: object,
+    *,
+    base_checkpoint: Mapping[str, Any],
+    expected_formal_audit_path: str,
+) -> dict[str, Any]:
+    """Validate the embedded, already-controlled D-025 Stage-B prerequisite."""
+
+    _require(isinstance(value, Mapping), "Stage-C D-025 prerequisite is missing")
+    _require(
+        value.get("schema_version") == 1
+        and value.get("component")
+        == "d025-stage-b-prerequisite-for-stage-c-positivity"
+        and value.get("status") == "PASS"
+        and value.get("protocol_version") == STAGE_C_D025_POSITIVITY_PROTOCOL
+        and value.get("canonical_stage_c_replacement") is False,
+        "Stage-C D-025 prerequisite did not record a controlled PASS",
+    )
+    prerequisite_base = value.get("base_checkpoint")
+    _require(
+        isinstance(prerequisite_base, Mapping)
+        and prerequisite_base.get("path") == base_checkpoint.get("path")
+        and prerequisite_base.get("sha256") == base_checkpoint.get("sha256")
+        and prerequisite_base.get("step") == FORMAL_STAGE_B_STEPS,
+        "Stage-C D-025 prerequisite does not bind the frozen base",
+    )
+    formal_audit = value.get("formal_evaluation_audit")
+    _require(
+        isinstance(formal_audit, Mapping)
+        and set(formal_audit)
+        == {"path", "sha256", "component", "status", "final_gate"}
+        and isinstance(formal_audit.get("path"), str)
+        and bool(str(formal_audit["path"]).strip())
+        and formal_audit.get("path") == expected_formal_audit_path
+        and formal_audit.get("component")
+        == "d025-positivity-final-evaluation-audit"
+        and formal_audit.get("status")
+        == "D025_FINAL_CONTROLLED_COMPARISON_PASS",
+        "Stage-C D-025 prerequisite lacks the formal evaluation PASS audit",
+    )
+    _require_sha256(
+        formal_audit.get("sha256"),
+        "Stage-C D-025 formal evaluation audit SHA-256",
+    )
+    final_gate = formal_audit.get("final_gate")
+    _require(
+        isinstance(final_gate, Mapping)
+        and final_gate.get("eligible") is True
+        and final_gate.get("result") == "PASS"
+        and final_gate.get("limited_or_intermediate_cannot_pass") is True,
+        "Stage-C D-025 formal evaluation audit final gate did not pass",
+    )
+    formal_audit_path = Path(str(formal_audit["path"])).expanduser().resolve()
+    _require(
+        formal_audit_path == Path(expected_formal_audit_path).expanduser().resolve(),
+        "Stage-C D-025 formal evaluation audit resolved path differs",
+    )
+    formal_audit_payload = _read_regular_local_file(
+        formal_audit_path, "Stage-C D-025 formal evaluation audit"
+    )
+    _require(
+        _sha256_bytes(formal_audit_payload) == formal_audit["sha256"],
+        "Stage-C D-025 formal evaluation audit content SHA-256 differs",
+    )
+    try:
+        live_formal_audit = _strict_json_loads(
+            formal_audit_payload.decode("utf-8"),
+            "Stage-C D-025 formal evaluation audit",
+        )
+    except UnicodeDecodeError as exc:
+        raise EpipolarTrainingAuditError(
+            "Stage-C D-025 formal evaluation audit is not UTF-8"
+        ) from exc
+    _require(
+        isinstance(live_formal_audit, Mapping)
+        and live_formal_audit.get("schema_version") == 1
+        and live_formal_audit.get("component") == formal_audit["component"]
+        and live_formal_audit.get("status") == formal_audit["status"]
+        and live_formal_audit.get("read_only") is True
+        and live_formal_audit.get("final_gate") == dict(final_gate),
+        "Stage-C D-025 live formal evaluation audit differs from its checkpoint identity",
+    )
+    artifacts = live_formal_audit.get("artifacts")
+    _require(
+        isinstance(artifacts, Mapping),
+        "Stage-C D-025 formal evaluation audit artifacts are missing",
+    )
+
+    def artifact_path(name: str) -> Path:
+        identity = artifacts.get(name)
+        _require(
+            isinstance(identity, Mapping)
+            and isinstance(identity.get("path"), str)
+            and bool(str(identity["path"]).strip()),
+            f"Stage-C D-025 formal audit artifact path is missing: {name}",
+        )
+        return Path(str(identity["path"])).expanduser().resolve()
+
+    try:
+        recomputed_formal_audit = audit_d025_evaluation(
+            artifact_path("d025_training_audit"),
+            artifact_path("d025_metrics").parent,
+            artifact_path("canonical_stage_b_report"),
+            artifact_path("canonical_metrics").parent,
+            artifact_path("d025_preflight"),
+        )
+    except D025EvaluationAuditError as exc:
+        raise EpipolarTrainingAuditError(
+            f"Stage-C D-025 formal evaluation audit no longer verifies: {exc}"
+        ) from exc
+    _require(
+        dict(recomputed_formal_audit) == dict(live_formal_audit),
+        "Stage-C D-025 formal evaluation audit differs from full recomputation",
+    )
+    return {
+        "status": "PASS",
+        "protocol_version": STAGE_C_D025_POSITIVITY_PROTOCOL,
+        "base_checkpoint": {
+            "path": str(base_checkpoint["path"]),
+            "sha256": str(base_checkpoint["sha256"]),
+            "step": FORMAL_STAGE_B_STEPS,
+        },
+        "formal_evaluation_audit": {
+            "path": str(formal_audit["path"]),
+            "sha256": str(formal_audit["sha256"]),
+            "component": str(formal_audit["component"]),
+            "status": str(formal_audit["status"]),
+            "final_gate": dict(final_gate),
+        },
+        "canonical_stage_c_replacement": False,
+    }
+
+
 def _validate_completion(
     value: object,
     *,
     step: int,
+    controlled_ablation: bool,
+    high_vram: bool = False,
 ) -> dict[str, Any]:
     _require(isinstance(value, Mapping), "Stage-C completion receipt is missing")
     expected = {
@@ -1007,10 +1464,70 @@ def _validate_completion(
         "base_complete": True,
         "cuda_bf16_eligible": True,
         "strict_determinism_eligible": True,
-        "formal_training_complete": step == FORMAL_STAGE_C_STEPS,
+        "formal_training_complete": (
+            step == FORMAL_STAGE_C_STEPS and not controlled_ablation
+        ),
     }
+    if controlled_ablation:
+        expected.update(
+            {
+                "controlled_ablation_training_complete": (
+                    step == FORMAL_STAGE_C_STEPS
+                ),
+                "canonical_stage_c_replacement": False,
+            }
+        )
+    if high_vram:
+        expected["high_vram_preflight_passed"] = True
     _require(dict(value) == expected, "Stage-C completion receipt is inconsistent")
     return expected
+
+
+def _validate_high_vram_preflight(
+    value: object,
+    *,
+    config: Mapping[str, Any],
+    base_checkpoint: Mapping[str, Any],
+    d025_prerequisite: Mapping[str, Any] | None,
+    runtime_source_bundle: Mapping[str, Any],
+    training_runtime: Mapping[str, Any],
+    enabled: bool,
+) -> dict[str, Any] | None:
+    if not enabled:
+        _require(value is None, "standard Stage-C checkpoint declares high-VRAM preflight")
+        return None
+    _require(
+        isinstance(value, Mapping) and d025_prerequisite is not None,
+        "high-VRAM Stage-C checkpoint lacks its preflight/D-025 receipt",
+    )
+    section = config.get("stage_c_high_vram")
+    path = section.get("preflight_receipt_path") if isinstance(section, Mapping) else None
+    _require(
+        isinstance(path, str) and bool(path),
+        "high-VRAM Stage-C preflight path is missing",
+    )
+    try:
+        recomputed = validate_stage_c_high_vram_preflight_receipt(
+            path=path,
+            config=config,
+            base_checkpoint={
+                "path": base_checkpoint["path"],
+                "sha256": base_checkpoint["sha256"],
+                "step": base_checkpoint["step"],
+            },
+            d025_prerequisite=d025_prerequisite,
+            runtime_source_bundle=runtime_source_bundle,
+            training_runtime=training_runtime,
+        )
+    except (FileNotFoundError, OSError, ValueError) as exc:
+        raise EpipolarTrainingAuditError(
+            f"Stage-C high-VRAM preflight no longer verifies: {exc}"
+        ) from exc
+    _require(
+        dict(recomputed) == dict(value),
+        "Stage-C embedded high-VRAM preflight differs from recomputation",
+    )
+    return dict(recomputed)
 
 
 def _validate_checkpoint(path: Path, label: str) -> CheckpointSnapshot:
@@ -1095,6 +1612,28 @@ def _validate_checkpoint(path: Path, label: str) -> CheckpointSnapshot:
     base = _validate_base_checkpoint(
         payload.get("base_checkpoint"), payload.get("base_completion")
     )
+    positivity = config_values["stage_c_positivity_ablation"]
+    controlled_ablation = bool(positivity["enabled"])
+    high_vram_validation = config_values["stage_c_high_vram"]
+    high_vram = bool(high_vram_validation["enabled"])
+    if controlled_ablation:
+        _require(
+            payload.get("experiment_role") == CONTROLLED_D025_STAGE_C_ROLE,
+            f"{label} Stage-C checkpoint lacks the controlled-ablation role",
+        )
+        d025_prerequisite = _validate_d025_prerequisite(
+            payload.get("d025_prerequisite"),
+            base_checkpoint=base,
+            expected_formal_audit_path=str(
+                config["stage_c_positivity_ablation"]["d025_evaluation_audit_path"]
+            ),
+        )
+    else:
+        _require(
+            "experiment_role" not in payload and "d025_prerequisite" not in payload,
+            f"{label} canonical Stage-C checkpoint unexpectedly declares D-025 lineage",
+        )
+        d025_prerequisite = None
     _require(
         payload.get("geometry_contract") == EPIPOLAR_GEOMETRY_CONTRACT,
         f"{label} Stage-C epipolar geometry contract differs",
@@ -1103,9 +1642,30 @@ def _validate_checkpoint(path: Path, label: str) -> CheckpointSnapshot:
         payload.get("rectification_audit"), config=config
     )
     source = _validate_source_bundle(
-        payload.get("runtime_source_bundle"), git_hash=git_hash
+        payload.get("runtime_source_bundle"),
+        git_hash=git_hash,
+        controlled_ablation=controlled_ablation,
+        high_vram=high_vram,
     )
-    completion = _validate_completion(payload.get("completion"), step=step)
+    high_vram_preflight = _validate_high_vram_preflight(
+        payload.get("high_vram_preflight"),
+        config=config,
+        base_checkpoint=base,
+        d025_prerequisite=(
+            payload.get("d025_prerequisite")
+            if controlled_ablation
+            else None
+        ),
+        runtime_source_bundle=payload["runtime_source_bundle"],
+        training_runtime=payload["training_runtime"],
+        enabled=high_vram,
+    )
+    completion = _validate_completion(
+        payload.get("completion"),
+        step=step,
+        controlled_ablation=controlled_ablation,
+        high_vram=high_vram,
+    )
     _require(isinstance(payload.get("base_lineage"), Mapping), "Stage-C base lineage is missing")
     _require(isinstance(payload.get("raw_lineage"), Mapping), "Stage-C raw lineage is missing")
     elapsed = _finite_float(payload.get("elapsed_seconds"), "checkpoint elapsed_seconds")
@@ -1122,6 +1682,14 @@ def _validate_checkpoint(path: Path, label: str) -> CheckpointSnapshot:
         "rectification_audit": rectification,
         "runtime_source_bundle": source,
         "completion": completion,
+        "stage_c_positivity_ablation": {
+            **dict(positivity),
+            "d025_prerequisite": d025_prerequisite,
+        },
+        "stage_c_high_vram": {
+            **dict(high_vram_validation),
+            "preflight": high_vram_preflight,
+        },
     }
     # Store audit-only validation results outside the producer payload namespace.
     audited_payload = dict(payload)
@@ -1231,6 +1799,14 @@ def _validate_training_log(
         "correction_regularizer",
         "valid_pixel_count",
     }
+    positivity_validation = checkpoint.payload["__audit_validation__"][
+        "stage_c_positivity_ablation"
+    ]
+    controlled_ablation = bool(positivity_validation["enabled"])
+    numeric_loss_terms = ["total", "disparity", "correction_regularizer"]
+    if controlled_ablation:
+        expected_loss.add("positivity_penalty")
+        numeric_loss_terms.append("positivity_penalty")
     train = checkpoint.config["train"]
     previous_elapsed: float | None = None
     resume_boundaries: list[int] = []
@@ -1276,7 +1852,7 @@ def _validate_training_log(
             isinstance(loss, Mapping) and set(loss) == expected_loss,
             f"Stage-C loss schema differs at step {expected_step}",
         )
-        for name in ("total", "disparity", "correction_regularizer"):
+        for name in numeric_loss_terms:
             value = _finite_float(loss.get(name), f"step {expected_step} loss.{name}")
             _require(value >= 0.0, f"loss.{name} is negative at step {expected_step}")
         _positive_int(loss.get("valid_pixel_count"), f"step {expected_step} valid_pixel_count")
@@ -1306,6 +1882,11 @@ def _validate_training_log(
         "steps_continuous": True,
         "learning_rate_schedule_exact": True,
         "finite": True,
+        "loss_schema": {
+            "stage_c_positivity_ablation_enabled": controlled_ablation,
+            "terms": sorted(numeric_loss_terms),
+            "valid_pixel_count": True,
+        },
         "elapsed_seconds_last": elapsed_values[-1],
         "elapsed_resume_boundaries": resume_boundaries,
     }
@@ -1350,6 +1931,19 @@ def _validate_summary(
     last_logged_step: int,
     last_logged_elapsed_seconds: float,
 ) -> dict[str, Any]:
+    positivity = final.payload["__audit_validation__"][
+        "stage_c_positivity_ablation"
+    ]
+    controlled_ablation = bool(positivity["enabled"])
+    high_vram_validation = final.payload["__audit_validation__"][
+        "stage_c_high_vram"
+    ]
+    high_vram = bool(high_vram_validation["enabled"])
+    expected_role = (
+        CONTROLLED_D025_STAGE_C_ROLE
+        if controlled_ablation
+        else CANONICAL_STAGE_C_ROLE
+    )
     _require(
         summary.get("schema_version") == RUN_SUMMARY_SCHEMA_VERSION
         and summary.get("component") == RUN_COMPONENT
@@ -1357,6 +1951,35 @@ def _validate_summary(
         and summary.get("stage") == "epipolar",
         "Stage-C run summary component/schema/status differs",
     )
+    if controlled_ablation:
+        _require(
+            summary.get("experiment_role") == expected_role
+            and isinstance(summary.get("d025_prerequisite"), Mapping)
+            and dict(summary["d025_prerequisite"])
+            == dict(final.payload["d025_prerequisite"]),
+            "controlled Stage-C run summary D-025 identity differs from final.pt",
+        )
+    else:
+        _require(
+            summary.get("experiment_role", CANONICAL_STAGE_C_ROLE)
+            == CANONICAL_STAGE_C_ROLE
+            and summary.get("d025_prerequisite") is None
+            and summary.get("controlled_ablation_training_complete", False)
+            is False,
+            "canonical Stage-C run summary unexpectedly declares D-025 completion",
+        )
+    if high_vram:
+        _require(
+            isinstance(summary.get("high_vram_preflight"), Mapping)
+            and dict(summary["high_vram_preflight"])
+            == dict(final.payload["high_vram_preflight"]),
+            "high-VRAM run summary preflight differs from final.pt",
+        )
+    else:
+        _require(
+            "high_vram_preflight" not in summary,
+            "standard Stage-C run summary unexpectedly declares high-VRAM preflight",
+        )
     _require(
         summary.get("steps") == FORMAL_STAGE_C_STEPS
         and summary.get("configured_steps") == FORMAL_STAGE_C_STEPS
@@ -1381,11 +2004,23 @@ def _validate_summary(
         summary.get("runtime_source_bundle_sha256") == bundle.get("bundle_sha256"),
         "run summary runtime source bundle SHA differs",
     )
-    _require(
-        summary.get("formal_training_complete") is True
-        and final.payload["completion"].get("formal_training_complete") is True,
-        "run summary/final checkpoint do not certify formal_training_complete",
-    )
+    if controlled_ablation:
+        _require(
+            summary.get("formal_training_complete") is False
+            and final.payload["completion"].get("formal_training_complete") is False
+            and summary.get("controlled_ablation_training_complete") is True
+            and final.payload["completion"].get(
+                "controlled_ablation_training_complete"
+            )
+            is True,
+            "controlled Stage-C completion flags are inconsistent",
+        )
+    else:
+        _require(
+            summary.get("formal_training_complete") is True
+            and final.payload["completion"].get("formal_training_complete") is True,
+            "run summary/final checkpoint do not certify formal_training_complete",
+        )
     _summary_artifact(
         summary.get("final_checkpoint"),
         expected_path=final.path,
@@ -1443,6 +2078,10 @@ def _validate_summary(
         "elapsed_seconds": elapsed,
         "segment_elapsed_seconds": segment_elapsed,
         "segment_steps_per_second": segment_rate,
+        "experiment_role": expected_role,
+        "formal_training_complete": not controlled_ablation,
+        "controlled_ablation_training_complete": controlled_ablation,
+        "high_vram": high_vram,
     }
 
 
@@ -1504,11 +2143,18 @@ def audit_epipolar_training_run(output_dir: str | Path) -> dict[str, Any]:
     complete = summary_validation is not None
     status = "PASS" if complete else "IN_PROGRESS"
     checkpoint_validation = latest.payload["__audit_validation__"]
+    positivity_validation = checkpoint_validation["stage_c_positivity_ablation"]
+    controlled_ablation = bool(positivity_validation["enabled"])
+    formal_training_complete = bool(complete and not controlled_ablation)
+    controlled_ablation_training_complete = bool(
+        complete and controlled_ablation
+    )
     return {
         "schema_version": AUDIT_SCHEMA_VERSION,
         "component": AUDIT_COMPONENT,
         "status": status,
         "training_status": "TRAINING_COMPLETE" if complete else "IN_PROGRESS",
+        "experiment_role": positivity_validation["experiment_role"],
         "read_only": True,
         "safe_load": {
             "torch_weights_only": True,
@@ -1555,7 +2201,10 @@ def audit_epipolar_training_run(output_dir: str | Path) -> dict[str, Any]:
         "completion": {
             "receipt_present": summary_present,
             "receipt_valid": complete,
-            "formal_training_complete": complete,
+            "formal_training_complete": formal_training_complete,
+            "controlled_ablation_training_complete": (
+                controlled_ablation_training_complete
+            ),
             "summary": summary_validation,
         },
     }

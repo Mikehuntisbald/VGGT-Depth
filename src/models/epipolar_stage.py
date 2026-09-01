@@ -46,9 +46,10 @@ class EpipolarStageLoss:
     disparity: Tensor
     correction_regularizer: Tensor
     valid_pixel_count: int
+    positivity_penalty: Tensor | None = None
 
     def detached_scalars(self) -> dict[str, float | int]:
-        return {
+        values: dict[str, float | int] = {
             "total": float(self.total.detach().float().cpu().item()),
             "disparity": float(self.disparity.detach().float().cpu().item()),
             "correction_regularizer": float(
@@ -56,6 +57,11 @@ class EpipolarStageLoss:
             ),
             "valid_pixel_count": self.valid_pixel_count,
         }
+        if self.positivity_penalty is not None:
+            values["positivity_penalty"] = float(
+                self.positivity_penalty.detach().float().cpu().item()
+            )
+        return values
 
 
 class FrozenTemporalEpipolarStage(nn.Module):
@@ -226,6 +232,7 @@ def compute_epipolar_stage_loss(
     *,
     target_confidence: Tensor | None = None,
     correction_regularizer_weight: float = 0.01,
+    pre_lower_bound_negative_penalty_weight: float = 0.0,
 ) -> EpipolarStageLoss:
     """Supervise refined HR disparity only where teacher and search are valid."""
 
@@ -233,6 +240,12 @@ def compute_epipolar_stage_loss(
         correction_regularizer_weight < 0
     ):
         raise ValueError("correction_regularizer_weight must be finite and >= 0")
+    if not math.isfinite(pre_lower_bound_negative_penalty_weight) or (
+        pre_lower_bound_negative_penalty_weight < 0
+    ):
+        raise ValueError(
+            "pre_lower_bound_negative_penalty_weight must be finite and >= 0"
+        )
     expected_shape = output.refined_disparity_hr_px.shape
     for name, value in (
         ("target_disparity_hr_px", target_disparity_hr_px),
@@ -293,7 +306,31 @@ def compute_epipolar_stage_loss(
     correction_regularizer = finite_masked_mean(
         output.correction_hr_px.abs(), usable
     )
+    positivity_penalty: Tensor | None = None
+    if pre_lower_bound_negative_penalty_weight > 0:
+        pre_lower_bound = output.refinement.pre_lower_bound_disparity_hr_px
+        if pre_lower_bound is None or pre_lower_bound.shape != expected_shape:
+            raise ValueError(
+                "enabled Stage-C positivity penalty requires the pre-lower-bound tap"
+            )
+        if not bool((torch.isfinite(pre_lower_bound) | ~search_valid).all().item()):
+            raise FloatingPointError(
+                "Stage-C pre-lower-bound disparity is non-finite on the "
+                "candidate-valid domain"
+            )
+        candidate_domain = search_valid
+        violation = torch.where(
+            candidate_domain,
+            (-pre_lower_bound).clamp_min(0.0),
+            torch.zeros_like(pre_lower_bound),
+        )
+        positivity_penalty = (
+            pre_lower_bound_negative_penalty_weight
+            * finite_masked_mean(violation.square(), candidate_domain)
+        )
     total = disparity + correction_regularizer_weight * correction_regularizer
+    if positivity_penalty is not None:
+        total = total + positivity_penalty
     if not bool(torch.isfinite(total.detach()).all().item()):
         raise FloatingPointError("Stage-C epipolar loss is non-finite")
     return EpipolarStageLoss(
@@ -301,6 +338,7 @@ def compute_epipolar_stage_loss(
         disparity=disparity,
         correction_regularizer=correction_regularizer,
         valid_pixel_count=valid_pixel_count,
+        positivity_penalty=positivity_penalty,
     )
 
 

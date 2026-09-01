@@ -14,6 +14,7 @@ import sys
 import tempfile
 import time
 from collections.abc import Iterator, Mapping, Sequence
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -50,6 +51,11 @@ from models.epipolar_stage import (  # noqa: E402
     compute_epipolar_stage_loss,
 )
 from models.ffs_omega_tsr import FFSOmegaTSR, ModelOutput  # noqa: E402
+from tools.audit_d025_evaluation import (  # noqa: E402
+    AUDIT_COMPONENT as D025_EVALUATION_AUDIT_COMPONENT,
+    D025EvaluationAuditError,
+    audit_d025_evaluation,
+)
 from train import (  # noqa: E402
     DEFAULT_CONFIG,
     DeterministicEpochSampler,
@@ -60,6 +66,7 @@ from train import (  # noqa: E402
     build_temporal_transport,
     learning_rate_multiplier,
     load_receipt_identity,
+    positivity_ablation_from_config,
 )
 from utils.checkpoint import (  # noqa: E402
     CheckpointMismatchError,
@@ -118,12 +125,204 @@ STAGE_C_RUNTIME_GIT_SCOPES = (
     "src",
 )
 STAGE_C_RUNTIME_ROOT_FILES = STAGE_C_RUNTIME_GIT_SCOPES[:-1]
+STAGE_C_CONTROLLED_RUNTIME_ADDITIONS = (
+    "configs/ablations/d025_positivity_t3.yaml",
+    "configs/ablations/d025_stage_c_positivity.yaml",
+    "tools/audit_d025_evaluation.py",
+)
+STAGE_C_HIGH_VRAM_RUNTIME_ADDITIONS = (
+    "configs/ablations/d025_stage_c_positivity_high_vram.yaml",
+)
+STAGE_C_CONTROLLED_RUNTIME_ROOT_FILES = (
+    *STAGE_C_RUNTIME_ROOT_FILES[:-1],
+    *STAGE_C_CONTROLLED_RUNTIME_ADDITIONS,
+    STAGE_C_RUNTIME_ROOT_FILES[-1],
+)
+STAGE_C_CONTROLLED_RUNTIME_GIT_SCOPES = (
+    *STAGE_C_CONTROLLED_RUNTIME_ROOT_FILES,
+    "src",
+)
+STAGE_C_HIGH_VRAM_RUNTIME_ROOT_FILES = (
+    *STAGE_C_CONTROLLED_RUNTIME_ROOT_FILES[:-1],
+    *STAGE_C_HIGH_VRAM_RUNTIME_ADDITIONS,
+    STAGE_C_CONTROLLED_RUNTIME_ROOT_FILES[-1],
+)
+STAGE_C_HIGH_VRAM_RUNTIME_GIT_SCOPES = (
+    *STAGE_C_HIGH_VRAM_RUNTIME_ROOT_FILES,
+    "src",
+)
 
 STAGE_C_CHECKPOINT_SCHEMA_VERSION = 1
 STAGE_C_COMPONENT = "ffs-omega-tsr-epipolar-stage-c"
 STAGE_C_MODEL_COMPONENT = "hr_epipolar_refiner"
 FORMAL_STAGE_B_STEPS = 15_000
 FORMAL_STAGE_C_STEPS = 5_000
+STAGE_C_D025_POSITIVITY_PROTOCOL = "d025_stage_c_physical_positivity_v1"
+STAGE_C_HIGH_VRAM_PROTOCOL = "d025_stage_c_high_vram_cuda_preflight_v1"
+STAGE_C_HIGH_VRAM_PREFLIGHT_COMPONENT = "d025-stage-c-high-vram-preflight"
+STAGE_C_HIGH_VRAM_FALLBACK = {
+    "micro_batch_size": 2,
+    "grad_accumulation": 4,
+    "effective_batch_size": 8,
+}
+
+
+@dataclass(frozen=True, slots=True)
+class StageCPositivityAblation:
+    """Opt-in Stage-C continuation of a passing D-025 physical base."""
+
+    enabled: bool = False
+    correction_lower_bound_hr_px: float | None = None
+    pre_lower_bound_negative_penalty_weight: float = 0.0
+    d025_training_audit_path: str | None = None
+    d025_evaluation_audit_path: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class StageCHighVRAMPreflight:
+    """Optional 4x2 schedule, gated by a successful CUDA memory probe."""
+
+    enabled: bool = False
+    receipt_path: str | None = None
+    minimum_headroom_bytes: int = 0
+
+
+def stage_c_positivity_ablation_from_config(
+    config: Mapping[str, Any] | DictConfig,
+) -> StageCPositivityAblation:
+    """Parse the isolated Stage-C positivity arm without changing defaults."""
+
+    section = config.get("stage_c_positivity_ablation")
+    if section is None:
+        return StageCPositivityAblation()
+    if not isinstance(section, Mapping):
+        raise ValueError("stage_c_positivity_ablation must be a mapping")
+    enabled = section.get("enabled")
+    if not isinstance(enabled, bool):
+        raise ValueError("stage_c_positivity_ablation.enabled must be a bool")
+    if not enabled:
+        return StageCPositivityAblation()
+    if section.get("protocol_version") != STAGE_C_D025_POSITIVITY_PROTOCOL:
+        raise ValueError("Stage-C positivity protocol version mismatch")
+    if section.get("requires_passing_d025_base") is not True:
+        raise ValueError("Stage-C positivity requires a passing D-025 base")
+    if "d025_evaluation_metrics_path" in section:
+        raise ValueError(
+            "Stage-C positivity must use a formal evaluation audit, not raw metrics"
+        )
+    floor = section.get("correction_lower_bound_hr_px")
+    if (
+        isinstance(floor, bool)
+        or not isinstance(floor, (int, float))
+        or not math.isfinite(float(floor))
+        or float(floor) != 0.0
+    ):
+        raise ValueError(
+            "Stage-C correction lower bound must be exactly 0.0; epsilon is forbidden"
+        )
+    weight = section.get("pre_lower_bound_negative_penalty_weight")
+    if (
+        isinstance(weight, bool)
+        or not isinstance(weight, (int, float))
+        or not math.isfinite(float(weight))
+        or float(weight) <= 0
+    ):
+        raise ValueError("Stage-C pre-clamp negative penalty weight must be positive")
+    audit_path = section.get("d025_training_audit_path")
+    evaluation_audit_path = section.get("d025_evaluation_audit_path")
+    for name, value in (
+        ("d025_training_audit_path", audit_path),
+        ("d025_evaluation_audit_path", evaluation_audit_path),
+    ):
+        if value is not None and (
+            not isinstance(value, str) or not value.strip()
+        ):
+            raise ValueError(
+                f"stage_c_positivity_ablation.{name} must be null or a path"
+            )
+    base_positivity = positivity_ablation_from_config(config)
+    if not base_positivity.enabled or (
+        base_positivity.lower_bound_hr_px != 0.0
+        or not base_positivity.sanitize_invalid_sources
+    ):
+        raise ValueError(
+            "Stage-C positivity config must instantiate the D-025 physical base path"
+        )
+    return StageCPositivityAblation(
+        enabled=True,
+        correction_lower_bound_hr_px=0.0,
+        pre_lower_bound_negative_penalty_weight=float(weight),
+        d025_training_audit_path=(
+            None
+            if audit_path is None
+            else str(Path(audit_path).expanduser().resolve())
+        ),
+        d025_evaluation_audit_path=(
+            None
+            if evaluation_audit_path is None
+            else str(Path(evaluation_audit_path).expanduser().resolve())
+        ),
+    )
+
+
+def stage_c_high_vram_from_config(
+    config: Mapping[str, Any] | DictConfig,
+) -> StageCHighVRAMPreflight:
+    """Parse the fully opt-in 4x2 high-VRAM execution candidate."""
+
+    section = config.get("stage_c_high_vram")
+    if section is None:
+        return StageCHighVRAMPreflight()
+    if not isinstance(section, Mapping):
+        raise ValueError("stage_c_high_vram must be a mapping")
+    enabled = section.get("enabled")
+    if not isinstance(enabled, bool):
+        raise ValueError("stage_c_high_vram.enabled must be a bool")
+    if not enabled:
+        return StageCHighVRAMPreflight()
+    if not stage_c_positivity_ablation_from_config(config).enabled:
+        raise ValueError("high-VRAM Stage C is restricted to the D-025 opt-in arm")
+    if section.get("protocol_version") != STAGE_C_HIGH_VRAM_PROTOCOL or (
+        section.get("requires_cuda_memory_preflight") is not True
+    ):
+        raise ValueError("Stage-C high-VRAM preflight protocol differs")
+    minimum = section.get("minimum_headroom_bytes")
+    if (
+        isinstance(minimum, bool)
+        or not isinstance(minimum, int)
+        or minimum <= 0
+    ):
+        raise ValueError("stage_c_high_vram.minimum_headroom_bytes must be positive")
+    fallback = section.get("oom_fallback")
+    if not isinstance(fallback, Mapping) or dict(fallback) != STAGE_C_HIGH_VRAM_FALLBACK:
+        raise ValueError("Stage-C high-VRAM OOM fallback must be the canonical 2x4 schedule")
+    train = config.get("train")
+    if not isinstance(train, Mapping) or {
+        "micro_batch_size": train.get("micro_batch_size"),
+        "grad_accumulation": train.get("grad_accumulation"),
+        "effective_batch_size": train.get("effective_batch_size"),
+    } != {
+        "micro_batch_size": 4,
+        "grad_accumulation": 2,
+        "effective_batch_size": 8,
+    }:
+        raise ValueError("Stage-C high-VRAM schedule must be exactly 4x2=8")
+    receipt = section.get("preflight_receipt_path")
+    if receipt is not None and (
+        not isinstance(receipt, str) or not receipt.strip()
+    ):
+        raise ValueError(
+            "stage_c_high_vram.preflight_receipt_path must be null or a path"
+        )
+    return StageCHighVRAMPreflight(
+        enabled=True,
+        receipt_path=(
+            None
+            if receipt is None
+            else str(Path(receipt).expanduser().resolve())
+        ),
+        minimum_headroom_bytes=int(minimum),
+    )
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -146,6 +345,24 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--teacher-cache-root", type=Path)
     parser.add_argument("--derived-cache-root", type=Path)
     parser.add_argument("--rectification-audit", type=Path)
+    parser.add_argument(
+        "--d025-training-audit",
+        type=Path,
+        help="required completed D-025 Stage-B training audit for the opt-in arm",
+    )
+    parser.add_argument(
+        "--d025-evaluation-audit",
+        type=Path,
+        help="required PASS receipt from audit_d025_evaluation.py",
+    )
+    parser.add_argument(
+        "--high-vram-preflight-receipt",
+        type=Path,
+        help=(
+            "required CUDA memory-probe receipt path for the opt-in 4x2 arm; "
+            "--dry-run creates it, formal training consumes it"
+        ),
+    )
     parser.add_argument("--output", type=Path)
     parser.add_argument("--device", default="auto")
     parser.add_argument("--run-steps", type=int, help="bounded optimizer steps")
@@ -220,6 +437,12 @@ def validate_epipolar_config(config: DictConfig) -> None:
         raise ValueError("formal Stage C requires train.precision=bf16")
     if str(config.train.optimizer).lower() != "adamw":
         raise ValueError("Stage-C optimizer must be AdamW")
+    stage_c_positivity = stage_c_positivity_ablation_from_config(config)
+    if positivity_ablation_from_config(config).enabled != stage_c_positivity.enabled:
+        raise ValueError(
+            "Stage-C and frozen-base positivity opt-ins must be enabled together"
+        )
+    stage_c_high_vram_from_config(config)
     offsets = [float(value) for value in config.model.epipolar_offsets_hr_px]
     if (
         not offsets
@@ -296,11 +519,25 @@ def _resolved_dict(config: DictConfig) -> dict[str, Any]:
 
 def stage_c_runtime_relative_paths(
     project_root: Path = PROJECT_ROOT,
+    *,
+    controlled_ablation: bool = False,
+    high_vram: bool = False,
 ) -> tuple[str, ...]:
     """Canonical ordered Stage-C producer/evaluator source paths."""
 
+    if high_vram and not controlled_ablation:
+        raise ValueError("high-VRAM runtime requires the controlled D-025 arm")
+    root_files = (
+        STAGE_C_HIGH_VRAM_RUNTIME_ROOT_FILES
+        if high_vram
+        else (
+            STAGE_C_CONTROLLED_RUNTIME_ROOT_FILES
+            if controlled_ablation
+            else STAGE_C_RUNTIME_ROOT_FILES
+        )
+    )
     return (
-        *STAGE_C_RUNTIME_ROOT_FILES,
+        *root_files,
         *(
             str(path.relative_to(project_root))
             for path in sorted((project_root / "src").rglob("*.py"))
@@ -308,16 +545,40 @@ def stage_c_runtime_relative_paths(
     )
 
 
-def _runtime_source_bundle() -> dict[str, Any]:
+def stage_c_runtime_git_scopes(
+    *, controlled_ablation: bool = False, high_vram: bool = False
+) -> tuple[str, ...]:
+    """Return the opt-in-aware clean-worktree scopes for Stage C."""
+
+    if high_vram and not controlled_ablation:
+        raise ValueError("high-VRAM runtime requires the controlled D-025 arm")
+    return (
+        STAGE_C_HIGH_VRAM_RUNTIME_GIT_SCOPES
+        if high_vram
+        else (
+            STAGE_C_CONTROLLED_RUNTIME_GIT_SCOPES
+            if controlled_ablation
+            else STAGE_C_RUNTIME_GIT_SCOPES
+        )
+    )
+
+
+def _runtime_source_bundle(
+    *, controlled_ablation: bool = False, high_vram: bool = False
+) -> dict[str, Any]:
     """Hash the committed Stage-C runtime and reject scoped dirty state."""
 
+    git_scopes = stage_c_runtime_git_scopes(
+        controlled_ablation=controlled_ablation,
+        high_vram=high_vram,
+    )
     command = [
         "git",
         "status",
         "--porcelain",
         "--untracked-files=all",
         "--",
-        *STAGE_C_RUNTIME_GIT_SCOPES,
+        *git_scopes,
     ]
     try:
         status = subprocess.run(
@@ -337,7 +598,13 @@ def _runtime_source_bundle() -> dict[str, Any]:
     git_head = repository_git_hash(PROJECT_ROOT)
     if git_head == "unknown":
         raise RuntimeError("Stage-C runtime source requires a Git commit identity")
-    files = [PROJECT_ROOT / path for path in stage_c_runtime_relative_paths()]
+    files = [
+        PROJECT_ROOT / path
+        for path in stage_c_runtime_relative_paths(
+            controlled_ablation=controlled_ablation,
+            high_vram=high_vram,
+        )
+    ]
     file_records = [
         {
             "path": str(path.relative_to(PROJECT_ROOT)),
@@ -356,7 +623,7 @@ def _runtime_source_bundle() -> dict[str, Any]:
         "schema_version": 1,
         "git_head": git_head,
         "relevant_paths_clean": True,
-        "git_scopes": list(STAGE_C_RUNTIME_GIT_SCOPES),
+        "git_scopes": list(git_scopes),
         "files": file_records,
         "bundle_sha256": hashlib.sha256(encoded).hexdigest(),
     }
@@ -609,6 +876,27 @@ def _resume_config_paths(path: str | Path) -> dict[str, str]:
         ),
         "train.initialization_checkpoint": base.get("path"),
     }
+    stage_c_positivity = config.get("stage_c_positivity_ablation")
+    if isinstance(stage_c_positivity, Mapping) and (
+        stage_c_positivity.get("enabled") is True
+    ):
+        bindings.update(
+            {
+                "stage_c_positivity_ablation.d025_training_audit_path": (
+                    stage_c_positivity.get("d025_training_audit_path")
+                ),
+                "stage_c_positivity_ablation.d025_evaluation_audit_path": (
+                    stage_c_positivity.get("d025_evaluation_audit_path")
+                ),
+            }
+        )
+    stage_c_high_vram = config.get("stage_c_high_vram")
+    if isinstance(stage_c_high_vram, Mapping) and (
+        stage_c_high_vram.get("enabled") is True
+    ):
+        bindings["stage_c_high_vram.preflight_receipt_path"] = (
+            stage_c_high_vram.get("preflight_receipt_path")
+        )
     if any(not isinstance(value, str) or not value for value in bindings.values()):
         raise CheckpointMismatchError(
             "resume checkpoint lacks an immutable training path binding"
@@ -666,6 +954,519 @@ def _validate_base_completion(
             f"{receipt}"
         )
     return receipt
+
+
+def _load_json_mapping(path: str | Path, *, label: str) -> tuple[Path, Mapping[str, Any]]:
+    requested = Path(path).expanduser()
+    if requested.is_symlink():
+        raise FileNotFoundError(f"{label} is missing or unsafe: {requested}")
+    resolved = requested.resolve()
+    if not resolved.is_file():
+        raise FileNotFoundError(f"{label} is missing or unsafe: {resolved}")
+
+    def strict_pairs(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+        value: dict[str, Any] = {}
+        for key, item in pairs:
+            if key in value:
+                raise ValueError(f"duplicate key {key!r}")
+            value[key] = item
+        return value
+
+    def reject_constant(value: str) -> None:
+        raise ValueError(f"non-finite constant {value}")
+
+    try:
+        value = json.loads(
+            resolved.read_text(encoding="utf-8"),
+            object_pairs_hook=strict_pairs,
+            parse_constant=reject_constant,
+        )
+    except (OSError, json.JSONDecodeError, ValueError) as exc:
+        raise ValueError(f"cannot parse {label}: {exc}") from exc
+    if not isinstance(value, Mapping):
+        raise ValueError(f"{label} must be a JSON object")
+    return resolved, value
+
+
+def _audit_artifact_identity(
+    artifacts: Mapping[str, Any], name: str
+) -> tuple[Path, str]:
+    identity = artifacts.get(name)
+    if not isinstance(identity, Mapping):
+        raise ValueError(f"D-025 formal audit artifact is missing: {name}")
+    path_value = identity.get("path")
+    sha256 = identity.get("sha256")
+    if not isinstance(path_value, str) or not path_value.strip():
+        raise ValueError(f"D-025 formal audit artifact path is malformed: {name}")
+    if (
+        not isinstance(sha256, str)
+        or len(sha256) != 64
+        or any(character not in "0123456789abcdef" for character in sha256)
+    ):
+        raise ValueError(f"D-025 formal audit artifact SHA-256 is malformed: {name}")
+    path = Path(path_value).expanduser().resolve()
+    if not path.is_file():
+        raise FileNotFoundError(f"D-025 formal audit artifact is missing: {path}")
+    if sha256_file(path) != sha256:
+        raise ValueError(f"D-025 formal audit artifact hash differs: {name}")
+    return path, sha256
+
+
+def _stage_c_high_vram_config_sha256(
+    config: Mapping[str, Any] | DictConfig,
+) -> str:
+    plain = (
+        _resolved_dict(config)
+        if isinstance(config, DictConfig)
+        else copy.deepcopy(dict(config))
+    )
+    train = plain.get("train")
+    if not isinstance(train, dict):
+        raise ValueError("Stage-C high-VRAM config has no train mapping")
+    # The probe does not create a training output directory. Excluding only
+    # that destination lets one receipt authorize a new empty formal run while
+    # every mathematical/data/runtime setting remains bound.
+    train["epipolar_output_dir"] = None
+    encoded = config_fingerprint(plain).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def _mapping_sha256(value: Mapping[str, Any]) -> str:
+    encoded = json.dumps(
+        dict(value),
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=True,
+        allow_nan=False,
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def build_stage_c_high_vram_preflight_receipt(
+    *,
+    config: Mapping[str, Any] | DictConfig,
+    base_checkpoint: Mapping[str, Any],
+    d025_prerequisite: Mapping[str, Any],
+    runtime_source_bundle: Mapping[str, Any],
+    training_runtime: Mapping[str, Any],
+    peak_cuda_allocated_bytes: int,
+    peak_cuda_reserved_bytes: int,
+    cuda_free_before_bytes: int,
+    cuda_free_after_bytes: int,
+    cuda_total_bytes: int,
+    completed_micro_steps: int,
+    gradient_norm: float,
+    parameters_finite_after_step: bool,
+    loss: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Build a CPU-serializable receipt from one real CUDA BF16 optimizer step."""
+
+    high_vram = stage_c_high_vram_from_config(config)
+    if not high_vram.enabled:
+        raise ValueError("high-VRAM preflight receipt requires the opt-in config")
+    if training_runtime.get("formal_cuda_bf16_eligible") is not True:
+        raise ValueError("high-VRAM preflight requires formal CUDA BF16 runtime")
+    memory = {
+        "peak_cuda_allocated_bytes": peak_cuda_allocated_bytes,
+        "peak_cuda_reserved_bytes": peak_cuda_reserved_bytes,
+        "cuda_free_before_bytes": cuda_free_before_bytes,
+        "cuda_free_after_bytes": cuda_free_after_bytes,
+        "cuda_total_bytes": cuda_total_bytes,
+        "headroom_bytes": cuda_total_bytes - peak_cuda_reserved_bytes,
+        "minimum_headroom_bytes": high_vram.minimum_headroom_bytes,
+    }
+    if any(
+        isinstance(value, bool) or not isinstance(value, int) or value < 0
+        for value in memory.values()
+    ) or any(
+        memory[name] <= 0
+        for name in (
+            "peak_cuda_allocated_bytes",
+            "peak_cuda_reserved_bytes",
+            "cuda_total_bytes",
+            "minimum_headroom_bytes",
+        )
+    ):
+        raise ValueError("high-VRAM CUDA memory statistics are malformed")
+    if peak_cuda_allocated_bytes > peak_cuda_reserved_bytes or (
+        peak_cuda_reserved_bytes > cuda_total_bytes
+    ):
+        raise ValueError("high-VRAM CUDA peak memory ordering is impossible")
+    if completed_micro_steps != 2:
+        raise ValueError("high-VRAM preflight must execute exactly two micro-batches")
+    if (
+        isinstance(gradient_norm, bool)
+        or not isinstance(gradient_norm, (int, float))
+        or not math.isfinite(float(gradient_norm))
+        or float(gradient_norm) < 0
+        or parameters_finite_after_step is not True
+    ):
+        raise ValueError("high-VRAM optimizer-step diagnostics are invalid")
+    expected_loss_terms = {
+        "total",
+        "disparity",
+        "correction_regularizer",
+        "positivity_penalty",
+        "valid_pixel_count",
+    }
+    if set(loss) != expected_loss_terms:
+        raise ValueError("high-VRAM preflight loss schema differs")
+    for name, value in loss.items():
+        if isinstance(value, bool) or not isinstance(value, (int, float)) or (
+            not math.isfinite(float(value))
+        ):
+            raise ValueError(f"high-VRAM preflight loss is non-finite: {name}")
+    memory_pass = (
+        memory["headroom_bytes"] >= high_vram.minimum_headroom_bytes
+    )
+    return {
+        "schema_version": 1,
+        "component": STAGE_C_HIGH_VRAM_PREFLIGHT_COMPONENT,
+        "status": (
+            "PREFLIGHT_PASS"
+            if memory_pass
+            else "PREFLIGHT_FAIL_INSUFFICIENT_HEADROOM"
+        ),
+        "read_only_inputs": True,
+        "gpu_used": True,
+        "optimizer_step_executed": True,
+        "completed_micro_steps": 2,
+        "gradient_norm": float(gradient_norm),
+        "parameters_finite_after_step": True,
+        "protocol_version": STAGE_C_HIGH_VRAM_PROTOCOL,
+        "schedule": {
+            "micro_batch_size": 4,
+            "grad_accumulation": 2,
+            "effective_batch_size": 8,
+        },
+        "oom_fallback": dict(STAGE_C_HIGH_VRAM_FALLBACK),
+        "config_sha256": _stage_c_high_vram_config_sha256(config),
+        "base_checkpoint": dict(base_checkpoint),
+        "d025_prerequisite_sha256": _mapping_sha256(d025_prerequisite),
+        "runtime_source_bundle": {
+            "git_head": runtime_source_bundle.get("git_head"),
+            "bundle_sha256": runtime_source_bundle.get("bundle_sha256"),
+        },
+        "training_runtime": dict(training_runtime),
+        "memory": memory,
+        "loss": dict(loss),
+        "formal_training_authorized": memory_pass,
+    }
+
+
+def validate_stage_c_high_vram_preflight_receipt(
+    *,
+    path: str | Path,
+    config: Mapping[str, Any] | DictConfig,
+    base_checkpoint: Mapping[str, Any],
+    d025_prerequisite: Mapping[str, Any],
+    runtime_source_bundle: Mapping[str, Any],
+    training_runtime: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Validate the exact CUDA memory probe before a formal 4x2 run."""
+
+    high_vram = stage_c_high_vram_from_config(config)
+    if not high_vram.enabled or high_vram.receipt_path is None:
+        raise ValueError("formal high-VRAM Stage C requires a bound preflight receipt")
+    receipt_path, receipt = _load_json_mapping(
+        path, label="Stage-C high-VRAM preflight receipt"
+    )
+    if receipt_path != Path(high_vram.receipt_path).expanduser().resolve():
+        raise ValueError("high-VRAM preflight receipt path differs from config")
+    expected_header = {
+        "schema_version": 1,
+        "component": STAGE_C_HIGH_VRAM_PREFLIGHT_COMPONENT,
+        "status": "PREFLIGHT_PASS",
+        "read_only_inputs": True,
+        "gpu_used": True,
+        "optimizer_step_executed": True,
+        "completed_micro_steps": 2,
+        "parameters_finite_after_step": True,
+        "protocol_version": STAGE_C_HIGH_VRAM_PROTOCOL,
+        "formal_training_authorized": True,
+    }
+    if any(receipt.get(name) != value for name, value in expected_header.items()):
+        raise ValueError("Stage-C high-VRAM CUDA preflight has not passed")
+    if receipt.get("schedule") != {
+        "micro_batch_size": 4,
+        "grad_accumulation": 2,
+        "effective_batch_size": 8,
+    } or receipt.get("oom_fallback") != STAGE_C_HIGH_VRAM_FALLBACK:
+        raise ValueError("Stage-C high-VRAM preflight schedule/fallback differs")
+    expected_bindings = {
+        "config_sha256": _stage_c_high_vram_config_sha256(config),
+        "base_checkpoint": dict(base_checkpoint),
+        "d025_prerequisite_sha256": _mapping_sha256(d025_prerequisite),
+        "runtime_source_bundle": {
+            "git_head": runtime_source_bundle.get("git_head"),
+            "bundle_sha256": runtime_source_bundle.get("bundle_sha256"),
+        },
+        "training_runtime": dict(training_runtime),
+    }
+    if any(receipt.get(name) != value for name, value in expected_bindings.items()):
+        raise ValueError("Stage-C high-VRAM preflight lineage/runtime differs")
+    memory = receipt.get("memory")
+    gradient_norm = receipt.get("gradient_norm")
+    if (
+        isinstance(gradient_norm, bool)
+        or not isinstance(gradient_norm, (int, float))
+        or not math.isfinite(float(gradient_norm))
+        or float(gradient_norm) < 0
+    ):
+        raise ValueError("Stage-C high-VRAM preflight gradient norm is malformed")
+    loss = receipt.get("loss")
+    if not isinstance(loss, Mapping) or set(loss) != {
+        "total",
+        "disparity",
+        "correction_regularizer",
+        "positivity_penalty",
+        "valid_pixel_count",
+    } or any(
+        isinstance(value, bool)
+        or not isinstance(value, (int, float))
+        or not math.isfinite(float(value))
+        for value in loss.values()
+    ):
+        raise ValueError("Stage-C high-VRAM preflight loss is malformed")
+    if not isinstance(memory, Mapping) or memory.get(
+        "minimum_headroom_bytes"
+    ) != high_vram.minimum_headroom_bytes:
+        raise ValueError("Stage-C high-VRAM preflight memory contract differs")
+    for name in (
+        "peak_cuda_allocated_bytes",
+        "peak_cuda_reserved_bytes",
+        "cuda_free_before_bytes",
+        "cuda_free_after_bytes",
+        "cuda_total_bytes",
+        "headroom_bytes",
+    ):
+        value = memory.get(name)
+        if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+            raise ValueError(f"Stage-C high-VRAM preflight {name} is malformed")
+    if (
+        memory["peak_cuda_allocated_bytes"] <= 0
+        or memory["peak_cuda_reserved_bytes"] <= 0
+        or memory["peak_cuda_allocated_bytes"]
+        > memory["peak_cuda_reserved_bytes"]
+        or memory["peak_cuda_reserved_bytes"] > memory["cuda_total_bytes"]
+        or memory["headroom_bytes"]
+        != memory["cuda_total_bytes"] - memory["peak_cuda_reserved_bytes"]
+        or memory["headroom_bytes"] < high_vram.minimum_headroom_bytes
+    ):
+        raise ValueError("Stage-C high-VRAM CUDA headroom did not pass")
+    return {
+        "path": str(receipt_path),
+        "sha256": sha256_file(receipt_path),
+        "status": "PREFLIGHT_PASS",
+        "protocol_version": STAGE_C_HIGH_VRAM_PROTOCOL,
+        "schedule": dict(receipt["schedule"]),
+        "memory": dict(memory),
+        "formal_training_authorized": True,
+    }
+
+
+def validate_d025_stage_b_prerequisites(
+    *,
+    base_metadata: Mapping[str, Any],
+    stage_c_config: Mapping[str, Any] | DictConfig,
+    training_audit_path: str | Path,
+    evaluation_audit_path: str | Path,
+) -> dict[str, Any]:
+    """Fail closed until an independently audited D-025 base passes.
+
+    The final evaluation receipt is not accepted on status strings alone. Its
+    complete read-only audit is recomputed from the hash-bound producer
+    artifacts, then matched byte-for-meaning against the supplied receipt.
+    """
+
+    stage_c_ablation = stage_c_positivity_ablation_from_config(stage_c_config)
+    if not stage_c_ablation.enabled:
+        raise ValueError("D-025 prerequisite validation requires the opt-in arm")
+    base_config = base_metadata.get("training_config")
+    if not isinstance(base_config, Mapping):
+        raise ValueError("D-025 base training config is missing")
+    expected_base_protocol = {
+        "name": "full_stage_b_rerun_from_final_stage_a",
+        "required_updates": FORMAL_STAGE_B_STEPS,
+        "stage_b_warm_start": "forbidden",
+    }
+    if base_config.get("ablation_protocol") != expected_base_protocol:
+        raise ValueError("Stage-C positivity base is not the declared D-025 full rerun")
+    current_base_positivity = stage_c_config.get("positivity_ablation")
+    if not isinstance(current_base_positivity, Mapping) or (
+        base_config.get("positivity_ablation") != dict(current_base_positivity)
+    ):
+        raise ValueError(
+            "Stage-C positivity inference config differs from the D-025 base"
+        )
+    base_train = base_config.get("train")
+    if not isinstance(base_train, Mapping) or any(
+        value != FORMAL_STAGE_B_STEPS
+        for value in (
+            base_metadata.get("step"),
+            base_train.get("steps"),
+            base_train.get("steps_temporal"),
+        )
+    ):
+        raise ValueError("D-025 Stage-B base is not complete at 15000/15000")
+    base_sha256 = base_metadata.get("checkpoint_sha256")
+    if not isinstance(base_sha256, str) or len(base_sha256) != 64:
+        raise ValueError("D-025 base checkpoint SHA-256 is malformed")
+
+    audit_file, audit = _load_json_mapping(
+        training_audit_path, label="D-025 training audit"
+    )
+    if (
+        audit.get("schema_version") != 1
+        or audit.get("component") != "training-run-audit"
+        or audit.get("status") != "PASS"
+        or audit.get("training_status") != "TRAINING_COMPLETE"
+    ):
+        raise ValueError("D-025 training audit has not passed a completed run")
+    audit_files = audit.get("files")
+    audit_final = (
+        audit_files.get("final_checkpoint")
+        if isinstance(audit_files, Mapping)
+        else None
+    )
+    audit_validation = audit.get("validation")
+    audit_loss_schema = (
+        audit_validation.get("loss_schema")
+        if isinstance(audit_validation, Mapping)
+        else None
+    )
+    if not isinstance(audit_final, Mapping) or (
+        audit_final.get("sha256") != base_sha256
+        or audit_final.get("step") != FORMAL_STAGE_B_STEPS
+        or audit_final.get("configured_steps") != FORMAL_STAGE_B_STEPS
+    ):
+        raise ValueError("D-025 training audit does not bind the selected final base")
+    audit_loss_terms = (
+        audit_loss_schema.get("terms")
+        if isinstance(audit_loss_schema, Mapping)
+        else None
+    )
+    if (
+        not isinstance(audit_loss_schema, Mapping)
+        or audit_loss_schema.get("positivity_ablation_enabled") is not True
+        or not isinstance(audit_loss_terms, list)
+        or "positivity_penalty" not in audit_loss_terms
+    ):
+        raise ValueError("D-025 training audit lacks the positivity loss schema")
+    warnings = audit.get("warnings")
+    if warnings not in ([], None):
+        raise ValueError("D-025 completed training audit contains warnings")
+
+    formal_audit_file, formal_audit = _load_json_mapping(
+        evaluation_audit_path, label="D-025 formal evaluation audit"
+    )
+    if (
+        formal_audit.get("schema_version") != 1
+        or formal_audit.get("component") != D025_EVALUATION_AUDIT_COMPONENT
+        or formal_audit.get("status")
+        != "D025_FINAL_CONTROLLED_COMPARISON_PASS"
+        or formal_audit.get("read_only") is not True
+    ):
+        raise ValueError("D-025 formal evaluation audit is not a final PASS")
+    final_gate = formal_audit.get("final_gate")
+    claims = formal_audit.get("claims")
+    gates = formal_audit.get("gates")
+    if (
+        not isinstance(final_gate, Mapping)
+        or final_gate.get("eligible") is not True
+        or final_gate.get("result") != "PASS"
+        or final_gate.get("limited_or_intermediate_cannot_pass") is not True
+        or not isinstance(claims, Mapping)
+        or claims.get("raw_owner") != "T3_VGGT"
+        or claims.get("clamp0_owner") is not False
+        or claims.get("paper_ground_truth") is not False
+        or claims.get("paper_accuracy") is not False
+        or not isinstance(gates, Mapping)
+        or gates.get("all_required_gates_pass") is not True
+    ):
+        raise ValueError("D-025 formal evaluation audit gate contract differs")
+
+    artifacts = formal_audit.get("artifacts")
+    if not isinstance(artifacts, Mapping):
+        raise ValueError("D-025 formal evaluation audit artifacts are missing")
+    bound_training_audit, bound_training_audit_sha256 = _audit_artifact_identity(
+        artifacts, "d025_training_audit"
+    )
+    if bound_training_audit != audit_file or (
+        bound_training_audit_sha256 != sha256_file(audit_file)
+    ):
+        raise ValueError("D-025 formal evaluation audit binds another training audit")
+    d025_preflight, _ = _audit_artifact_identity(artifacts, "d025_preflight")
+    d025_metrics, d025_metrics_sha256 = _audit_artifact_identity(
+        artifacts, "d025_metrics"
+    )
+    canonical_report, _ = _audit_artifact_identity(
+        artifacts, "canonical_stage_b_report"
+    )
+    canonical_metrics, _ = _audit_artifact_identity(
+        artifacts, "canonical_metrics"
+    )
+    # metrics.csv identities are revalidated by audit_d025_evaluation below.
+    for name in ("d025_metrics_csv", "canonical_metrics_csv"):
+        _audit_artifact_identity(artifacts, name)
+    try:
+        recomputed_audit = audit_d025_evaluation(
+            audit_file,
+            d025_metrics.parent,
+            canonical_report,
+            canonical_metrics.parent,
+            d025_preflight,
+        )
+    except D025EvaluationAuditError as exc:
+        raise ValueError(f"D-025 formal evaluation audit no longer verifies: {exc}") from exc
+    if dict(recomputed_audit) != dict(formal_audit):
+        raise ValueError("D-025 formal evaluation audit receipt differs from recomputation")
+
+    audited_training = formal_audit.get("training")
+    if not isinstance(audited_training, Mapping) or (
+        audited_training.get("formal") is not True
+        or audited_training.get("checkpoint_sha256") != base_sha256
+        or audited_training.get("git_hash") != base_metadata.get("git_hash")
+    ):
+        raise ValueError("D-025 formal evaluation audit does not bind the selected base")
+    _, metrics = _load_json_mapping(d025_metrics, label="audited D-025 metrics")
+    checkpoint = metrics.get("checkpoint")
+    if not isinstance(checkpoint, Mapping) or (
+        checkpoint.get("checkpoint_sha256") != base_sha256
+        or checkpoint.get("step") != FORMAL_STAGE_B_STEPS
+        or checkpoint.get("git_hash") != base_metadata.get("git_hash")
+        or checkpoint.get("training_config") != dict(base_config)
+    ):
+        raise ValueError("audited D-025 metrics do not match the selected base")
+    return {
+        "schema_version": 1,
+        "component": "d025-stage-b-prerequisite-for-stage-c-positivity",
+        "status": "PASS",
+        "protocol_version": STAGE_C_D025_POSITIVITY_PROTOCOL,
+        "base_checkpoint": {
+            "path": base_metadata.get("path"),
+            "sha256": base_sha256,
+            "step": FORMAL_STAGE_B_STEPS,
+        },
+        "training_audit": {
+            "path": str(audit_file),
+            "sha256": sha256_file(audit_file),
+            "status": "PASS",
+        },
+        "formal_evaluation_audit": {
+            "path": str(formal_audit_file),
+            "sha256": sha256_file(formal_audit_file),
+            "component": D025_EVALUATION_AUDIT_COMPONENT,
+            "status": formal_audit["status"],
+            "final_gate": dict(final_gate),
+        },
+        "evaluated_metrics": {
+            "path": str(d025_metrics),
+            "sha256": d025_metrics_sha256,
+            "raw_owner": "T3_VGGT",
+        },
+        "canonical_stage_c_replacement": False,
+    }
 
 
 def _data_cursor(
@@ -726,6 +1527,8 @@ def _stage_c_checkpoint_payload(
     latest_loss: Mapping[str, Any],
     elapsed_seconds: float,
     batches_per_epoch: int,
+    d025_prerequisite: Mapping[str, Any] | None = None,
+    high_vram_preflight: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Build one full-state, optimizer-boundary Stage-C checkpoint."""
 
@@ -752,14 +1555,34 @@ def _stage_c_checkpoint_payload(
             training_runtime.get("strict_determinism_eligible", False)
         ),
     }
+    controlled_ablation = d025_prerequisite is not None
     completion["formal_training_complete"] = bool(
-        execution_complete
+        not controlled_ablation
+        and execution_complete
         and canonical_schedule
         and completion["base_complete"]
         and completion["cuda_bf16_eligible"]
         and completion["strict_determinism_eligible"]
     )
-    return {
+    if controlled_ablation:
+        completion["controlled_ablation_training_complete"] = bool(
+            execution_complete
+            and canonical_schedule
+            and completion["base_complete"]
+            and completion["cuda_bf16_eligible"]
+            and completion["strict_determinism_eligible"]
+            and d025_prerequisite.get("status") == "PASS"
+        )
+        completion["canonical_stage_c_replacement"] = False
+    if high_vram_preflight is not None:
+        if not controlled_ablation or high_vram_preflight.get("status") != (
+            "PREFLIGHT_PASS"
+        ):
+            raise ValueError(
+                "Stage-C high-VRAM checkpoint requires a controlled PASS preflight"
+            )
+        completion["high_vram_preflight_passed"] = True
+    payload = {
         "schema_version": STAGE_C_CHECKPOINT_SCHEMA_VERSION,
         "component": STAGE_C_COMPONENT,
         "model": stage.refiner.state_dict(),
@@ -791,6 +1614,12 @@ def _stage_c_checkpoint_payload(
         "elapsed_seconds": float(elapsed_seconds),
         "completion": completion,
     }
+    if d025_prerequisite is not None:
+        payload["d025_prerequisite"] = dict(d025_prerequisite)
+        payload["experiment_role"] = "CONTROLLED_D025_STAGE_C_ABLATION"
+    if high_vram_preflight is not None:
+        payload["high_vram_preflight"] = dict(high_vram_preflight)
+    return payload
 
 
 def _load_stage_c_training_checkpoint(
@@ -805,6 +1634,8 @@ def _load_stage_c_training_checkpoint(
     expected_training_runtime: Mapping[str, Any],
     expected_base_checkpoint: Mapping[str, Any],
     batches_per_epoch: int,
+    expected_d025_prerequisite: Mapping[str, Any] | None = None,
+    expected_high_vram_preflight: Mapping[str, Any] | None = None,
 ) -> tuple[int, float, dict[str, Any]]:
     """Validate and restore an exact optimizer-boundary Stage-C checkpoint."""
 
@@ -866,6 +1697,30 @@ def _load_stage_c_training_checkpoint(
         expected_base_checkpoint
     ):
         raise CheckpointMismatchError("Stage-C frozen base differs on resume")
+    saved_prerequisite = payload.get("d025_prerequisite")
+    if expected_d025_prerequisite is None:
+        if saved_prerequisite is not None:
+            raise CheckpointMismatchError(
+                "canonical Stage-C resume unexpectedly contains a D-025 prerequisite"
+            )
+    elif not isinstance(saved_prerequisite, Mapping) or dict(
+        saved_prerequisite
+    ) != dict(expected_d025_prerequisite):
+        raise CheckpointMismatchError(
+            "Stage-C D-025 prerequisite differs on resume"
+        )
+    saved_high_vram = payload.get("high_vram_preflight")
+    if expected_high_vram_preflight is None:
+        if saved_high_vram is not None:
+            raise CheckpointMismatchError(
+                "standard Stage-C resume unexpectedly contains high-VRAM preflight"
+            )
+    elif not isinstance(saved_high_vram, Mapping) or dict(
+        saved_high_vram
+    ) != dict(expected_high_vram_preflight):
+        raise CheckpointMismatchError(
+            "Stage-C high-VRAM preflight differs on resume"
+        )
     if payload["scaler"] != {}:
         raise CheckpointMismatchError("Stage-C BF16 resume scaler must be empty")
     step = payload["step"]
@@ -1352,6 +2207,7 @@ def _stage_loss(
         for value in (target_sequence, trusted_sequence, confidence_sequence)
     ):
         raise ValueError("Stage C requires teacher disparity/confidence/trusted cache")
+    positivity = stage_c_positivity_ablation_from_config(config)
     return compute_epipolar_stage_loss(
         output,
         target_sequence[:, -1],
@@ -1359,6 +2215,9 @@ def _stage_loss(
         target_confidence=confidence_sequence[:, -1],
         correction_regularizer_weight=float(
             config.train.correction_regularizer_weight
+        ),
+        pre_lower_bound_negative_penalty_weight=(
+            positivity.pre_lower_bound_negative_penalty_weight
         ),
     )
 
@@ -1415,6 +2274,15 @@ def run(args: argparse.Namespace) -> int:
         "data.epipolar_rectification_audit_path": args.rectification_audit,
         "train.epipolar_output_dir": args.output,
         "train.initialization_checkpoint": args.init_from,
+        "stage_c_positivity_ablation.d025_training_audit_path": (
+            args.d025_training_audit
+        ),
+        "stage_c_positivity_ablation.d025_evaluation_audit_path": (
+            args.d025_evaluation_audit
+        ),
+        "stage_c_high_vram.preflight_receipt_path": (
+            args.high_vram_preflight_receipt
+        ),
     }
     for name, value in cli_paths.items():
         selected: str | Path | None = value
@@ -1427,8 +2295,13 @@ def run(args: argparse.Namespace) -> int:
                 str(Path(selected).expanduser().resolve()),
                 merge=False,
             )
-    runtime_source_bundle = _runtime_source_bundle()
     validate_epipolar_config(config)
+    stage_c_positivity = stage_c_positivity_ablation_from_config(config)
+    stage_c_high_vram = stage_c_high_vram_from_config(config)
+    runtime_source_bundle = _runtime_source_bundle(
+        controlled_ablation=stage_c_positivity.enabled,
+        high_vram=stage_c_high_vram.enabled,
+    )
     seed_everything(int(config.seed), deterministic=True, warn_only=False)
     dataset, observation_identity, teacher_identity = _build_temporal_dataset(config)
     rectification_audit_path = _required_path(
@@ -1502,6 +2375,42 @@ def run(args: argparse.Namespace) -> int:
         expected_steps=int(config.train.steps_temporal),
         required=formal_training_requested,
     )
+    d025_prerequisite: dict[str, Any] | None = None
+    if stage_c_positivity.enabled:
+        if stage_c_positivity.d025_training_audit_path is None or (
+            stage_c_positivity.d025_evaluation_audit_path is None
+        ):
+            raise ValueError(
+                "Stage-C D-025 training requires both completed prerequisite paths"
+            )
+        d025_prerequisite = validate_d025_stage_b_prerequisites(
+            base_metadata=base_metadata,
+            stage_c_config=config,
+            training_audit_path=stage_c_positivity.d025_training_audit_path,
+            evaluation_audit_path=(
+                stage_c_positivity.d025_evaluation_audit_path
+            ),
+        )
+    base_checkpoint_identity = {
+        "path": base_metadata["path"],
+        "sha256": base_metadata["checkpoint_sha256"],
+        "step": base_metadata["step"],
+    }
+    high_vram_preflight: dict[str, Any] | None = None
+    if stage_c_high_vram.enabled:
+        if d025_prerequisite is None or stage_c_high_vram.receipt_path is None:
+            raise ValueError(
+                "high-VRAM Stage C requires D-025 PASS and --high-vram-preflight-receipt"
+            )
+        if not args.dry_run:
+            high_vram_preflight = validate_stage_c_high_vram_preflight_receipt(
+                path=stage_c_high_vram.receipt_path,
+                config=config,
+                base_checkpoint=base_checkpoint_identity,
+                d025_prerequisite=d025_prerequisite,
+                runtime_source_bundle=runtime_source_bundle,
+                training_runtime=training_runtime,
+            )
     offsets = tuple(float(value) for value in config.model.epipolar_offsets_hr_px)
     refiner = HREpipolarRefiner(
         feature_channels=int(config.model.epipolar_feature_channels),
@@ -1514,6 +2423,9 @@ def run(args: argparse.Namespace) -> int:
             config.model.epipolar_confidence_temperature
         ),
         head_channels=int(config.model.epipolar_head_channels),
+        positivity_floor_hr_px=(
+            stage_c_positivity.correction_lower_bound_hr_px
+        ),
     )
     stage = FrozenTemporalEpipolarStage(
         base_model,
@@ -1544,11 +2456,122 @@ def run(args: argparse.Namespace) -> int:
     if args.dry_run:
         batches = _infinite_batches(loader, dataset, sampler)
         first_batch = _move_batch(next(batches), device)
-        stage.eval()
-        with torch.no_grad(), torch.autocast(
-            device_type=device.type, dtype=torch.bfloat16, enabled=use_bf16
-        ):
-            dry_loss = _stage_loss(stage, first_batch, config)
+        if stage_c_high_vram.enabled:
+            if device.type != "cuda":
+                raise RuntimeError(
+                    "high-VRAM preflight requires CUDA; OOM falls back to 2x4"
+                )
+            assert stage_c_high_vram.receipt_path is not None
+            receipt_path = Path(stage_c_high_vram.receipt_path)
+            if receipt_path.exists():
+                raise FileExistsError(
+                    f"high-VRAM preflight receipt already exists: {receipt_path}"
+                )
+            base_parent = Path(base_metadata["path"]).expanduser().resolve().parent
+            resolved_receipt = receipt_path.expanduser().resolve()
+            if resolved_receipt == base_parent or base_parent in resolved_receipt.parents:
+                raise ValueError(
+                    "high-VRAM preflight receipt must not be written into D-025 outputs"
+                )
+            optimizer_probe = torch.optim.AdamW(
+                stage.refiner.parameters(),
+                lr=float(config.train.learning_rate),
+                weight_decay=float(config.train.weight_decay),
+            )
+            torch.cuda.reset_peak_memory_stats(device)
+            free_before, total_memory = torch.cuda.mem_get_info(device)
+            try:
+                probe_batches = [
+                    first_batch,
+                    _move_batch(next(batches), device),
+                ]
+                stage.train()
+                optimizer_probe.zero_grad(set_to_none=True)
+                probe_losses: list[EpipolarStageLoss] = []
+                for probe_batch in probe_batches:
+                    with torch.autocast(
+                        device_type="cuda", dtype=torch.bfloat16, enabled=True
+                    ):
+                        probe_loss = _stage_loss(stage, probe_batch, config)
+                    (probe_loss.total / 2.0).backward()
+                    probe_losses.append(probe_loss)
+                gradient_norm_tensor = torch.nn.utils.clip_grad_norm_(
+                    stage.refiner.parameters(),
+                    float(config.train.gradient_clip),
+                    error_if_nonfinite=True,
+                )
+                optimizer_probe.step()
+                if any(
+                    parameter.grad is not None
+                    for parameter in stage.base_model.parameters()
+                ):
+                    raise RuntimeError(
+                        "high-VRAM probe gave gradients to the frozen D-025 base"
+                    )
+                _validate_finite_training_state(stage.refiner, optimizer_probe)
+                torch.cuda.synchronize(device)
+            except torch.OutOfMemoryError as exc:
+                raise RuntimeError(
+                    "Stage-C high-VRAM 4x2 CUDA probe OOM; use the unchanged 2x4 config"
+                ) from exc
+            dry_loss = probe_losses[-1]
+            probe_scalars = [loss.detached_scalars() for loss in probe_losses]
+            probe_loss_summary = {
+                name: (
+                    sum(float(values[name]) for values in probe_scalars) / 2.0
+                )
+                for name in (
+                    "total",
+                    "disparity",
+                    "correction_regularizer",
+                    "positivity_penalty",
+                )
+            }
+            probe_loss_summary["valid_pixel_count"] = sum(
+                int(values["valid_pixel_count"]) for values in probe_scalars
+            )
+            free_after, total_after = torch.cuda.mem_get_info(device)
+            if total_after != total_memory:
+                raise RuntimeError("CUDA total memory changed during high-VRAM probe")
+            high_vram_probe_receipt = build_stage_c_high_vram_preflight_receipt(
+                config=config,
+                base_checkpoint=base_checkpoint_identity,
+                d025_prerequisite=d025_prerequisite,
+                runtime_source_bundle=runtime_source_bundle,
+                training_runtime=training_runtime,
+                peak_cuda_allocated_bytes=int(
+                    torch.cuda.max_memory_allocated(device)
+                ),
+                peak_cuda_reserved_bytes=int(
+                    torch.cuda.max_memory_reserved(device)
+                ),
+                cuda_free_before_bytes=int(free_before),
+                cuda_free_after_bytes=int(free_after),
+                cuda_total_bytes=int(total_memory),
+                completed_micro_steps=2,
+                gradient_norm=float(gradient_norm_tensor.detach().float().cpu()),
+                parameters_finite_after_step=True,
+                loss=probe_loss_summary,
+            )
+            _write_json_atomic(resolved_receipt, high_vram_probe_receipt)
+            if high_vram_probe_receipt["status"] != "PREFLIGHT_PASS":
+                print(json.dumps(high_vram_probe_receipt, indent=2, sort_keys=True))
+                return 2
+            high_vram_preflight = {
+                "path": str(resolved_receipt),
+                "sha256": sha256_file(resolved_receipt),
+                "status": "PREFLIGHT_PASS",
+                "protocol_version": STAGE_C_HIGH_VRAM_PROTOCOL,
+                "schedule": dict(high_vram_probe_receipt["schedule"]),
+                "memory": dict(high_vram_probe_receipt["memory"]),
+                "formal_training_authorized": True,
+            }
+        else:
+            stage.eval()
+            with torch.no_grad(), torch.autocast(
+                device_type=device.type, dtype=torch.bfloat16, enabled=use_bf16
+            ):
+                dry_loss = _stage_loss(stage, first_batch, config)
         print(
             json.dumps(
                 {
@@ -1562,6 +2585,13 @@ def run(args: argparse.Namespace) -> int:
                     "base_lineage": base_lineage,
                     "raw_lineage": raw_lineage,
                     "base_completion": base_completion,
+                    "d025_prerequisite": d025_prerequisite,
+                    "high_vram_preflight": high_vram_preflight,
+                    "experiment_role": (
+                        "CONTROLLED_D025_STAGE_C_ABLATION"
+                        if stage_c_positivity.enabled
+                        else "CANONICAL_STAGE_C"
+                    ),
                     "geometry_contract": EPIPOLAR_GEOMETRY_CONTRACT,
                     "rectification_audit": rectification_audit,
                     "runtime_source_bundle": runtime_source_bundle,
@@ -1638,6 +2668,8 @@ def run(args: argparse.Namespace) -> int:
                 expected_training_runtime=training_runtime,
                 expected_base_checkpoint=base_checkpoint,
                 batches_per_epoch=len(loader),
+                expected_d025_prerequisite=d025_prerequisite,
+                expected_high_vram_preflight=high_vram_preflight,
             )
         )
         _reconcile_training_log(
@@ -1679,6 +2711,7 @@ def run(args: argparse.Namespace) -> int:
             summed_total: Tensor | None = None
             summed_disparity: Tensor | None = None
             summed_regularizer: Tensor | None = None
+            summed_positivity: Tensor | None = None
             summed_valid_pixels = 0
             for _ in range(accumulation):
                 batch = _move_batch(next(batches), device)
@@ -1706,6 +2739,20 @@ def run(args: argparse.Namespace) -> int:
                     else summed_regularizer
                     + loss.correction_regularizer.detach()
                 )
+                if stage_c_positivity.enabled:
+                    if loss.positivity_penalty is None:
+                        raise RuntimeError(
+                            "enabled Stage-C positivity produced no penalty"
+                        )
+                    summed_positivity = (
+                        loss.positivity_penalty.detach()
+                        if summed_positivity is None
+                        else summed_positivity + loss.positivity_penalty.detach()
+                    )
+                elif loss.positivity_penalty is not None:
+                    raise RuntimeError(
+                        "canonical Stage-C unexpectedly produced a positivity penalty"
+                    )
                 summed_valid_pixels += loss.valid_pixel_count
             gradient_norm = torch.nn.utils.clip_grad_norm_(
                 stage.refiner.parameters(),
@@ -1738,6 +2785,12 @@ def run(args: argparse.Namespace) -> int:
                 "correction_regularizer": float(values[2]),
                 "valid_pixel_count": summed_valid_pixels,
             }
+            if stage_c_positivity.enabled:
+                if summed_positivity is None:
+                    raise RuntimeError("Stage-C positivity accumulator is empty")
+                latest_loss_summary["positivity_penalty"] = float(
+                    (summed_positivity / float(accumulation)).float().cpu().item()
+                )
             if completed_steps % int(config.train.log_interval) == 0:
                 record = {
                     "step": completed_steps,
@@ -1775,6 +2828,8 @@ def run(args: argparse.Namespace) -> int:
                     + time.perf_counter()
                     - started,
                     batches_per_epoch=len(loader),
+                    d025_prerequisite=d025_prerequisite,
+                    high_vram_preflight=high_vram_preflight,
                 )
                 atomic_torch_save(payload, latest_path)
         log_handle.flush()
@@ -1782,7 +2837,10 @@ def run(args: argparse.Namespace) -> int:
 
     segment_elapsed_seconds = time.perf_counter() - started
     elapsed_seconds = previous_elapsed_seconds + segment_elapsed_seconds
-    end_source_bundle = _runtime_source_bundle()
+    end_source_bundle = _runtime_source_bundle(
+        controlled_ablation=stage_c_positivity.enabled,
+        high_vram=stage_c_high_vram.enabled,
+    )
     if end_source_bundle != runtime_source_bundle or (
         repository_git_hash(PROJECT_ROOT) != repository_hash
     ):
@@ -1806,6 +2864,8 @@ def run(args: argparse.Namespace) -> int:
         latest_loss=latest_loss_summary,
         elapsed_seconds=elapsed_seconds,
         batches_per_epoch=len(loader),
+        d025_prerequisite=d025_prerequisite,
+        high_vram_preflight=high_vram_preflight,
     )
     atomic_torch_save(payload, latest_path)
     execution_complete = completed_steps == configured_steps
@@ -1832,10 +2892,19 @@ def run(args: argparse.Namespace) -> int:
             "training_runtime": training_runtime,
             "base_checkpoint": base_checkpoint,
             "base_completion": base_completion,
+            "d025_prerequisite": d025_prerequisite,
+            "experiment_role": (
+                "CONTROLLED_D025_STAGE_C_ABLATION"
+                if stage_c_positivity.enabled
+                else "CANONICAL_STAGE_C"
+            ),
             "runtime_source_bundle_sha256": runtime_source_bundle["bundle_sha256"],
             "formal_training_complete": payload["completion"][
                 "formal_training_complete"
             ],
+            "controlled_ablation_training_complete": payload["completion"].get(
+                "controlled_ablation_training_complete", False
+            ),
             "final_checkpoint": {
                 "path": str(final_path),
                 "sha256": sha256_file(final_path),
@@ -1859,6 +2928,8 @@ def run(args: argparse.Namespace) -> int:
                 else None
             ),
         }
+        if high_vram_preflight is not None:
+            summary["high_vram_preflight"] = dict(high_vram_preflight)
         _write_json_atomic(summary_path, summary)
     status = "TRAINING_COMPLETE" if execution_complete else "BOUNDED_RUN_COMPLETE"
     print(

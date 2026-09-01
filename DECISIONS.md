@@ -285,3 +285,25 @@
 - Consequence: two independent full-config CUDA optimizer steps are bit-identical with zero warnings. Peak reserved memory rises to about 7.72 GiB but remains safe on the RTX 5090. Legacy/warn-only Stage-C checkpoints are evaluation-ineligible, and the runtime source bundle now covers 52 files including `eval_epipolar.py`.
 - Revisit trigger: PyTorch provides and verifies a deterministic generalized sampler, or the stored-pixel geometry contract changes away from same-row rectification.
 - Evidence: `reports/m6/stage_c_geometry_smoke.json`, `tests/test_epipolar_refiner.py`, `tests/test_epipolar_train.py`, `tests/test_epipolar_evaluation.py`.
+
+## D-027 — Stage-C positivity is a gated post-D-025 controlled ablation
+
+- Date: 2026-09-01
+- Status: implementation ready, execution blocked on D-025 final pass
+- Context: canonical Stage C improves EPE/Bad-1/boundary metrics but raises raw invalid disparity from 2.78447% to 4.41968% and loses 142,099 positive predictions in the completeness domain. Aggregate evidence excludes NaN/Inf, saturation and correspondence OOB as primary causes; nearly dense additive correction crosses near-zero base disparity outside the direct supervised domain.
+- Decision: preserve the failed canonical result. Only after a full D-025 Stage-B checkpoint passes its completed training audit and the independent final controlled-comparison audit may a new Stage-C arm start from that exact base with a freshly initialized refiner. The Stage-C preflight hash-checks and recomputes that audit rather than trusting raw metric fields. The arm uses a pre-projection squared negative hinge and FP32 `delta_safe=max(delta,-d_base)` on candidate-valid pixels; all-invalid correction remains zero.
+- Rationale: the canonical base already exceeds the health threshold, so constraining Stage C alone cannot pass. Exact-zero projection prevents negative depth without fabricating positive completion, and the hinge restores gradient through the hard bound.
+- Consequence: default and legacy Stage C remain unchanged. Controlled checkpoints cannot claim `formal_training_complete` or replace canonical Stage C. Epsilon, softplus and reuse of the canonical Stage-C refiner are forbidden. Current D-025 intermediate artifacts fail the CPU-only preflight.
+- Revisit trigger: D-025 reaches 15,000 updates and its exact final checkpoint passes a full 238-window held-out audit.
+- Evidence: `reports/m6/stage_c_output_health_root_cause.json`, `STAGE_C_D025_POSITIVITY_ABLATION.md`, `tests/test_stage_c_d025_positivity.py`.
+
+## D-028 — A 4x2 Stage-C schedule requires its own CUDA memory receipt
+
+- Date: 2026-09-01
+- Status: implementation ready, execution blocked on D-025 and CUDA probe
+- Context: the RTX 5090 has capacity to try a larger Stage-C micro-batch, but changing 2x4 to 4x2 without measuring a complete backward/optimizer step would turn an execution guess into a formal configuration.
+- Decision: keep canonical and standard D-025 Stage C at micro-batch 2 with accumulation 4. The separate high-VRAM config uses 4x2=8 only after two real CUDA/BF16 micro-steps, finite backward/update checks, peak allocated/reserved measurement, and at least 2 GiB `total - peak_reserved` headroom produce an exact lineage-bound PASS receipt. Formal training and evaluation revalidate that receipt; OOM or insufficient headroom returns to the unchanged 2x4 config in a fresh output directory.
+- Rationale: effective batch and mathematics stay matched while the memory-risk decision becomes reproducible and fail-closed.
+- Consequence: no high-VRAM result or acceptance claim exists until the probe is actually run after D-025 passes. The high-VRAM YAML and receipt are excluded from canonical and standard controlled runtime bundles.
+- Revisit trigger: a PASS probe is available on the final D-025 base, or a different memory schedule is proposed as a separately named arm.
+- Evidence: `STAGE_C_D025_HIGH_VRAM_PREFLIGHT.md`, `tests/test_stage_c_high_vram.py`.

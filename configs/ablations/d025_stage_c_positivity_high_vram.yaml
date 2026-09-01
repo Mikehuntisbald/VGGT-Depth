@@ -1,0 +1,23 @@
+# Independent high-VRAM execution candidate for the controlled D-025 Stage-C
+# positivity arm. It changes only the micro-batch/accumulation split; effective
+# batch, objective, model, crops and lineage remain identical.
+experiment: ffs_omega_tsr_epipolar_x2_d025_positivity_high_vram
+defaults_from: configs/ablations/d025_stage_c_positivity.yaml
+
+stage_c_high_vram:
+  enabled: true
+  protocol_version: d025_stage_c_high_vram_cuda_preflight_v1
+  requires_cuda_memory_preflight: true
+  # A formal run must consume a PASS receipt produced by a CUDA --dry-run of
+  # this exact resolved config/base/runtime bundle.
+  preflight_receipt_path: null
+  minimum_headroom_bytes: 2147483648
+  oom_fallback:
+    micro_batch_size: 2
+    grad_accumulation: 4
+    effective_batch_size: 8
+
+train:
+  micro_batch_size: 4
+  grad_accumulation: 2
+  effective_batch_size: 8

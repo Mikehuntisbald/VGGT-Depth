@@ -319,6 +319,63 @@ def test_all_invalid_search_has_zero_confidence_and_zero_correction() -> None:
     )
 
 
+def test_opt_in_positivity_bounds_correction_without_creating_points() -> None:
+    model = HREpipolarRefiner(positivity_floor_hr_px=0.0).eval()
+    final_layer = model.correction_head[-1]
+    assert isinstance(final_layer, torch.nn.Conv2d)
+    with torch.no_grad():
+        final_layer.bias.fill_(-100.0)
+    rgb = torch.rand(1, 3, 3, 9)
+    base = torch.full((1, 1, 3, 9), 0.25)
+    base[..., 0] = 0.0
+
+    with torch.no_grad():
+        output = model(rgb, rgb.clone(), base)
+
+    assert output.pre_lower_bound_correction_hr_px is not None
+    assert output.pre_lower_bound_disparity_hr_px is not None
+    assert torch.any(output.pre_lower_bound_disparity_hr_px < 0)
+    assert torch.all(output.corrected_disparity_hr_px >= 0)
+    assert torch.all(output.corrected_disparity_hr_px[..., 0] == 0)
+    assert not torch.any(output.corrected_disparity_hr_px > base)
+    any_valid = output.candidate_valid_mask.any(dim=1, keepdim=True)
+    assert torch.all(output.correction_hr_px[~any_valid] == 0)
+
+
+def test_opt_in_positivity_projection_stays_fp32_under_bfloat16_autocast() -> None:
+    model = HREpipolarRefiner(positivity_floor_hr_px=0.0).eval()
+    final_layer = model.correction_head[-1]
+    assert isinstance(final_layer, torch.nn.Conv2d)
+    with torch.no_grad():
+        final_layer.bias.fill_(-100.0)
+    rgb = torch.rand(1, 3, 4, 12)
+    base = torch.full((1, 1, 4, 12), 0.03125)
+
+    with torch.no_grad(), torch.autocast("cpu", dtype=torch.bfloat16):
+        output = model(rgb, rgb.clone(), base)
+
+    assert output.corrected_disparity_hr_px.dtype == torch.float32
+    assert output.correction_hr_px.dtype == torch.float32
+    assert output.pre_lower_bound_disparity_hr_px is not None
+    assert output.pre_lower_bound_disparity_hr_px.dtype == torch.float32
+    assert torch.all(output.corrected_disparity_hr_px >= 0)
+
+
+def test_opt_in_positivity_rejects_nonphysical_frozen_base() -> None:
+    model = HREpipolarRefiner(positivity_floor_hr_px=0.0).eval()
+    rgb = torch.rand(1, 3, 3, 9)
+    negative_base = torch.ones(1, 1, 3, 9)
+    negative_base[..., 4] = -0.01
+
+    with pytest.raises(FloatingPointError, match="non-negative frozen base"):
+        model(rgb, rgb.clone(), negative_base)
+
+
+def test_positivity_floor_forbids_epsilon_fill() -> None:
+    with pytest.raises(ValueError, match="exactly 0.0"):
+        HREpipolarRefiner(positivity_floor_hr_px=1e-6)
+
+
 def test_refiner_backward_gradients_are_finite() -> None:
     torch.manual_seed(7)
     model = HREpipolarRefiner().train()

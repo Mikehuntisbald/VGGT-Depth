@@ -227,7 +227,22 @@ def test_runtime_source_bundle_hashes_stage_c_evaluator(
 
     assert "eval_epipolar.py" in paths
     assert paths == list(train_epipolar.stage_c_runtime_relative_paths())
+    assert "configs/ablations/d025_positivity_t3.yaml" not in paths
+    assert "configs/ablations/d025_stage_c_positivity.yaml" not in paths
+    assert "tools/audit_d025_evaluation.py" not in paths
     assert len(paths) == 52
+
+    controlled_bundle = train_epipolar._runtime_source_bundle(
+        controlled_ablation=True
+    )
+    controlled_paths = [record["path"] for record in controlled_bundle["files"]]
+    assert controlled_paths == list(
+        train_epipolar.stage_c_runtime_relative_paths(controlled_ablation=True)
+    )
+    assert "configs/ablations/d025_positivity_t3.yaml" in controlled_paths
+    assert "configs/ablations/d025_stage_c_positivity.yaml" in controlled_paths
+    assert "tools/audit_d025_evaluation.py" in controlled_paths
+    assert len(controlled_paths) == 55
 
 
 def test_cpu_runtime_receipt_is_never_formal_bf16_eligible() -> None:

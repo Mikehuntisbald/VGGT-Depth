@@ -39,6 +39,11 @@ class EpipolarRefinementOutput:
         right_row_scale: Per-sample rectified vertical affine scale ``[B]``.
         right_row_offset_hr_px: Per-sample rectified vertical affine offset
             ``[B]`` in HR pixels, such that ``v_right = scale*v_left+offset``.
+        pre_lower_bound_correction_hr_px: Optional bounded correction before
+            the controlled physical lower bound. Present only for the opt-in
+            D-025 Stage-C positivity ablation.
+        pre_lower_bound_disparity_hr_px: Optional ``base + correction`` before
+            that lower bound. This is the gradient-bearing penalty tap.
     """
 
     corrected_disparity_hr_px: Tensor
@@ -48,6 +53,8 @@ class EpipolarRefinementOutput:
     confidence: Tensor
     right_row_scale: Tensor
     right_row_offset_hr_px: Tensor
+    pre_lower_bound_correction_hr_px: Tensor | None = None
+    pre_lower_bound_disparity_hr_px: Tensor | None = None
 
 
 def _batch_scalar(
@@ -357,6 +364,7 @@ class HREpipolarRefiner(nn.Module):
         correction_limit_hr_px: float = 2.0,
         confidence_temperature: float = 1.0,
         head_channels: int = 48,
+        positivity_floor_hr_px: float | None = None,
     ) -> None:
         super().__init__()
         if feature_channels <= 0 or feature_channels % correlation_groups != 0:
@@ -373,11 +381,28 @@ class HREpipolarRefiner(nn.Module):
             raise ValueError("confidence_temperature must be positive")
         if head_channels <= 0:
             raise ValueError("head_channels must be positive")
+        if positivity_floor_hr_px is not None and (
+            isinstance(positivity_floor_hr_px, bool)
+            or not isinstance(positivity_floor_hr_px, (int, float))
+            or not math.isfinite(float(positivity_floor_hr_px))
+            or float(positivity_floor_hr_px) != 0.0
+        ):
+            raise ValueError(
+                "Stage-C positivity_floor_hr_px must be exactly 0.0; "
+                "epsilon/softplus fills are forbidden"
+            )
 
         self.feature_channels = int(feature_channels)
         self.correlation_groups = int(correlation_groups)
         self.correction_limit_hr_px = float(correction_limit_hr_px)
         self.confidence_temperature = float(confidence_temperature)
+        # Behavior-only opt-in. No parameter/buffer is added, preserving exact
+        # state-dict compatibility for the canonical refiner and old checkpoints.
+        self.positivity_floor_hr_px = (
+            None
+            if positivity_floor_hr_px is None
+            else float(positivity_floor_hr_px)
+        )
         self.register_buffer(
             "candidate_offsets_hr_px",
             torch.tensor(candidate_offsets_hr_px, dtype=torch.float32),
@@ -474,6 +499,16 @@ class HREpipolarRefiner(nn.Module):
             raise TypeError("predicted_disparity_hr_px must be floating point")
         if predicted_disparity_hr_px.device != rgb_left_hr.device:
             raise ValueError("RGB inputs and predicted disparity must share a device")
+        if self.positivity_floor_hr_px is not None:
+            # D-025 owns base positivity. Fail before feature extraction or
+            # correspondence sampling if a selected base violates that contract.
+            base_is_physical = torch.isfinite(predicted_disparity_hr_px) & (
+                predicted_disparity_hr_px >= self.positivity_floor_hr_px
+            )
+            if not bool(base_is_physical.all().item()):
+                raise FloatingPointError(
+                    "D-025 Stage-C requires a finite non-negative frozen base"
+                )
 
         if (intrinsics_left_hr is None) != (intrinsics_right_hr is None):
             raise ValueError("left and right intrinsics must be supplied together")
@@ -556,14 +591,50 @@ class HREpipolarRefiner(nn.Module):
         )
         raw_correction = self.correction_head(correction_features)
         any_valid = candidate_valid_mask.any(dim=1, keepdim=True)
-        correction_hr_px = (
+        pre_lower_bound_correction_hr_px = (
             self.correction_limit_hr_px
             * torch.tanh(raw_correction)
             * any_valid.to(raw_correction.dtype)
         )
-        corrected_disparity_hr_px = predicted_disparity_hr_px + correction_hr_px.to(
-            predicted_disparity_hr_px.dtype
-        )
+        if self.positivity_floor_hr_px is None:
+            correction_hr_px = pre_lower_bound_correction_hr_px
+            corrected_disparity_hr_px = (
+                predicted_disparity_hr_px
+                + correction_hr_px.to(predicted_disparity_hr_px.dtype)
+            )
+            penalty_correction_hr_px = None
+            penalty_disparity_hr_px = None
+        else:
+            # Keep the physical projection and its penalty tap in FP32 even
+            # under BF16 autocast. This avoids a low-precision sign boundary
+            # while preserving gradients to the bounded correction head.
+            base_disparity_fp32 = predicted_disparity_hr_px.float()
+            floor = base_disparity_fp32.new_tensor(self.positivity_floor_hr_px)
+            penalty_correction_hr_px = pre_lower_bound_correction_hr_px.float()
+            penalty_disparity_hr_px = (
+                base_disparity_fp32 + penalty_correction_hr_px
+            )
+            correction_floor_hr_px = floor - base_disparity_fp32
+            correction_hr_px = torch.where(
+                any_valid,
+                torch.maximum(
+                    penalty_correction_hr_px,
+                    correction_floor_hr_px,
+                ),
+                torch.zeros_like(penalty_correction_hr_px),
+            )
+            corrected_disparity_hr_px = (
+                base_disparity_fp32 + correction_hr_px
+            )
+            if not bool(
+                (
+                    torch.isfinite(corrected_disparity_hr_px)
+                    & (corrected_disparity_hr_px >= floor)
+                ).all().item()
+            ):
+                raise FloatingPointError(
+                    "D-025 Stage-C physical correction lower bound failed"
+                )
         return EpipolarRefinementOutput(
             corrected_disparity_hr_px=corrected_disparity_hr_px,
             correction_hr_px=correction_hr_px,
@@ -572,4 +643,6 @@ class HREpipolarRefiner(nn.Module):
             confidence=confidence,
             right_row_scale=resolved_row_scale,
             right_row_offset_hr_px=resolved_row_offset_hr_px,
+            pre_lower_bound_correction_hr_px=penalty_correction_hr_px,
+            pre_lower_bound_disparity_hr_px=penalty_disparity_hr_px,
         )
