@@ -1,0 +1,333 @@
+{
+  "caches": {
+    "derived_geometry": {
+      "cache_bytes_read": 10704516902,
+      "cache_manifest": "/home/haoyi/ffs_omega_cache/m2_formal_train/derived/cache_manifest.jsonl",
+      "cache_manifest_sha256": "5dba94d14a2fe27bfd92e524751ee849cbac8f0ed48be0c4a994ba99c373af64",
+      "canonical_receipt": "/home/haoyi/ffs_omega_cache/m2_formal_train/derived/run_receipt.json",
+      "canonical_receipt_sha256": "3cd6edf37636690c613d268d6c5bcbfaa004c1a330e1970ad6cd8e34fe989db7",
+      "counts": {
+        "pose_rejected": 1265,
+        "pose_valid": 1514,
+        "reused": 2779,
+        "selected": 2779,
+        "static_prior_rejected": 1264,
+        "static_prior_valid": 1515,
+        "written": 0
+      },
+      "raw_input_audit": {
+        "all_float_tensors_finite_records": 2779,
+        "canonical_receipt": "/home/haoyi/ffs_omega_cache/m2_formal_train/vggt/run_receipt.json",
+        "canonical_receipt_complete_manifest_coverage": true,
+        "canonical_receipt_sha256": "37ea38ef0a35ec816e180091d323d95cbe8b895b90a440c2e8aaf3ec1c64590d",
+        "causal_target_valid_records": 2779,
+        "ffs_identity": {
+          "checkpoint_sha256": "98b5a9acf39fbfa795025de8cea95ce123daa40f6b6234d719167751024cf692",
+          "component": "ffs-observation",
+          "config_sha256": "93ccfa329b30ba924ce9a96f262c73e4607fa51f010b96db9623af0b2edadaf5",
+          "cuda_version": "12.8",
+          "torch_version": "2.10.0+cu128",
+          "upstream_commit": "a290ba04c1b3ad1ec41a33974a157b2917b624d4"
+        },
+        "ffs_identity_match_records": 2779,
+        "passed": true,
+        "vggt_identity": {
+          "checkpoint_sha256": "c02da418b18bb01d0392598d3f6147366bcde1bb70fd08a5e3bf7925b0667934",
+          "component": "vggt-omega",
+          "config_sha256": "1ac151ba851c4626ab2fd8a22405a5e44399a905432da3e0123d7e106d111f88",
+          "cuda_version": "12.8",
+          "torch_version": "2.10.0+cu128",
+          "upstream_commit": "282ec70363edeff59424bf43731658092fba3d37"
+        },
+        "vggt_identity_match_records": 2779,
+        "weights_only_safe_load_records": 2779
+      },
+      "record_identity_digest_sha256": "4842ba8ed37b6fc3900f5d8f1ec300db8bac886018212e89d6b89cab7fb856f1",
+      "root": "/home/haoyi/ffs_omega_cache/m2_formal_train/derived",
+      "safe_zero_audit": {
+        "all_float_tensors_finite_records": 2779,
+        "manifest_metadata_tensor_validity_consistent_records": 2779,
+        "passed": true,
+        "pose_rejected_zero_temporal_extrinsics": 1265,
+        "records_audited": 2779,
+        "static_rejected_zero_prior_tensors": 1264,
+        "verification_command": "/home/haoyi/miniconda/envs/env-tsr/bin/python /home/haoyi/ffs_omega_tsr/tools/derive_geometry_manifest.py --vggt-root /home/haoyi/ffs_omega_cache/m2_formal_train/vggt --ffs-root /home/haoyi/ffs_omega_cache/m1_formal_train/observation --output /home/haoyi/ffs_omega_cache/m2_formal_train/derived --cache-dtype float32 --start-window 0 --report /home/haoyi/ffs_omega_tsr/reports/m2/derive_geometry_train.json",
+        "weights_only_safe_load_records": 2779
+      },
+      "selection": {
+        "limit": null,
+        "selected_windows": 2779,
+        "start_window": 0
+      },
+      "weights_only_safe_finite_records": 2779
+    },
+    "ffs_observation": {
+      "cache_bytes_read": 10009564245,
+      "canonical_receipt": "/home/haoyi/ffs_omega_cache/m1_formal_train/observation/run_receipt.json",
+      "canonical_receipt_sha256": "8c2bfb9ba9bbfdae3cba62739007f7467829eac9c378f7d6fce35f255ab9e839",
+      "config": {
+        "cache_dtype": "float16",
+        "checkpoint_label": "20-30-48",
+        "expected_checkpoint_label": "20-30-48",
+        "iterations": 4,
+        "max_disp": 192,
+        "missing_normalize": "error",
+        "provisional_checkpoint_role": false,
+        "right_left_check": true,
+        "role": "observation",
+        "scale": 2,
+        "volume_backend": "pytorch1"
+      },
+      "current_source_image_hashes_verified": 5574,
+      "finite_or_semantic_sentinel_records": 2787,
+      "identity": {
+        "checkpoint_sha256": "98b5a9acf39fbfa795025de8cea95ce123daa40f6b6234d719167751024cf692",
+        "component": "ffs-observation",
+        "config_sha256": "93ccfa329b30ba924ce9a96f262c73e4607fa51f010b96db9623af0b2edadaf5",
+        "cuda_version": "12.8",
+        "torch_version": "2.10.0+cu128",
+        "upstream_commit": "a290ba04c1b3ad1ec41a33974a157b2917b624d4"
+      },
+      "manifest_sha256": "596702933688f695d9aac480d9f01e5764f40a4d7b28d72d73c550eb209b301c",
+      "positive_infinity_lr_sentinel_elements_outside_valid_mask": 36284761,
+      "record_identity_digest_sha256": "df49618f8366742e2a1ace68d91fd7b473e8416b18a137458e38c0006793f542",
+      "reused_records": 0,
+      "root": "/home/haoyi/ffs_omega_cache/m1_formal_train/observation",
+      "selected_records": 2787,
+      "weights_only_safe_load_records": 2787,
+      "written_records": 2787
+    },
+    "ffs_teacher": {
+      "cache_bytes_read": 34266524064,
+      "canonical_receipt": "/home/haoyi/ffs_omega_cache/m1_formal_train/teacher/run_receipt.json",
+      "canonical_receipt_sha256": "7111620c6fc03a8fb6599ff41200e8a34ec7b60169208ba3e5d58f522d7d1c01",
+      "config": {
+        "cache_dtype": "float16",
+        "checkpoint_label": "23-36-37",
+        "expected_checkpoint_label": "23-36-37",
+        "iterations": 8,
+        "max_disp": 416,
+        "missing_normalize": "error",
+        "provisional_checkpoint_role": false,
+        "right_left_check": true,
+        "role": "teacher",
+        "scale": 1,
+        "volume_backend": "pytorch1"
+      },
+      "current_source_image_hashes_verified": 5574,
+      "finite_or_semantic_sentinel_records": 2787,
+      "identity": {
+        "checkpoint_sha256": "af0658f289ec840b292645f8d5538978f06e8cabaa1fd31e84acc91af268e990",
+        "component": "ffs-teacher",
+        "config_sha256": "9d402130df586ce1b57d16d65b2fcf43c73e28992160fdf4a2e8f4b50b95672e",
+        "cuda_version": "12.8",
+        "torch_version": "2.10.0+cu128",
+        "upstream_commit": "a290ba04c1b3ad1ec41a33974a157b2917b624d4"
+      },
+      "manifest_sha256": "596702933688f695d9aac480d9f01e5764f40a4d7b28d72d73c550eb209b301c",
+      "positive_infinity_lr_sentinel_elements_outside_valid_mask": 218931197,
+      "record_identity_digest_sha256": "06b9e35dfed98966f9b0314f8fb6da0111cb960a3f874035c7bdd24129cc395e",
+      "reused_records": 0,
+      "root": "/home/haoyi/ffs_omega_cache/m1_formal_train/teacher",
+      "selected_records": 2787,
+      "weights_only_safe_load_records": 2787,
+      "written_records": 2787
+    },
+    "raw_vggt": {
+      "available_windows": 2779,
+      "cache_bytes_read": 4853224423,
+      "cache_manifest": "/home/haoyi/ffs_omega_cache/m2_formal_train/vggt/cache_manifest.jsonl",
+      "cache_manifest_sha256": "6adc9f7381d7a8eba1282601558bc4b2e6dca3ceef28fc9b82594eb325b9b08d",
+      "canonical_receipt": "/home/haoyi/ffs_omega_cache/m2_formal_train/vggt/run_receipt.json",
+      "canonical_receipt_sha256": "37ea38ef0a35ec816e180091d323d95cbe8b895b90a440c2e8aaf3ec1c64590d",
+      "config": {
+        "cache_dtype": "float16",
+        "causal": true,
+        "context_pairs": 5,
+        "current_left_view_index": 8,
+        "dense_cache_scope": "current_left_only",
+        "depth_alignment_stage": "not_applied; downstream align_vggt.py owns FFS alignment",
+        "image_resolution": 512,
+        "input_mode": "balanced",
+        "model": "VGGT-Omega-1B-512",
+        "patch_size": 16,
+        "pose_scale_stage": "not_applied; downstream pose_scale.py owns metric scaling",
+        "schema_version": 1,
+        "view_order": [
+          "L[t-4]",
+          "R[t-4]",
+          "L[t-3]",
+          "R[t-3]",
+          "L[t-2]",
+          "R[t-2]",
+          "L[t-1]",
+          "R[t-1]",
+          "L[t]",
+          "R[t]"
+        ]
+      },
+      "identity": {
+        "checkpoint_sha256": "c02da418b18bb01d0392598d3f6147366bcde1bb70fd08a5e3bf7925b0667934",
+        "component": "vggt-omega",
+        "config_sha256": "1ac151ba851c4626ab2fd8a22405a5e44399a905432da3e0123d7e106d111f88",
+        "cuda_version": "12.8",
+        "torch_version": "2.10.0+cu128",
+        "upstream_commit": "282ec70363edeff59424bf43731658092fba3d37"
+      },
+      "manifest_binding": "derived receipt binds both this canonical receipt SHA and cache-manifest SHA",
+      "record_identity_digest_sha256": "3051aded5119edbf6d004985eabe3b5977fc745fa45e6152d4dada975c4ff2b0",
+      "reused_records": 0,
+      "root": "/home/haoyi/ffs_omega_cache/m2_formal_train/vggt",
+      "selected_windows": 2779,
+      "weights_only_safe_finite_records": 2779,
+      "written_records": 2779
+    }
+  },
+  "causal_contract": {
+    "availability_by_sequence": {
+      "uvc_20260706_172530_741_2560x800_60fps": {
+        "all_derived_endpoint_gates": {
+          "pose_rejected": 1001,
+          "pose_valid": 161,
+          "static_prior_rejected": 1001,
+          "static_prior_valid": 161
+        },
+        "evaluable_current_endpoint_gates": {
+          "pose_rejected": 999,
+          "pose_valid": 161,
+          "static_prior_rejected": 999,
+          "static_prior_valid": 161
+        },
+        "evaluable_endpoint_index_range": [
+          6,
+          1165
+        ],
+        "evaluable_t3_endpoints": 1160,
+        "evaluable_t3_time_slice_gates": {
+          "pose_rejected": 2998,
+          "pose_valid": 482,
+          "static_prior_rejected": 2998,
+          "static_prior_valid": 482,
+          "time_slices": 3480
+        },
+        "frame_id_range": [
+          900,
+          14880
+        ],
+        "manifest_index_range": [
+          0,
+          1165
+        ],
+        "manifest_records": 1166,
+        "raw_and_derived_endpoints": 1162
+      },
+      "uvc_20260706_191627_418_2560x800_60fps": {
+        "all_derived_endpoint_gates": {
+          "pose_rejected": 264,
+          "pose_valid": 1353,
+          "static_prior_rejected": 263,
+          "static_prior_valid": 1354
+        },
+        "evaluable_current_endpoint_gates": {
+          "pose_rejected": 264,
+          "pose_valid": 1351,
+          "static_prior_rejected": 263,
+          "static_prior_valid": 1352
+        },
+        "evaluable_endpoint_index_range": [
+          1172,
+          2786
+        ],
+        "evaluable_t3_endpoints": 1615,
+        "evaluable_t3_time_slice_gates": {
+          "pose_rejected": 792,
+          "pose_valid": 4053,
+          "static_prior_rejected": 789,
+          "static_prior_valid": 4056,
+          "time_slices": 4845
+        },
+        "frame_id_range": [
+          900,
+          20340
+        ],
+        "manifest_index_range": [
+          1166,
+          2786
+        ],
+        "manifest_records": 1621,
+        "raw_and_derived_endpoints": 1617
+      }
+    },
+    "evaluable_endpoint_digest_sha256": "0adbda2f31a8cba1af209d56d906f37756190811652bf976976aad5a99816c21",
+    "evaluable_t3_endpoints": 2775,
+    "expected_endpoint_digest_sha256": "64bc82d8ae1896bfa8f436eb31531d40de3a6048113e713cdbbfe07ee9a9dc0e",
+    "expected_raw_and_derived_endpoints": 2779,
+    "gate_totals": {
+      "evaluable_current_pose_valid": 1512,
+      "evaluable_current_static_prior_valid": 1513,
+      "evaluable_time_slice_pose_valid": 4535,
+      "evaluable_time_slice_static_prior_valid": 4538
+    },
+    "no_future_manifest_index_access": true,
+    "no_future_timestamp_access": true,
+    "no_sequence_boundary_crossing": true,
+    "student_sequence_length": 3,
+    "vggt_context_pairs": 5,
+    "view_order": [
+      "L[t-4]",
+      "R[t-4]",
+      "L[t-3]",
+      "R[t-3]",
+      "L[t-2]",
+      "R[t-2]",
+      "L[t-1]",
+      "R[t-1]",
+      "L[t]",
+      "R[t]"
+    ]
+  },
+  "component": "stage-b-training-input-audit",
+  "lineage_closure": {
+    "coverage_proven_by_receipts_and_rows_not_file_count_alone": true,
+    "derived_manifest_binds_per_record_ffs_and_raw_sha256": true,
+    "derived_receipt_binds_raw_manifest_sha256": true,
+    "derived_receipt_binds_raw_receipt_sha256": true,
+    "ffs_receipts_bind_train_manifest": true,
+    "per_record_tensor_finiteness_or_declared_ffs_sentinel": true,
+    "per_record_weights_only_safe_load": true,
+    "raw_vggt_receipt_binds_train_manifest": true,
+    "source_image_files_hashed": 5574,
+    "source_images_current_hash_verified": true
+  },
+  "manifests": {
+    "overlapping_sequences": [],
+    "train": {
+      "byte_size": 4319548,
+      "path": "/home/haoyi/ffs_omega_cache/manifests/train_video_isolated.jsonl",
+      "record_count": 2787,
+      "sequence_counts": {
+        "uvc_20260706_172530_741_2560x800_60fps": 1166,
+        "uvc_20260706_191627_418_2560x800_60fps": 1621
+      },
+      "sequence_order": [
+        "uvc_20260706_172530_741_2560x800_60fps",
+        "uvc_20260706_191627_418_2560x800_60fps"
+      ],
+      "sha256": "596702933688f695d9aac480d9f01e5764f40a4d7b28d72d73c550eb209b301c",
+      "strict_sequence_ordering": true
+    },
+    "train_validation_sequence_disjoint": true,
+    "validation": {
+      "byte_size": 386724,
+      "path": "/home/haoyi/ffs_omega_cache/manifests/val_video_isolated.jsonl",
+      "record_count": 244,
+      "sequence_order": [
+        "uvc_20260706_183939_677_2560x800_60fps"
+      ],
+      "sha256": "014bd75de8ffbf74530c64eac76394a30bfc62d65b2da02397de2fb5c984760c"
+    }
+  },
+  "read_only": true,
+  "schema_version": 1,
+  "status": "PASS"
+}
