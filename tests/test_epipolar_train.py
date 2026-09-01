@@ -285,7 +285,8 @@ def test_runtime_source_bundle_hashes_stage_c_evaluator(
     # V2 plus the opt-in calibration-v3/v3.1 geometry/model modules are
     # included in fresh runtime bundles. Historical receipts remain validated
     # by their pinned checkpoint-tree auditors.
-    assert len(paths) == 59
+    # Spring manifest/GT-pose adapter is part of the runtime source bundle.
+    assert len(paths) == 60
 
     controlled_bundle = train_epipolar._runtime_source_bundle(
         controlled_ablation=True
@@ -297,7 +298,7 @@ def test_runtime_source_bundle_hashes_stage_c_evaluator(
     assert "configs/ablations/d025_positivity_t3.yaml" in controlled_paths
     assert "configs/ablations/d025_stage_c_positivity.yaml" in controlled_paths
     assert "tools/audit_d025_evaluation.py" in controlled_paths
-    assert len(controlled_paths) == 62
+    assert len(controlled_paths) == 63
 
     v2_bundle = train_epipolar._runtime_source_bundle(physical_v2=True)
     v2_paths = [record["path"] for record in v2_bundle["files"]]
@@ -307,7 +308,7 @@ def test_runtime_source_bundle_hashes_stage_c_evaluator(
     assert "configs/mvp_x2_v2.yaml" in v2_paths
     assert "configs/temporal_x2_v2.yaml" in v2_paths
     assert "configs/epipolar_x2_v2.yaml" in v2_paths
-    assert len(v2_paths) == 62
+    assert len(v2_paths) == 63
 
 
 def test_cpu_runtime_receipt_is_never_formal_bf16_eligible() -> None:
