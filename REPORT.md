@@ -520,9 +520,15 @@ run summary and records `formal_training_complete=false`. The strict Stage-C
 evaluator loaded that checkpoint and labeled its one-window held-out run
 `LIMITED_SMOKE_ONLY`. An independent RTX 5090 CUDA dry-run binds the same
 51-file source bundle, capability 12.0, CUDA 12.8 and native BF16 autocast; it
-makes no optimizer update. All remain acceptance-ineligible because the base
-is incomplete. Earlier two-run CPU integration still establishes bit-exact
-refiner determinism. Evidence: `reports/m6/stage_c_geometry_smoke.json`.
+makes no optimizer update. A full 384×768, micro-2/accumulation-4 CUDA optimizer
+step also completes with finite loss 0.116188 and pre-clip gradient norm 1.636,
+using 2.937/4.133 GB peak allocated/reserved memory for this process. It emits
+PyTorch's documented warning that CUDA `grid_sample` backward is not
+deterministic under the current warn-only policy, so state-exact resume is
+proven but CUDA bit-exact trajectory reproduction is not claimed. All remain
+acceptance-ineligible because the base is incomplete. Earlier two-run CPU
+integration still establishes bit-exact refiner determinism. Evidence:
+`reports/m6/stage_c_geometry_smoke.json`.
 
 ## Tests
 
