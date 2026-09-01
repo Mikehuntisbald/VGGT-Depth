@@ -14,6 +14,7 @@ from losses import (
     measurement_consistency_loss,
     sample_hr_at_lr_centers,
     temporal_consistency_loss,
+    temporal_residual_consistency_loss,
 )
 
 
@@ -85,6 +86,60 @@ def test_temporal_loss_excludes_collision_and_photometric_failure() -> None:
         geometry_consistent_mask=ones,
     )
     assert 0.999 < loss.item() < 1.001
+
+
+def test_temporal_residual_loss_cancels_bias_and_penalizes_flicker() -> None:
+    teacher_previous_warped = torch.tensor([[[[10.0, 10.0]]]])
+    teacher_current = torch.tensor([[[[12.0, 12.0]]]])
+    prediction_previous_warped = torch.tensor([[[[13.0, 13.0]]]])
+    prediction_current = torch.tensor(
+        [[[[15.0, 17.0]]]], requires_grad=True
+    )
+    valid = torch.ones_like(teacher_current, dtype=torch.bool)
+    loss = temporal_residual_consistency_loss(
+        prediction_current,
+        prediction_previous_warped,
+        teacher_current,
+        teacher_previous_warped,
+        static_mask=valid,
+        visibility_mask=valid,
+        collision_mask=torch.zeros_like(valid),
+        photometric_residual=torch.zeros_like(teacher_current),
+        max_photometric_residual=0.1,
+        geometry_consistent_mask=valid,
+        current_reference_valid_mask=valid,
+        warped_previous_reference_valid_mask=valid,
+        epsilon=1e-6,
+    )
+    assert loss.item() == pytest.approx(1.0, abs=1e-5)
+    loss.backward()
+    assert prediction_current.grad is not None
+    assert prediction_current.grad[..., 0].item() == pytest.approx(0.0, abs=1e-5)
+    assert prediction_current.grad[..., 1].item() > 0.0
+
+
+def test_temporal_residual_loss_is_empty_safe() -> None:
+    prediction = torch.ones((1, 1, 1, 1), requires_grad=True)
+    reference = torch.ones_like(prediction)
+    empty = torch.zeros_like(prediction, dtype=torch.bool)
+    loss = temporal_residual_consistency_loss(
+        prediction,
+        prediction.detach(),
+        reference,
+        reference,
+        static_mask=empty,
+        visibility_mask=torch.ones_like(empty),
+        collision_mask=empty,
+        photometric_residual=torch.zeros_like(prediction),
+        max_photometric_residual=0.1,
+        geometry_consistent_mask=torch.ones_like(empty),
+        current_reference_valid_mask=torch.ones_like(empty),
+        warped_previous_reference_valid_mask=torch.ones_like(empty),
+    )
+    assert loss.item() == 0.0 and torch.isfinite(loss)
+    loss.backward()
+    assert prediction.grad is not None
+    assert torch.equal(prediction.grad, torch.zeros_like(prediction.grad))
 
 
 def test_uncertainty_nll_and_gate_regularizer_are_empty_safe() -> None:

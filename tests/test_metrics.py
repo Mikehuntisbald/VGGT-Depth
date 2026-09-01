@@ -7,6 +7,7 @@ import torch
 
 from metrics.boundary import boundary_epe, disparity_boundary_mask
 from metrics.disparity import (
+    MetricResult,
     bad_pixel_rate,
     disparity_metrics,
     end_point_error,
@@ -15,7 +16,12 @@ from metrics.disparity import (
     low_confidence_region_epe,
 )
 from metrics.pointcloud import disparity_to_point_cloud, point_to_plane_error
-from metrics.temporal import temporal_disparity_error, trusted_region_degradation
+from metrics.temporal import (
+    legacy_temporal_disparity_error,
+    temporal_disparity_error,
+    temporal_residual_error,
+    trusted_region_degradation,
+)
 
 
 def test_epe_bad1_bad2_have_exact_aggregation_terms() -> None:
@@ -197,6 +203,99 @@ def test_temporal_error_uses_supplied_safe_mask_and_valid_history() -> None:
     assert result.count == 2
     assert result.numerator == pytest.approx(3.0)
     assert result.value == pytest.approx(1.5)
+
+
+def test_temporal_residual_error_cancels_constant_prediction_bias() -> None:
+    teacher_previous_warped_hr_px = torch.tensor([[[[10.0, 20.0]]]])
+    teacher_current_hr_px = torch.tensor([[[[11.0, 18.0]]]])
+    prediction_previous_warped_hr_px = teacher_previous_warped_hr_px + 4.0
+    prediction_current_hr_px = teacher_current_hr_px + 4.0
+    valid = torch.ones_like(teacher_current_hr_px, dtype=torch.bool)
+
+    result = temporal_residual_error(
+        prediction_current_hr_px,
+        prediction_previous_warped_hr_px,
+        teacher_current_hr_px,
+        teacher_previous_warped_hr_px,
+        safe_mask=valid,
+        current_reference_valid_mask=valid,
+        warped_previous_reference_valid_mask=valid,
+    )
+
+    assert result == MetricResult(0.0, 0.0, 2, True)
+    # The historical current-vs-history quantity remains non-zero and its
+    # compatibility alias remains byte-for-byte equivalent at the API level.
+    legacy = legacy_temporal_disparity_error(
+        prediction_current_hr_px,
+        prediction_previous_warped_hr_px,
+        safe_mask=valid,
+    )
+    assert legacy.value == pytest.approx(1.5)
+    assert temporal_disparity_error(
+        prediction_current_hr_px,
+        prediction_previous_warped_hr_px,
+        safe_mask=valid,
+    ) == legacy
+
+
+def test_temporal_residual_error_penalizes_prediction_only_flicker() -> None:
+    teacher_previous_warped_hr_px = torch.full((1, 1, 1, 3), 10.0)
+    teacher_current_hr_px = torch.full((1, 1, 1, 3), 12.0)
+    prediction_previous_warped_hr_px = torch.full((1, 1, 1, 3), 13.0)
+    # Shared +3 bias would yield 15 everywhere.  The middle pixel flickers by
+    # another +2, therefore only that residual is wrong.
+    prediction_current_hr_px = torch.tensor([[[[15.0, 17.0, 15.0]]]])
+    valid = torch.ones_like(teacher_current_hr_px, dtype=torch.bool)
+
+    result = temporal_residual_error(
+        prediction_current_hr_px,
+        prediction_previous_warped_hr_px,
+        teacher_current_hr_px,
+        teacher_previous_warped_hr_px,
+        safe_mask=valid,
+        current_reference_valid_mask=valid,
+        warped_previous_reference_valid_mask=valid,
+    )
+
+    assert result.count == 3
+    assert result.numerator == pytest.approx(2.0)
+    assert result.value == pytest.approx(2.0 / 3.0)
+
+
+def test_temporal_residual_error_intersects_masks_and_handles_empty_nonfinite() -> None:
+    prediction_current = torch.tensor([[[[6.0, float("nan"), 8.0]]]])
+    prediction_previous_warped = torch.tensor([[[[5.0, 5.0, 7.0]]]])
+    teacher_current = torch.tensor([[[[6.0, 6.0, 8.0]]]])
+    teacher_previous_warped = torch.tensor([[[[5.0, 5.0, 7.0]]]])
+    safe = torch.tensor([[[[True, True, False]]]])
+    current_valid = torch.ones_like(safe)
+    history_valid = torch.ones_like(safe)
+
+    selected_nonfinite = temporal_residual_error(
+        prediction_current,
+        prediction_previous_warped,
+        teacher_current,
+        teacher_previous_warped,
+        safe_mask=safe,
+        current_reference_valid_mask=current_valid,
+        warped_previous_reference_valid_mask=history_valid,
+    )
+    assert not selected_nonfinite.valid
+    assert selected_nonfinite.count == 2
+    assert math.isnan(selected_nonfinite.value)
+
+    history_valid[..., 0] = False
+    history_valid[..., 1] = False
+    empty = temporal_residual_error(
+        prediction_current,
+        prediction_previous_warped,
+        teacher_current,
+        teacher_previous_warped,
+        safe_mask=safe,
+        current_reference_valid_mask=current_valid,
+        warped_previous_reference_valid_mask=history_valid,
+    )
+    assert not empty.valid and empty.count == 0 and math.isnan(empty.value)
 
 
 def test_trusted_region_degradation_has_relative_percent_and_empty_handling() -> None:

@@ -25,7 +25,10 @@ from metrics.disparity import (
     invalid_region_completeness,
     low_confidence_region_epe,
 )
-from metrics.temporal import temporal_disparity_error
+from metrics.temporal import (
+    legacy_temporal_disparity_error,
+    temporal_residual_error,
+)
 from data.cache_dataset import sha256_file
 from utils.checkpoint import CHECKPOINT_SCHEMA_VERSION, CheckpointMismatchError
 
@@ -787,7 +790,12 @@ def hr_temporal_metric(
     geometry_consistent_mask_hr: Tensor,
     valid_history_hr: Tensor,
 ) -> MetricResult:
-    """Temporal disparity error on the strict HR z-buffer safe domain."""
+    """Legacy current/history difference on the strict HR safe domain.
+
+    This function preserves the historical evaluator contract.  It is not the
+    v2 TEPE because it has no teacher/GT temporal residual and consequently
+    penalizes genuine temporal disparity change.
+    """
 
     if warped_history_disparity_hr_px.shape != current_disparity_hr_px.shape:
         raise ValueError("warped_history_disparity_hr_px shape mismatch")
@@ -799,10 +807,66 @@ def hr_temporal_metric(
         geometry_consistent_mask_hr=geometry_consistent_mask_hr,
         valid_history_hr=valid_history_hr,
     )
-    return temporal_disparity_error(
+    return legacy_temporal_disparity_error(
         current_disparity_hr_px,
         warped_history_disparity_hr_px,
         safe_mask=safe_mask,
+    )
+
+
+def hr_temporal_residual_metric(
+    current_prediction_disparity_hr_px: Tensor,
+    warped_previous_prediction_disparity_hr_px: Tensor,
+    current_reference_disparity_hr_px: Tensor,
+    warped_previous_reference_disparity_hr_px: Tensor,
+    *,
+    visibility_mask_hr: Tensor,
+    static_mask_hr: Tensor,
+    collision_mask_hr: Tensor,
+    geometry_consistent_mask_hr: Tensor,
+    valid_prediction_history_hr: Tensor,
+    current_reference_valid_mask_hr: Tensor,
+    warped_previous_reference_valid_mask_hr: Tensor,
+    paired_domain_mask_hr: Tensor | None = None,
+) -> MetricResult:
+    """V2 teacher/GT temporal-residual error on an explicit HR domain.
+
+    All disparity arguments are ``[B,1,H,W]`` in HR pixels.  The previous
+    prediction and reference must already be reprojected into the current
+    camera using their respective z-buffer transports.  ``paired_domain_mask``
+    optionally intersects otherwise method-native masks, enabling a fair T1
+    versus T3 comparison with exactly the same denominator.
+    """
+
+    if warped_previous_prediction_disparity_hr_px.shape != (
+        current_prediction_disparity_hr_px.shape
+    ):
+        raise ValueError("warped previous prediction disparity shape mismatch")
+    safe_mask = hr_temporal_safe_mask(
+        current_prediction_disparity_hr_px,
+        visibility_mask_hr=visibility_mask_hr,
+        static_mask_hr=static_mask_hr,
+        collision_mask_hr=collision_mask_hr,
+        geometry_consistent_mask_hr=geometry_consistent_mask_hr,
+        valid_history_hr=valid_prediction_history_hr,
+    )
+    if paired_domain_mask_hr is not None:
+        if paired_domain_mask_hr.shape != safe_mask.shape:
+            raise ValueError(
+                "paired_domain_mask_hr must have shape "
+                f"{tuple(safe_mask.shape)}"
+            )
+        safe_mask &= paired_domain_mask_hr.to(dtype=torch.bool)
+    return temporal_residual_error(
+        current_prediction_disparity_hr_px,
+        warped_previous_prediction_disparity_hr_px,
+        current_reference_disparity_hr_px,
+        warped_previous_reference_disparity_hr_px,
+        safe_mask=safe_mask,
+        current_reference_valid_mask=current_reference_valid_mask_hr,
+        warped_previous_reference_valid_mask=(
+            warped_previous_reference_valid_mask_hr
+        ),
     )
 
 
@@ -817,6 +881,7 @@ __all__ = [
     "comparison_from_aggregates",
     "compute_sample_metrics",
     "hr_temporal_metric",
+    "hr_temporal_residual_metric",
     "hr_temporal_safe_mask",
     "load_model_for_evaluation",
     "physical_disparity_clamp_min_zero",

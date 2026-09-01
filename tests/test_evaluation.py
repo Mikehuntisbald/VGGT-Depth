@@ -18,6 +18,7 @@ from evaluation import (
     aggregate_metric_results,
     comparison_from_aggregates,
     compute_sample_metrics,
+    hr_temporal_residual_metric,
     hr_temporal_safe_mask,
     load_model_for_evaluation,
     physical_disparity_clamp_min_zero,
@@ -480,6 +481,38 @@ def test_hr_temporal_safe_mask_is_exact_visible_static_intersection() -> None:
         valid_history_hr=torch.tensor([[[[True, True, True, True]]]]),
     )
     assert torch.equal(mask, torch.tensor([[[[True, False, False, False]]]]))
+
+
+def test_hr_temporal_residual_metric_uses_warp_and_paired_masks() -> None:
+    # Identity-warp values are supplied explicitly: teacher residual is +1;
+    # prediction residual is +1, +3, +1, +1.  The paired mask removes the last
+    # pixel and the teacher-history validity removes the third.
+    current_prediction = torch.tensor([[[[15.0, 17.0, 15.0, 15.0]]]])
+    warped_previous_prediction = torch.full_like(current_prediction, 14.0)
+    current_teacher = torch.full_like(current_prediction, 11.0)
+    warped_previous_teacher = torch.full_like(current_prediction, 10.0)
+    all_valid = torch.ones_like(current_prediction, dtype=torch.bool)
+    teacher_history_valid = all_valid.clone()
+    teacher_history_valid[..., 2] = False
+    paired = all_valid.clone()
+    paired[..., 3] = False
+
+    result = hr_temporal_residual_metric(
+        current_prediction,
+        warped_previous_prediction,
+        current_teacher,
+        warped_previous_teacher,
+        visibility_mask_hr=all_valid,
+        static_mask_hr=all_valid,
+        collision_mask_hr=torch.zeros_like(all_valid),
+        geometry_consistent_mask_hr=all_valid,
+        valid_prediction_history_hr=all_valid,
+        current_reference_valid_mask_hr=all_valid,
+        warped_previous_reference_valid_mask_hr=teacher_history_valid,
+        paired_domain_mask_hr=paired,
+    )
+
+    assert result == MetricResult(value=1.0, numerator=2.0, count=2, valid=True)
 
 
 def test_physical_clamp_uses_zero_not_epsilon_and_preserves_nonfinite() -> None:

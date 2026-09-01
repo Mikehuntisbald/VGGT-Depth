@@ -10,7 +10,7 @@ from .disparity import (
 )
 from .composite import LossBreakdown, LossWeights, combine_loss_terms
 from .measurement import measurement_consistency_loss, sample_hr_at_lr_centers
-from .temporal import temporal_consistency_loss
+from .temporal import temporal_consistency_loss, temporal_residual_consistency_loss
 from .uncertainty import ffs_gate_regularizer, laplace_uncertainty_nll
 
 __all__ = [
@@ -27,5 +27,6 @@ __all__ = [
     "measurement_consistency_loss",
     "sample_hr_at_lr_centers",
     "temporal_consistency_loss",
+    "temporal_residual_consistency_loss",
     "combine_loss_terms",
 ]

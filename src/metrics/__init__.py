@@ -26,7 +26,9 @@ from .pointcloud import (
 )
 from .temporal import (
     TrustedRegionDegradationReport,
+    legacy_temporal_disparity_error,
     temporal_disparity_error,
+    temporal_residual_error,
     trusted_region_degradation,
 )
 
@@ -51,8 +53,10 @@ __all__ = [
     "invalid_region_completeness",
     "invalid_region_completeness_improvement",
     "low_confidence_region_epe",
+    "legacy_temporal_disparity_error",
     "output_validity_metrics",
     "point_to_plane_error",
     "temporal_disparity_error",
+    "temporal_residual_error",
     "trusted_region_degradation",
 ]
