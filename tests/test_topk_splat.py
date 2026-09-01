@@ -83,9 +83,11 @@ def test_fractional_projection_uses_four_neighbor_bilinear_footprint() -> None:
     disparity = torch.zeros((1, 1, 1, 4))
     depth = torch.zeros_like(disparity)
     confidence = torch.zeros_like(disparity)
+    hidden = torch.zeros((1, 1, 1, 4))
     disparity[0, 0, 0, 1] = 2.0
     depth[0, 0, 0, 1] = 1.0
     confidence[0, 0, 0, 1] = 1.0
+    hidden[0, 0, 0, 1] = 7.0
 
     # Moving the current camera centre -0.125m shifts u by +0.25 at fx=2,Z=1.
     result = topk_z_aware_splat(
@@ -96,6 +98,7 @@ def test_fractional_projection_uses_four_neighbor_bilinear_footprint() -> None:
         _camera_from_world_at_x(0.0),
         _camera_from_world_at_x(-0.125),
         top_k=1,
+        previous_hidden_feature=hidden,
     )
 
     assert result.valid_mask[0, 0, 0].tolist() == [False, True, True, False]
@@ -107,6 +110,10 @@ def test_fractional_projection_uses_four_neighbor_bilinear_footprint() -> None:
     assert result.fractional_offset_grid_px[0, 0, 0, 0, 2].item() == pytest.approx(
         -0.75
     )
+    assert result.warped_hidden_feature[0, 0, 0, 0, 1].item() == 7.0
+    assert result.warped_hidden_feature[0, 0, 0, 0, 2].item() == 7.0
+    assert result.weighted_hidden_feature[0, 0, 0, 1].item() == 7.0
+    assert result.weighted_hidden_feature[0, 0, 0, 2].item() == 7.0
 
 
 def test_collision_keeps_topk_in_depth_order_and_marks_all_retained() -> None:
@@ -293,6 +300,27 @@ def test_invalid_oov_nonfinite_feature_and_zero_weight_fail_closed() -> None:
     assert bool(zero_weight.valid_mask.any())
     assert not bool(zero_weight.aggregate_valid_mask.any())
     assert zero_weight.z_aware_weights.eq(0).all()
+
+
+def test_propagated_source_visibility_and_collision_are_not_discarded() -> None:
+    scalar = torch.ones((1, 1, 1, 1))
+    result = topk_z_aware_splat(
+        scalar,
+        scalar,
+        scalar,
+        _intrinsics(),
+        torch.eye(4),
+        torch.eye(4),
+        top_k=1,
+        source_visibility_mask=torch.zeros_like(scalar, dtype=torch.bool),
+        source_collision_mask=torch.ones_like(scalar, dtype=torch.bool),
+    )
+
+    assert bool(result.valid_mask.all())
+    assert not bool(result.source_visibility_mask.any())
+    assert bool(result.source_collision_mask.all())
+    assert not bool(result.aggregate_valid_mask.any())
+    assert result.z_aware_weights.eq(0).all()
 
 
 def test_k1_nearest_mode_matches_canonical_single_winner_numerically() -> None:
