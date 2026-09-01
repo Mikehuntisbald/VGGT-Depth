@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Sequential, resumable orchestration for calibration-conditioning v3.
+"""Sequential, resumable orchestration for v3 and corrected v3.1 lineages.
 
 The formal order is fixed per seed::
 
@@ -76,6 +76,35 @@ ARM_CONFIGS = {
     "B0": "configs/ablations/v3_b0_temporal_pose_off.yaml",
     "B1": "configs/ablations/v3_b1_temporal_pose_on.yaml",
 }
+ARM_CONFIGS_V3_1 = {
+    "A0": "configs/ablations/v3_1_a0_control.yaml",
+    "A1": "configs/ablations/v3_1_a1_rays.yaml",
+    "A2": "configs/ablations/v3_1_a2_stereo_pose.yaml",
+    "A3": "configs/ablations/v3_1_a3_rays_stereo_pose.yaml",
+    "B0": "configs/ablations/v3_1_b0_temporal_pose_off.yaml",
+    "B1": "configs/ablations/v3_1_b1_temporal_pose_on.yaml",
+}
+ARM_CONFIGS_BY_LINEAGE = {
+    "v3": ARM_CONFIGS,
+    "v3_1": ARM_CONFIGS_V3_1,
+}
+LINEAGE_COMPONENTS = {
+    "v3": {
+        "orchestrator": COMPONENT,
+        "process": "v3-orchestrated-process",
+        "decision_inputs": DECISION_INPUT_COMPONENT,
+        "decision": "v3-calibration-conditioning-decision",
+    },
+    "v3_1": {
+        "orchestrator": "v3.1-experiment-orchestrator",
+        "process": "v3.1-orchestrated-process",
+        # decide_v3_conditioning.py owns the stable manifest schema component.
+        # This lineage-specific component is recorded separately in the
+        # manifest so the existing decision engine can consume both lineages.
+        "decision_inputs": "v3.1-experiment-decision-inputs",
+        "decision": "v3.1-calibration-conditioning-decision",
+    },
+}
 CUDA_OOM_PATTERN = re.compile(
     r"(?:CUDA out of memory|CUDA error:\s*out of memory|"
     r"CUDNN_STATUS_ALLOC_FAILED)",
@@ -85,6 +114,19 @@ CUDA_OOM_PATTERN = re.compile(
 
 class OrchestrationError(RuntimeError):
     """A fail-closed orchestration or subprocess error."""
+
+
+def _lineage_name(args: argparse.Namespace) -> str:
+    lineage = str(getattr(args, "lineage", "v3"))
+    if lineage not in ARM_CONFIGS_BY_LINEAGE:
+        raise OrchestrationError(f"unsupported experiment lineage: {lineage}")
+    return lineage
+
+
+def _lineage_components(lineage: str) -> Mapping[str, str]:
+    if lineage not in LINEAGE_COMPONENTS:
+        raise OrchestrationError(f"unsupported experiment lineage: {lineage}")
+    return LINEAGE_COMPONENTS[lineage]
 
 
 @dataclass(frozen=True, slots=True)
@@ -174,13 +216,19 @@ def _live_recorded_child(active_process_path: Path) -> Mapping[str, Any] | None:
     return active
 
 
-def _source_snapshot(project_root: Path) -> dict[str, Any]:
+def _source_snapshot(project_root: Path, *, lineage: str = "v3") -> dict[str, Any]:
     """Hash executable model/evaluator/config bytes, including dirty files."""
 
     candidates = [project_root / "train.py", project_root / "eval.py"]
     candidates.extend(sorted((project_root / "src").rglob("*.py")))
     candidates.extend(sorted((project_root / "third_party").rglob("*.py")))
-    pending_configs = [project_root / relative for relative in ARM_CONFIGS.values()]
+    try:
+        arm_configs = ARM_CONFIGS_BY_LINEAGE[lineage]
+    except KeyError as exc:
+        raise OrchestrationError(
+            f"unsupported experiment lineage: {lineage}"
+        ) from exc
+    pending_configs = [project_root / relative for relative in arm_configs.values()]
     seen_configs: set[Path] = set()
     while pending_configs:
         config_path = pending_configs.pop().resolve()
@@ -430,7 +478,9 @@ def _invoke(
     job_directory: Path,
     active_process_path: Path,
     executor: ProcessExecutor,
+    lineage: str = "v3",
 ) -> Mapping[str, Any]:
+    components = _lineage_components(lineage)
     log_path, partial_log_path, receipt_path = _next_attempt_paths(job_directory)
     started_at = _utc_now()
     started = time.monotonic()
@@ -447,7 +497,8 @@ def _invoke(
                 active_process_path,
                 {
                     "schema_version": SCHEMA_VERSION,
-                    "component": COMPONENT,
+                    "component": components["orchestrator"],
+                    "lineage": lineage,
                     "status": "RUNNING",
                     "runner_pid": os.getpid(),
                     "child_pid": child_pid,
@@ -478,7 +529,8 @@ def _invoke(
     status = "SUCCESS" if exit_code == 0 and error is None else "FAILED"
     receipt = {
         "schema_version": SCHEMA_VERSION,
-        "component": "v3-orchestrated-process",
+        "component": components["process"],
+        "lineage": lineage,
         "status": status,
         "started_at": started_at,
         "finished_at": _utc_now(),
@@ -500,7 +552,8 @@ def _invoke(
         active_process_path,
         {
             "schema_version": SCHEMA_VERSION,
-            "component": COMPONENT,
+            "component": components["orchestrator"],
+            "lineage": lineage,
             "status": status,
             "runner_pid": os.getpid(),
             "child_pid": child_pid,
@@ -514,7 +567,8 @@ def _invoke(
 
 
 def _config_path(args: argparse.Namespace, arm: str) -> Path:
-    return (args.project_root / ARM_CONFIGS[arm]).resolve()
+    lineage = _lineage_name(args)
+    return (args.project_root / ARM_CONFIGS_BY_LINEAGE[lineage][arm]).resolve()
 
 
 def build_train_command(
@@ -623,13 +677,16 @@ def build_eval_command(
 
 
 def _dry_run_plan(args: argparse.Namespace) -> list[dict[str, Any]]:
+    lineage = _lineage_name(args)
     plan: list[dict[str, Any]] = []
     for seed in SEED_ORDER:
         for arm in ARM_ORDER:
             plan.append(
                 {
+                    "lineage": lineage,
                     "seed": seed,
                     "arm": arm,
+                    "config": str(_config_path(args, arm)),
                     "stage": "B" if arm in STAGE_B_ARMS else "A",
                     "depends_on": "same-seed A3 final.pt" if arm in STAGE_B_ARMS else None,
                     "training_profiles": ["4x2", "2x4_on_cuda_oom_only"],
@@ -752,6 +809,7 @@ def _validated_temporal_pose_audit(
 
 def _execution_contract(args: argparse.Namespace) -> dict[str, Any]:
     return {
+        "lineage": _lineage_name(args),
         "python": str(args.python),
         "host": platform.node(),
         "device": str(args.device),
@@ -829,6 +887,9 @@ class Orchestrator:
     ) -> None:
         self.args = args
         self.executor = executor
+        self.lineage = _lineage_name(args)
+        self.components = _lineage_components(self.lineage)
+        self.component = self.components["orchestrator"]
         self.output_root = args.output_root.resolve()
         self.state_path = self.output_root / "orchestration_state.json"
         self.pid_path = self.output_root / "runner_pid.json"
@@ -836,7 +897,9 @@ class Orchestrator:
         self.decision_inputs_path = self.output_root / "decision_inputs.json"
         self.decision_path = self.output_root / "decision.json"
         self.run_receipt_path = self.output_root / "run_receipt.json"
-        self.source_snapshot = _source_snapshot(args.project_root)
+        self.source_snapshot = _source_snapshot(
+            args.project_root, lineage=self.lineage
+        )
         self.unique_calibrations, self.calibration_receipt = _calibration_count(args)
         self.temporal_pose_audit = getattr(
             args, "temporal_pose_audit_identity", None
@@ -860,7 +923,9 @@ class Orchestrator:
         self._publish_state()
 
     def _assert_source_unchanged(self) -> None:
-        current = _source_snapshot(self.args.project_root)
+        current = _source_snapshot(
+            self.args.project_root, lineage=self.lineage
+        )
         if current["sha256"] != self.source_snapshot["sha256"]:
             raise OrchestrationError(
                 "executable source/config bytes changed during orchestration"
@@ -914,8 +979,10 @@ class Orchestrator:
                     f"{shlex.join(list(live_child.get('command', [])))}"
                 )
             previous = _strict_json(self.state_path, "orchestration state")
-            if previous.get("component") != COMPONENT:
+            if previous.get("component") != self.component:
                 raise OrchestrationError("existing orchestration component mismatch")
+            if previous.get("lineage", "v3") != self.lineage:
+                raise OrchestrationError("existing orchestration lineage mismatch")
             previous_snapshot = previous.get("source_snapshot")
             if not isinstance(previous_snapshot, Mapping) or (
                 previous_snapshot.get("sha256") != self.source_snapshot["sha256"]
@@ -942,13 +1009,20 @@ class Orchestrator:
                 )
             self.state = {
                 "schema_version": SCHEMA_VERSION,
-                "component": COMPONENT,
+                "component": self.component,
+                "lineage": self.lineage,
                 "status": "RUNNING",
                 "created_at": _utc_now(),
                 "runner_pid": os.getpid(),
                 "host": platform.node(),
                 "project_root": str(self.args.project_root),
                 "output_root": str(self.output_root),
+                "output_identity": {
+                    "component": self.component,
+                    "lineage": self.lineage,
+                    "path": str(self.output_root),
+                },
+                "arm_configs": dict(ARM_CONFIGS_BY_LINEAGE[self.lineage]),
                 "additional_seeds": self.args.additional_seeds,
                 "source_snapshot": self.source_snapshot,
                 "input_identities": self.input_identities,
@@ -963,7 +1037,8 @@ class Orchestrator:
             self.pid_path,
             {
                 "schema_version": SCHEMA_VERSION,
-                "component": COMPONENT,
+                "component": self.component,
+                "lineage": self.lineage,
                 "status": "RUNNING",
                 "pid": os.getpid(),
                 "host": platform.node(),
@@ -1035,6 +1110,7 @@ class Orchestrator:
                 job_directory=high_directory,
                 active_process_path=self.active_process_path,
                 executor=self.executor,
+                lineage=self.lineage,
             )
             if high_receipt["status"] == "SUCCESS":
                 if not (high_directory / "final.pt").is_file() or not (
@@ -1097,6 +1173,7 @@ class Orchestrator:
             job_directory=fallback_directory,
             active_process_path=self.active_process_path,
             executor=self.executor,
+            lineage=self.lineage,
         )
         if fallback_receipt["status"] != "SUCCESS":
             raise OrchestrationError(f"{seed}/{arm}/2x4 fallback failed")
@@ -1179,6 +1256,7 @@ class Orchestrator:
             job_directory=output_directory,
             active_process_path=self.active_process_path,
             executor=self.executor,
+            lineage=self.lineage,
         )
         if receipt["status"] != "SUCCESS" or not metrics_path.is_file():
             raise OrchestrationError(f"{seed}/{arm} evaluation failed or lacks metrics.json")
@@ -1245,7 +1323,15 @@ class Orchestrator:
                 seeds[str(seed)] = arms
         payload = {
             "schema_version": SCHEMA_VERSION,
+            # Stable schema component consumed by decide_v3_conditioning.py.
             "component": DECISION_INPUT_COMPONENT,
+            "lineage": self.lineage,
+            "lineage_component": self.components["decision_inputs"],
+            "output_identity": {
+                "component": self.component,
+                "lineage": self.lineage,
+                "path": str(self.output_root),
+            },
             "expected_counts": {
                 "stage_a_records": STAGE_A_RECORDS,
                 "stage_b_windows": STAGE_B_RECORDS,
@@ -1274,11 +1360,22 @@ class Orchestrator:
     def _decide(self) -> Mapping[str, Any]:
         self._assert_source_unchanged()
         manifest = self._write_decision_inputs()
-        decision = decide_manifest(
-            manifest,
-            bootstrap_replicates=self.args.bootstrap_replicates,
-            bootstrap_random_seed=self.args.bootstrap_random_seed,
+        decision = dict(
+            decide_manifest(
+                manifest,
+                bootstrap_replicates=self.args.bootstrap_replicates,
+                bootstrap_random_seed=self.args.bootstrap_random_seed,
+            )
         )
+        # Keep the decision engine's stable schema component while binding its
+        # concrete experiment/output lineage explicitly.
+        decision["lineage"] = self.lineage
+        decision["lineage_component"] = self.components["decision"]
+        decision["output_identity"] = {
+            "component": self.component,
+            "lineage": self.lineage,
+            "path": str(self.output_root),
+        }
         _atomic_json(self.decision_path, decision)
         return decision
 
@@ -1290,7 +1387,8 @@ class Orchestrator:
         self._publish_state()
         receipt = {
             "schema_version": SCHEMA_VERSION,
-            "component": COMPONENT,
+            "component": self.component,
+            "lineage": self.lineage,
             "status": status,
             "finished_at": self.state["finished_at"],
             "state_path": str(self.state_path),
@@ -1298,6 +1396,11 @@ class Orchestrator:
             "source_snapshot": self.source_snapshot,
             "input_identities": self.input_identities,
             "execution_contract": self.execution_contract,
+            "output_identity": {
+                "component": self.component,
+                "lineage": self.lineage,
+                "path": str(self.output_root),
+            },
             "completed_seeds": self.state.get("completed_seeds", []),
             "decision_path": str(self.decision_path) if decision is not None else None,
             "decision_sha256": (
@@ -1320,7 +1423,8 @@ class Orchestrator:
             self.pid_path,
             {
                 "schema_version": SCHEMA_VERSION,
-                "component": COMPONENT,
+                "component": self.component,
+                "lineage": self.lineage,
                 "status": status,
                 "pid": os.getpid(),
                 "host": platform.node(),
@@ -1362,7 +1466,8 @@ class Orchestrator:
                 self.pid_path,
                 {
                     "schema_version": SCHEMA_VERSION,
-                    "component": COMPONENT,
+                    "component": self.component,
+                    "lineage": self.lineage,
                     "status": "FAILED",
                     "pid": os.getpid(),
                     "finished_at": self.state["finished_at"],
@@ -1381,7 +1486,7 @@ def _exclusive_lock(output_root: Path) -> Any:
             fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError as exc:
             raise OrchestrationError(
-                f"another v3 orchestrator holds {lock_path}"
+                f"another experiment orchestrator holds {lock_path}"
             ) from exc
         yield
 
@@ -1423,6 +1528,12 @@ def run_orchestration(
 def build_parser() -> argparse.ArgumentParser:
     project_root = Path(__file__).resolve().parents[1]
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--lineage",
+        choices=tuple(ARM_CONFIGS_BY_LINEAGE),
+        default="v3",
+        help="experiment/config lineage; defaults to the immutable v3 recipe",
+    )
     parser.add_argument("--project-root", type=Path, default=project_root)
     parser.add_argument("--python", default=sys.executable)
     parser.add_argument("--output-root", type=Path, required=True)
@@ -1486,6 +1597,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         json.dumps(
             {
                 "status": "DRY_RUN" if decision is None else "COMPLETE",
+                "lineage": _lineage_name(args),
                 "output_root": str(args.output_root),
                 "decision": None if decision is None else decision["decision"],
             },
@@ -1502,6 +1614,7 @@ if __name__ == "__main__":
 
 
 __all__ = [
+    "ARM_CONFIGS_BY_LINEAGE",
     "ARM_ORDER",
     "CUDA_OOM_PATTERN",
     "OrchestrationError",

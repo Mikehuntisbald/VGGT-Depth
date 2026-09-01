@@ -1,0 +1,29 @@
+experiment: ffs_omega_tsr_spatial_x2_v3_1
+defaults_from: configs/mvp_x2_v3.yaml
+
+# V3.1 is a distinct checkpoint lineage.  Its LR observations are generated
+# by interpolate(..., align_corners=False), so every learned ray and temporal
+# transport must use the corresponding half-pixel camera convention.
+calibration_conditioning_v3:
+  pixel_center_contract: align_corners_false_half_pixel_v3_1
+
+# Metric ownership is enforced at the actual LR FFS observation centres.
+# Bilinear HR interpolation is a reconstruction baseline, not a measurement.
+measurement_ownership_v3_1:
+  enabled: true
+  protocol_version: lr_center_projection_bounded_subpixel_v3_1
+  minimum_subpixel_residual_hr_px: 1.0
+  maximum_subpixel_residual_hr_px: 8.0
+  boundary_relative_scale: 0.10
+
+# The same parameterized selector is instantiated in every A/B arm.  Stage A
+# supplies no valid temporal candidates; Stage B changes only the pre-existing
+# temporal-pose conditioning switch between B0 and B1.
+temporal_candidate_fusion_v3_1:
+  enabled: true
+  protocol_version: current_conditioned_age_phase_diverse_v3_1
+  per_age_quota: 2
+  surface_depth_gap_m: 0.05
+  surface_relative_depth_gap: 0.05
+  phase_redundancy_sigma_grid_px: 0.125
+  phase_redundancy_penalty: 0.25

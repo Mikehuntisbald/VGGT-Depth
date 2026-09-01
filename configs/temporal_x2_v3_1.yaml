@@ -1,0 +1,19 @@
+experiment: ffs_omega_tsr_temporal_x2_v3_1
+defaults_from: configs/mvp_x2_v3_1.yaml
+
+data:
+  sequence_length: 3
+  vggt_context_pairs: 5
+
+model:
+  use_history: true
+  use_vggt_pose: true
+  use_registers_in_model: false
+  epipolar_refinement: false
+
+train:
+  stage: temporal
+  steps: 15000
+  init_from_stage: spatial
+  history_detach: true
+  compile_model: false
