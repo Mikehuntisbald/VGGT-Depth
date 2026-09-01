@@ -35,6 +35,14 @@ _LEGACY_SAFE_DATA_V3_DEFAULTS = {
     "calibration_sidecar_path": None,
     "derived_contract": "legacy_v1",
     "calibration_sidecar_lineage": None,
+    # Added for Spring's explicit GT-vs-VGGT pose ablation.  Absent in old
+    # checkpoints means the historical VGGT transport path.
+    "temporal_pose_source": "vggt",
+}
+_LEGACY_SAFE_MODEL_DEFAULTS = {
+    # Added for Spring S2/S3/S4 depth-prior ablations.  Absent means the
+    # historical VGGT-depth input path.
+    "use_vggt_depth": True,
 }
 
 
@@ -96,6 +104,11 @@ def _resume_compatibility_fingerprint(config: Mapping[str, Any]) -> str:
         for name, value in _LEGACY_SAFE_DATA_V3_DEFAULTS.items():
             if name not in data:
                 data[name] = value
+    model = compatible.get("model")
+    if legacy_safe and isinstance(model, dict):
+        for name, value in _LEGACY_SAFE_MODEL_DEFAULTS.items():
+            if name not in model:
+                model[name] = value
     return json.dumps(
         compatible,
         sort_keys=True,
