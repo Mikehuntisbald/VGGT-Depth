@@ -197,6 +197,169 @@ def _metric_rate(event: Tensor, mask: Tensor) -> MetricResult:
     return MetricResult(numerator / count, numerator, count, True)
 
 
+CORRESPONDENCE_HEALTH_METHODS = (
+    "T3_VGGT_base",
+    "T3_VGGT_epipolar",
+)
+CORRESPONDENCE_HEALTH_DOMAINS = (
+    "all_pixels",
+    "candidate_any_valid",
+    "teacher_trusted",
+    "candidate_boundary_band",
+)
+CORRESPONDENCE_HEALTH_COUNT_FIELDS = (
+    "domain_pixel_count",
+    "finite_count",
+    "nonfinite_count",
+    "in_bounds_count",
+    "oob_count",
+    "left_oob_count",
+    "right_oob_count",
+)
+
+
+def _correspondence_health_counts(
+    disparity_hr_px: Tensor,
+    domain_mask: Tensor,
+) -> dict[str, int]:
+    """Count finite and horizontal OOB correspondences on one fixed domain."""
+
+    if not isinstance(disparity_hr_px, Tensor) or (
+        disparity_hr_px.ndim != 4 or disparity_hr_px.shape[1] != 1
+    ):
+        raise ValueError("disparity_hr_px must have shape [B,1,H,W]")
+    if not disparity_hr_px.is_floating_point():
+        raise TypeError("disparity_hr_px must be floating point")
+    if not isinstance(domain_mask, Tensor) or domain_mask.shape != disparity_hr_px.shape:
+        raise ValueError("domain_mask must match disparity_hr_px")
+    domain = domain_mask.to(dtype=torch.bool)
+    width = disparity_hr_px.shape[-1]
+    column = torch.arange(
+        width,
+        dtype=disparity_hr_px.dtype,
+        device=disparity_hr_px.device,
+    ).view(1, 1, 1, width)
+    x_right = column - disparity_hr_px
+    finite = domain & torch.isfinite(x_right)
+    left_oob = finite & (x_right < 0.0)
+    right_oob = finite & (x_right > float(width - 1))
+    oob = left_oob | right_oob
+    in_bounds = finite & ~oob
+    counts = {
+        "domain_pixel_count": int(domain.sum().item()),
+        "finite_count": int(finite.sum().item()),
+        "nonfinite_count": int((domain & ~torch.isfinite(x_right)).sum().item()),
+        "in_bounds_count": int(in_bounds.sum().item()),
+        "oob_count": int(oob.sum().item()),
+        "left_oob_count": int(left_oob.sum().item()),
+        "right_oob_count": int(right_oob.sum().item()),
+    }
+    if counts["domain_pixel_count"] != (
+        counts["finite_count"] + counts["nonfinite_count"]
+    ) or counts["finite_count"] != (
+        counts["in_bounds_count"] + counts["oob_count"]
+    ) or counts["oob_count"] != (
+        counts["left_oob_count"] + counts["right_oob_count"]
+    ):
+        raise RuntimeError("horizontal correspondence health counts do not partition")
+    return counts
+
+
+def correspondence_geometry_batch_counts(
+    base_disparity_hr_px: Tensor,
+    refined_disparity_hr_px: Tensor,
+    candidate_valid_mask: Tensor,
+    teacher_trusted_mask: Tensor,
+) -> dict[str, dict[str, dict[str, int]]]:
+    """Return diagnostic-only ``x_right=u-d`` counts on four fixed domains."""
+
+    if refined_disparity_hr_px.shape != base_disparity_hr_px.shape:
+        raise ValueError("refined disparity must match base disparity")
+    if not isinstance(candidate_valid_mask, Tensor) or (
+        candidate_valid_mask.ndim != 4
+        or candidate_valid_mask.shape[0] != base_disparity_hr_px.shape[0]
+        or candidate_valid_mask.shape[-2:] != base_disparity_hr_px.shape[-2:]
+    ):
+        raise ValueError("candidate_valid_mask must have shape [B,K,H,W]")
+    if not isinstance(teacher_trusted_mask, Tensor) or (
+        teacher_trusted_mask.shape != base_disparity_hr_px.shape
+    ):
+        raise ValueError("teacher_trusted_mask must match base disparity")
+    candidate_boolean = candidate_valid_mask.to(dtype=torch.bool)
+    candidate_any = candidate_boolean.any(dim=1, keepdim=True)
+    candidate_all = candidate_boolean.all(dim=1, keepdim=True)
+    domains = {
+        "all_pixels": torch.ones_like(base_disparity_hr_px, dtype=torch.bool),
+        "candidate_any_valid": candidate_any,
+        "teacher_trusted": teacher_trusted_mask.to(dtype=torch.bool),
+        # This is the local-search transition band: at least one, but not every,
+        # delta candidate has an in-image right correspondence.
+        "candidate_boundary_band": candidate_any & ~candidate_all,
+    }
+    predictions = {
+        "T3_VGGT_base": base_disparity_hr_px,
+        "T3_VGGT_epipolar": refined_disparity_hr_px,
+    }
+    return {
+        method: {
+            domain: _correspondence_health_counts(prediction, mask)
+            for domain, mask in domains.items()
+        }
+        for method, prediction in predictions.items()
+    }
+
+
+def aggregate_correspondence_geometry_counts(
+    batches: list[dict[str, dict[str, dict[str, int]]]],
+) -> dict[str, dict[str, dict[str, int | float | bool | None]]]:
+    """Aggregate correspondence counts and derive rates over each named domain."""
+
+    totals = {
+        method: {
+            domain: {field: 0 for field in CORRESPONDENCE_HEALTH_COUNT_FIELDS}
+            for domain in CORRESPONDENCE_HEALTH_DOMAINS
+        }
+        for method in CORRESPONDENCE_HEALTH_METHODS
+    }
+    for batch in batches:
+        if set(batch) != set(CORRESPONDENCE_HEALTH_METHODS):
+            raise ValueError("correspondence batch method set is malformed")
+        for method in CORRESPONDENCE_HEALTH_METHODS:
+            if set(batch[method]) != set(CORRESPONDENCE_HEALTH_DOMAINS):
+                raise ValueError("correspondence batch domain set is malformed")
+            for domain in CORRESPONDENCE_HEALTH_DOMAINS:
+                counts = batch[method][domain]
+                if set(counts) != set(CORRESPONDENCE_HEALTH_COUNT_FIELDS):
+                    raise ValueError("correspondence batch count fields are malformed")
+                for field in CORRESPONDENCE_HEALTH_COUNT_FIELDS:
+                    value = counts[field]
+                    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+                        raise ValueError("correspondence batch count must be non-negative")
+                    totals[method][domain][field] += value
+
+    finalized: dict[str, dict[str, dict[str, int | float | bool | None]]] = {}
+    for method in CORRESPONDENCE_HEALTH_METHODS:
+        finalized[method] = {}
+        for domain in CORRESPONDENCE_HEALTH_DOMAINS:
+            counts = totals[method][domain]
+            denominator = counts["domain_pixel_count"]
+            record: dict[str, int | float | bool | None] = dict(counts)
+            record["valid"] = denominator > 0
+            for field in (
+                "finite_count",
+                "nonfinite_count",
+                "in_bounds_count",
+                "oob_count",
+                "left_oob_count",
+                "right_oob_count",
+            ):
+                record[field.removesuffix("_count") + "_rate"] = (
+                    counts[field] / denominator if denominator else None
+                )
+            finalized[method][domain] = record
+    return finalized
+
+
 def _strict_paired_outcome_rate(
     event: Tensor,
     target_domain: Tensor,
@@ -2311,6 +2474,9 @@ def run(args: argparse.Namespace) -> int:
     correction_nonzero: list[MetricResult] = []
     correction_saturated: list[MetricResult] = []
     candidate_coverage: list[MetricResult] = []
+    correspondence_geometry_batches: list[
+        dict[str, dict[str, dict[str, int]]]
+    ] = []
     output_dir = args.output.expanduser().resolve()
     if (output_dir / "metrics.json").exists() or (
         output_dir / "metrics.csv"
@@ -2417,8 +2583,15 @@ def run(args: argparse.Namespace) -> int:
             paired_accumulator.update(
                 paired_refinement_metrics(base, refined, target, trusted_target)
             )
-            candidate_valid = output.refinement.candidate_valid_mask.any(
-                dim=1, keepdim=True
+            candidate_valid_offsets = output.refinement.candidate_valid_mask
+            candidate_valid = candidate_valid_offsets.any(dim=1, keepdim=True)
+            correspondence_geometry_batches.append(
+                correspondence_geometry_batch_counts(
+                    base,
+                    refined,
+                    candidate_valid_offsets,
+                    trusted_target,
+                )
             )
             correction = output.correction_hr_px.float()
             correction_signed.update(correction, candidate_valid)
@@ -2569,6 +2742,29 @@ def run(args: argparse.Namespace) -> int:
             metadata_row_offset_stats.finalize().to_dict()
         ),
         "metadata_runtime_mismatch_is_expected": True,
+        "horizontal_correspondence_health": {
+            "role": "DIAGNOSTIC_ONLY",
+            "changes_training_mask": False,
+            "changes_accuracy_metrics": False,
+            "formula": "x_right_hr_px=u_left_hr_px-disparity_hr_px",
+            "in_bounds_definition": "finite and 0 <= x_right_hr_px <= width-1",
+            "rate_denominator": "domain_pixel_count",
+            "domains": {
+                "all_pixels": "every HR output pixel",
+                "candidate_any_valid": (
+                    "at least one local delta candidate has an in-image right sample"
+                ),
+                "teacher_trusted": (
+                    "teacher-trusted mask only; not intersected with search validity"
+                ),
+                "candidate_boundary_band": (
+                    "at least one but not all local delta candidates are valid"
+                ),
+            },
+            "methods": aggregate_correspondence_geometry_counts(
+                correspondence_geometry_batches
+            ),
+        },
     }
     full_selection = args.limit is None and selected_count == len(dataset)
     acceptance_eligible = (

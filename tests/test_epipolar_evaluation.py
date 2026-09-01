@@ -932,6 +932,85 @@ def test_metric_rows_and_visualizations_cover_base_and_refined(tmp_path: Path) -
     assert metadata["shared_disparity_display_range_hr_px"] == [5.0, 5.0]
 
 
+def test_runtime_correspondence_geometry_counts_fixed_domains_without_masking() -> None:
+    base = torch.tensor(
+        [[[[float("nan"), 2.0, 0.0, -3.0, float("inf"), 5.0]]]]
+    )
+    refined = torch.tensor([[[[0.0, 1.0, 0.0, 0.0, 0.0, 6.0]]]])
+    candidates = torch.zeros((1, 3, 1, 6), dtype=torch.bool)
+    candidates[0, 0, 0, [1, 2]] = True
+    candidates[0, 1, 0, [1, 2, 3]] = True
+    candidates[0, 2, 0, [2, 3]] = True
+    trusted = torch.zeros_like(base, dtype=torch.bool)
+    trusted[0, 0, 0, [0, 2, 5]] = True
+
+    batch = eval_epipolar.correspondence_geometry_batch_counts(
+        base,
+        refined,
+        candidates,
+        trusted,
+    )
+    result = eval_epipolar.aggregate_correspondence_geometry_counts([batch, batch])
+
+    base_all = result["T3_VGGT_base"]["all_pixels"]
+    assert base_all == {
+        "domain_pixel_count": 12,
+        "finite_count": 8,
+        "nonfinite_count": 4,
+        "in_bounds_count": 4,
+        "oob_count": 4,
+        "left_oob_count": 2,
+        "right_oob_count": 2,
+        "valid": True,
+        "finite_rate": pytest.approx(8 / 12),
+        "nonfinite_rate": pytest.approx(4 / 12),
+        "in_bounds_rate": pytest.approx(4 / 12),
+        "oob_rate": pytest.approx(4 / 12),
+        "left_oob_rate": pytest.approx(2 / 12),
+        "right_oob_rate": pytest.approx(2 / 12),
+    }
+    base_candidate = result["T3_VGGT_base"]["candidate_any_valid"]
+    assert base_candidate["domain_pixel_count"] == 6
+    assert base_candidate["oob_count"] == 4
+    assert base_candidate["oob_rate"] == pytest.approx(2 / 3)
+    base_trusted = result["T3_VGGT_base"]["teacher_trusted"]
+    assert base_trusted["domain_pixel_count"] == 6
+    assert base_trusted["nonfinite_count"] == 2
+    assert base_trusted["in_bounds_count"] == 4
+    base_boundary = result["T3_VGGT_base"]["candidate_boundary_band"]
+    assert base_boundary["domain_pixel_count"] == 4
+    assert base_boundary["oob_rate"] == 1.0
+
+    refined_all = result["T3_VGGT_epipolar"]["all_pixels"]
+    assert refined_all["finite_rate"] == 1.0
+    assert refined_all["oob_count"] == 2
+    refined_boundary = result["T3_VGGT_epipolar"]["candidate_boundary_band"]
+    assert refined_boundary["domain_pixel_count"] == 4
+    assert refined_boundary["oob_count"] == 0
+
+    # These diagnostics consume immutable prediction/domain tensors and return
+    # plain counts only; they neither mutate nor define a training/metric mask.
+    torch.testing.assert_close(
+        base,
+        torch.tensor(
+            [[[[float("nan"), 2.0, 0.0, -3.0, float("inf"), 5.0]]]]
+        ),
+        equal_nan=True,
+    )
+    assert trusted.tolist() == [[[[True, False, True, False, False, True]]]]
+
+
+def test_empty_runtime_correspondence_domains_report_null_rates() -> None:
+    empty = eval_epipolar.aggregate_correspondence_geometry_counts([])
+
+    for method in eval_epipolar.CORRESPONDENCE_HEALTH_METHODS:
+        for domain in eval_epipolar.CORRESPONDENCE_HEALTH_DOMAINS:
+            record = empty[method][domain]
+            assert record["domain_pixel_count"] == 0
+            assert record["valid"] is False
+            assert record["oob_rate"] is None
+
+
 def test_cli_requires_explicit_validation_paths_and_labels_limit_smoke() -> None:
     parser = eval_epipolar.build_parser()
     args = parser.parse_args(
