@@ -87,6 +87,19 @@ class TopKSplatResult:
             ``[B,K,C,H,W]``.  Passing an LR ConvGRU state and LR intrinsics
             therefore warps hidden state to the current LR grid.
         weighted_hidden_feature: Optional weighted feature, ``[B,C,H,W]``.
+        front_surface_mask: Optional v3.1 semantic mask ``[B,K,H,W]``.  It is
+            true for candidates in the nearest, physically visible depth
+            layer.  Legacy/v2 results leave this as ``None``.
+        context_only_mask: Optional v3.1 semantic mask ``[B,K,H,W]``.  It is
+            true for valid back-layer candidates which may provide context but
+            must not be averaged into the metric history proposal.
+        depth_layer_index: Optional v3.1 integer depth-layer identifier
+            ``[B,K,H,W]``.  The front/same-surface layer is zero and invalid
+            slots are -1.
+        age2_depth_consistent_available_mask: Optional v3.1 pre-truncation
+            audit mask ``[B,1,H,W]``.  It records where an age-2 candidate was
+            available in the front depth layer, so age-2 survival is auditable
+            rather than inferred from already-truncated candidates.
     """
 
     disparity_hr_px: Tensor
@@ -114,6 +127,10 @@ class TopKSplatResult:
     weighted_temporal_age_frames: Tensor
     warped_hidden_feature: Tensor | None
     weighted_hidden_feature: Tensor | None
+    front_surface_mask: Tensor | None = None
+    context_only_mask: Tensor | None = None
+    depth_layer_index: Tensor | None = None
+    age2_depth_consistent_available_mask: Tensor | None = None
 
     @property
     def top_k(self) -> int:
@@ -143,6 +160,33 @@ class TopKSplatResult:
             fractional_offset=self.fractional_offset_grid_px[:, 0],
             source_uv=self.source_uv_grid_px[:, 0],
         )
+
+
+@dataclass(frozen=True, slots=True)
+class TopKDiversityDiagnostics:
+    """Scalar audit metrics for a v3.1 diverse candidate set.
+
+    All values are detached scalar tensors so this helper can run on-device
+    without introducing a synchronisation point. ``unique_age_fraction`` is
+    the fraction of valid target pixels retaining more than one temporal age.
+    ``age2_survival_rate`` uses the *pre-truncation, front-layer available*
+    population as its denominator. Phase variance is circular variance on the
+    unit sampling cell (averaged over u/v), and entropy is reported in nats.
+    EPE fields are ``None`` unless a teacher/GT disparity is supplied.
+    """
+
+    valid_target_count: Tensor
+    unique_age_fraction: Tensor
+    age2_survival_rate: Tensor
+    fractional_phase_variance: Tensor
+    topk_weight_entropy: Tensor
+    candidate_depth_spread_m: Tensor
+    rank0_disparity_epe_hr_px: Tensor | None
+    weighted_disparity_epe_hr_px: Tensor | None
+    weighted_minus_rank0_epe_hr_px: Tensor | None
+
+
+TOPK_DIVERSITY_V31_CONTRACT = "age_phase_diverse_front_surface_v3_1"
 
 
 def _optional_mask(
@@ -925,6 +969,221 @@ def _check_merge_result_shapes(results: Sequence[TopKSplatResult], top_k: int) -
             )
 
 
+def _union_depth_layers(
+    depth_m: Tensor,
+    valid_mask: Tensor,
+    *,
+    absolute_gap_m: float,
+    relative_gap: float,
+) -> Tensor:
+    """Assign deterministic front-to-back layer ids to a candidate union."""
+
+    sortable = torch.where(valid_mask, depth_m, torch.full_like(depth_m, torch.inf))
+    order = torch.argsort(sortable, dim=1, stable=True)
+    sorted_depth = torch.gather(depth_m, 1, order)
+    sorted_valid = torch.gather(valid_mask, 1, order)
+    sorted_layer = torch.full_like(sorted_valid, -1, dtype=torch.long)
+    first_valid = sorted_valid[:, :1]
+    sorted_layer[:, :1] = torch.where(
+        first_valid,
+        torch.zeros_like(sorted_layer[:, :1]),
+        torch.full_like(sorted_layer[:, :1], -1),
+    )
+    # Compare against the anchor depth of the current layer, not merely the
+    # previous candidate.  This prevents single-link chaining (1.00, 1.04,
+    # 1.08, ...) from incorrectly turning an arbitrarily thick slab into the
+    # metric front surface.
+    layer_anchor = sorted_depth[:, :1]
+    for rank in range(1, depth_m.shape[1]):
+        current = sorted_depth[:, rank : rank + 1]
+        current_valid = sorted_valid[:, rank : rank + 1]
+        threshold = torch.maximum(
+            torch.full_like(layer_anchor, absolute_gap_m),
+            layer_anchor.abs() * relative_gap,
+        )
+        starts_new_layer = (
+            current_valid
+            & first_valid
+            & ((current - layer_anchor) > threshold)
+        )
+        sorted_layer[:, rank : rank + 1] = torch.where(
+            current_valid,
+            sorted_layer[:, rank - 1 : rank]
+            + starts_new_layer.to(dtype=torch.long),
+            torch.full_like(sorted_layer[:, rank : rank + 1], -1),
+        )
+        layer_anchor = torch.where(starts_new_layer, current, layer_anchor)
+    sorted_layer = torch.where(
+        sorted_valid, sorted_layer, torch.full_like(sorted_layer, -1)
+    )
+    layer = torch.full_like(sorted_layer, -1)
+    layer.scatter_(1, order, sorted_layer)
+    return layer
+
+
+def _phase_diverse_union_order(
+    *,
+    union_valid: Tensor,
+    union_depth_m: Tensor,
+    union_fractional_offset_grid_px: Tensor,
+    union_temporal_age_frames: Tensor,
+    union_sequence_index: Tensor,
+    sequence_count: int,
+    depth_layer_index: Tensor,
+    top_k: int,
+    per_age_quota: int,
+    phase_redundancy_sigma_grid_px: float,
+    phase_redundancy_penalty: float,
+    surface_absolute_gap_m: float,
+    surface_relative_gap: float,
+) -> tuple[Tensor, Tensor]:
+    """Greedily retain depth-safe, age-balanced, phase-diverse candidates.
+
+    The globally nearest candidate is selected first for every pixel.  Later
+    slots obey a per-source-age quota.  If an age-2 candidate exists in depth
+    layer zero, it is forced into the first available slot.  Within the
+    nearest eligible depth layer, lower score favours both small depth delta
+    and a phase which is not redundant with already selected samples.
+    """
+
+    batch, candidates, height, width = union_valid.shape
+    device = union_valid.device
+    sortable_depth = torch.where(
+        union_valid,
+        union_depth_m,
+        torch.full_like(union_depth_m, torch.inf),
+    )
+    global_front_depth = sortable_depth.amin(dim=1, keepdim=True)
+    age2_front_available = (
+        union_valid
+        & (depth_layer_index == 0)
+        & torch.isclose(
+            union_temporal_age_frames,
+            torch.full_like(union_temporal_age_frames, 2.0),
+            rtol=0.0,
+            atol=1e-4,
+        )
+    ).any(dim=1, keepdim=True)
+
+    canonical_phase = torch.remainder(union_fractional_offset_grid_px, 1.0)
+    chosen = torch.zeros_like(union_valid)
+    selected = torch.full(
+        (batch, top_k, height, width), -1, dtype=torch.long, device=device
+    )
+    def quota_eligible() -> Tensor:
+        result = torch.zeros_like(union_valid)
+        for sequence_index in range(sequence_count):
+            sequence_mask = union_sequence_index == sequence_index
+            already_selected = (chosen & sequence_mask).sum(dim=1, keepdim=True)
+            result |= sequence_mask & (already_selected < per_age_quota)
+        return result
+
+    def candidate_score(eligible: Tensor, selected_slots: int) -> Tensor:
+        large_layer = torch.full_like(depth_layer_index, candidates + 1)
+        eligible_layer = torch.where(eligible, depth_layer_index, large_layer)
+        nearest_layer = eligible_layer.amin(dim=1, keepdim=True)
+        same_nearest_layer = eligible & (depth_layer_index == nearest_layer)
+
+        # Fractional offsets differing by an integer are the same sampling
+        # phase.  Toroidal distance on [0,1)^2 therefore avoids rewarding the
+        # two bilinear footprints of one projected source point as diversity.
+        minimum_phase_distance_sq = torch.full_like(union_depth_m, 0.5)
+        for slot in range(selected_slots):
+            slot_index = selected[:, slot : slot + 1]
+            slot_valid = slot_index >= 0
+            safe_slot = slot_index.clamp_min(0)
+            slot_phase = torch.gather(
+                canonical_phase,
+                1,
+                safe_slot.unsqueeze(2).expand(-1, -1, 2, -1, -1),
+            )
+            delta = (canonical_phase - slot_phase).abs()
+            delta = torch.minimum(delta, 1.0 - delta)
+            distance_sq = delta.square().sum(dim=2)
+            minimum_phase_distance_sq = torch.where(
+                slot_valid,
+                torch.minimum(minimum_phase_distance_sq, distance_sq),
+                minimum_phase_distance_sq,
+            )
+
+        front_depth = torch.where(
+            torch.isfinite(global_front_depth),
+            global_front_depth,
+            torch.zeros_like(global_front_depth),
+        )
+        surface_scale = torch.maximum(
+            torch.full_like(front_depth, surface_absolute_gap_m),
+            front_depth.abs() * surface_relative_gap,
+        ).clamp_min(torch.finfo(union_depth_m.dtype).eps)
+        relative_depth_score = (
+            (union_depth_m - front_depth).clamp_min(0.0) / surface_scale
+        )
+        redundancy = torch.exp(
+            -minimum_phase_distance_sq
+            / (2.0 * phase_redundancy_sigma_grid_px**2)
+        )
+        score = relative_depth_score + phase_redundancy_penalty * redundancy
+        return torch.where(
+            same_nearest_layer,
+            score,
+            torch.full_like(score, torch.inf),
+        )
+
+    for slot in range(top_k):
+        eligible = union_valid & ~chosen & quota_eligible()
+        selected_age2 = (
+            chosen
+            & torch.isclose(
+                union_temporal_age_frames,
+                torch.full_like(union_temporal_age_frames, 2.0),
+                rtol=0.0,
+                atol=1e-4,
+            )
+        ).any(dim=1, keepdim=True)
+        force_age2 = age2_front_available & ~selected_age2
+        age2_eligible = eligible & (depth_layer_index == 0) & torch.isclose(
+            union_temporal_age_frames,
+            torch.full_like(union_temporal_age_frames, 2.0),
+            rtol=0.0,
+            atol=1e-4,
+        )
+        force_age2 &= age2_eligible.any(dim=1, keepdim=True)
+
+        if slot == 0:
+            # The physical front winner is immutable; diversity starts at the
+            # second slot even when the front candidate is not age 2.
+            score = sortable_depth
+        else:
+            normal_score = candidate_score(eligible, slot)
+            age2_score = candidate_score(age2_eligible, slot)
+            score = torch.where(force_age2, age2_score, normal_score)
+        has_choice = torch.isfinite(score).any(dim=1, keepdim=True)
+        chosen_index = torch.argmin(score, dim=1, keepdim=True)
+        chosen_index = torch.where(
+            has_choice, chosen_index, torch.full_like(chosen_index, -1)
+        )
+        selected[:, slot : slot + 1] = chosen_index
+        safe_index = chosen_index.clamp_min(0)
+        newly_chosen = torch.zeros_like(chosen)
+        newly_chosen.scatter_(
+            1,
+            safe_index,
+            has_choice,
+        )
+        chosen |= newly_chosen
+
+    # Selection is diversity-aware, but the public candidate order remains
+    # strictly front-to-back. Rank 0 is therefore the physical z-buffer winner.
+    safe_selected = selected.clamp_min(0)
+    selected_depth = torch.gather(union_depth_m, 1, safe_selected)
+    selected_depth = torch.where(
+        selected >= 0, selected_depth, torch.full_like(selected_depth, torch.inf)
+    )
+    reorder = torch.argsort(selected_depth, dim=1, stable=True)
+    selected = torch.gather(selected, 1, reorder)
+    return selected, age2_front_available
+
+
 def merge_topk_splat_results(
     results: Sequence[TopKSplatResult],
     *,
@@ -932,6 +1191,12 @@ def merge_topk_splat_results(
     depth_temperature_m: float = 0.25,
     age_temperature_frames: float = 3.0,
     source_collision_penalty: float = 0.5,
+    selection_contract: str = "global_depth_v2",
+    per_age_quota: int = 2,
+    surface_depth_gap_m: float = 0.05,
+    surface_relative_depth_gap: float = 0.05,
+    phase_redundancy_sigma_grid_px: float = 0.125,
+    phase_redundancy_penalty: float = 0.25,
 ) -> TopKSplatResult:
     """Merge independently splatted history ages into one target-grid top-K.
 
@@ -942,6 +1207,14 @@ def merge_topk_splat_results(
     local top K.  Candidate ordering is stable by
     ``(current depth, result input order, source pixel index)``.
 
+    ``selection_contract=\"global_depth_v2\"`` is the exact historical path.
+    The opt-in :data:`TOPK_DIVERSITY_V31_CONTRACT` path first keeps at most
+    ``per_age_quota`` candidates from each input age, guarantees one
+    front-layer age-2 candidate when available, and uses canonical fractional
+    phase as a redundancy penalty within each depth layer.  It never displaces
+    the physical global front winner. Back-layer candidates remain available
+    as context but receive zero metric-proposal weight.
+
     Geometry/index tensors stay detached because each input splat detached
     them.  If candidate hidden features require gradients, the gather and
     weighted sum performed here preserve those gradients.
@@ -949,6 +1222,11 @@ def merge_topk_splat_results(
 
     if isinstance(top_k, bool) or not isinstance(top_k, int) or top_k <= 0:
         raise ValueError("top_k must be a positive integer")
+    if selection_contract not in {"global_depth_v2", TOPK_DIVERSITY_V31_CONTRACT}:
+        raise ValueError(
+            "selection_contract must be global_depth_v2 or "
+            f"{TOPK_DIVERSITY_V31_CONTRACT}"
+        )
     depth_temperature = _positive_finite_scalar(
         depth_temperature_m, "depth_temperature_m"
     )
@@ -963,7 +1241,34 @@ def merge_topk_splat_results(
     ):
         raise ValueError("source_collision_penalty must be finite and in [0,1]")
     collision_penalty = float(source_collision_penalty)
-    _check_merge_result_shapes(results, top_k)
+    diversity_v31 = selection_contract == TOPK_DIVERSITY_V31_CONTRACT
+    if diversity_v31:
+        if len(results) > 1 and top_k < 2:
+            raise ValueError("v3.1 multi-age merge requires top_k >= 2")
+        if (
+            isinstance(per_age_quota, bool)
+            or not isinstance(per_age_quota, int)
+            or per_age_quota <= 0
+        ):
+            raise ValueError("per_age_quota must be a positive integer")
+        if per_age_quota > max(1, top_k // 2):
+            raise ValueError("v3.1 per_age_quota must not exceed floor(top_k/2)")
+        for name, value in (
+            ("surface_depth_gap_m", surface_depth_gap_m),
+            ("surface_relative_depth_gap", surface_relative_depth_gap),
+            ("phase_redundancy_sigma_grid_px", phase_redundancy_sigma_grid_px),
+        ):
+            _positive_finite_scalar(value, name)
+        if (
+            isinstance(phase_redundancy_penalty, bool)
+            or not isinstance(phase_redundancy_penalty, Real)
+            or not torch.isfinite(torch.tensor(float(phase_redundancy_penalty)))
+            or float(phase_redundancy_penalty) < 0
+        ):
+            raise ValueError("phase_redundancy_penalty must be finite and >= 0")
+        _check_merge_result_shapes(results, per_age_quota)
+    else:
+        _check_merge_result_shapes(results, top_k)
 
     first = results[0]
     batch, _, height, width = first.disparity_hr_px.shape
@@ -979,26 +1284,85 @@ def merge_topk_splat_results(
 
     union_valid = cat("valid_mask")
     union_depth = cat("depth_m").to(dtype=compute_dtype)
-    sortable_depth = torch.where(
-        union_valid,
-        union_depth,
-        torch.full_like(union_depth, torch.inf),
+    union_sequence_index = torch.cat(
+        [
+            torch.where(
+                result.valid_mask,
+                torch.full_like(result.source_linear_index, result_index),
+                torch.full_like(result.source_linear_index, -1),
+            )
+            for result_index, result in enumerate(results)
+        ],
+        dim=1,
     )
-    union_order = torch.argsort(sortable_depth, dim=1, stable=True)[:, :top_k]
+    union_depth_layer: Tensor | None = None
+    age2_front_available: Tensor | None = None
+    if diversity_v31:
+        union_depth_layer = _union_depth_layers(
+            union_depth,
+            union_valid,
+            absolute_gap_m=float(surface_depth_gap_m),
+            relative_gap=float(surface_relative_depth_gap),
+        )
+        union_order, age2_front_available = _phase_diverse_union_order(
+            union_valid=union_valid,
+            union_depth_m=union_depth,
+            union_fractional_offset_grid_px=cat(
+                "fractional_offset_grid_px"
+            ).to(dtype=compute_dtype),
+            union_temporal_age_frames=cat("temporal_age_frames").to(
+                dtype=compute_dtype
+            ),
+            union_sequence_index=union_sequence_index,
+            sequence_count=len(results),
+            depth_layer_index=union_depth_layer,
+            top_k=top_k,
+            per_age_quota=per_age_quota,
+            phase_redundancy_sigma_grid_px=float(
+                phase_redundancy_sigma_grid_px
+            ),
+            phase_redundancy_penalty=float(phase_redundancy_penalty),
+            surface_absolute_gap_m=float(surface_depth_gap_m),
+            surface_relative_gap=float(surface_relative_depth_gap),
+        )
+        selected_slot_valid = union_order >= 0
+        safe_union_order = union_order.clamp_min(0)
+    else:
+        sortable_depth = torch.where(
+            union_valid,
+            union_depth,
+            torch.full_like(union_depth, torch.inf),
+        )
+        safe_union_order = torch.argsort(sortable_depth, dim=1, stable=True)[
+            :, :top_k
+        ]
+        selected_slot_valid = torch.ones_like(safe_union_order, dtype=torch.bool)
 
     def gather_scalar(field: str) -> Tensor:
         union = cat(field)
-        return torch.gather(union, 1, union_order)
+        gathered = torch.gather(union, 1, safe_union_order)
+        return torch.where(
+            selected_slot_valid,
+            gathered,
+            torch.zeros_like(gathered),
+        )
 
     def gather_vector(field: str) -> Tensor:
         union = cat(field)
-        return torch.gather(
+        gathered = torch.gather(
             union,
             1,
-            union_order.unsqueeze(2).expand(-1, -1, union.shape[2], -1, -1),
+            safe_union_order.unsqueeze(2).expand(
+                -1, -1, union.shape[2], -1, -1
+            ),
+        )
+        return torch.where(
+            selected_slot_valid.unsqueeze(2),
+            gathered,
+            torch.zeros_like(gathered),
         )
 
-    merged_valid = gather_scalar("valid_mask")
+    merged_valid = gather_scalar("valid_mask") & selected_slot_valid
     merged_disparity = gather_scalar("disparity_hr_px")
     merged_depth = gather_scalar("depth_m")
     merged_confidence = gather_scalar("confidence")
@@ -1011,23 +1375,34 @@ def merge_topk_splat_results(
     merged_source_uv = gather_vector("source_uv_grid_px")
     merged_source_linear = gather_scalar("source_linear_index")
 
-    union_sequence_index = torch.cat(
-        [
-            torch.where(
-                result.valid_mask,
-                torch.full_like(result.source_linear_index, result_index),
-                torch.full_like(result.source_linear_index, -1),
-            )
-            for result_index, result in enumerate(results)
-        ],
-        dim=1,
+    merged_sequence_index = torch.gather(
+        union_sequence_index, 1, safe_union_order
     )
-    merged_sequence_index = torch.gather(union_sequence_index, 1, union_order)
     merged_sequence_index = torch.where(
         merged_valid,
         merged_sequence_index,
         torch.full_like(merged_sequence_index, -1),
     )
+    merged_source_linear = torch.where(
+        merged_valid,
+        merged_source_linear,
+        torch.full_like(merged_source_linear, -1),
+    )
+
+    merged_depth_layer: Tensor | None = None
+    merged_front_surface: Tensor | None = None
+    merged_context_only: Tensor | None = None
+    if union_depth_layer is not None:
+        merged_depth_layer = torch.gather(
+            union_depth_layer, 1, safe_union_order
+        )
+        merged_depth_layer = torch.where(
+            merged_valid,
+            merged_depth_layer,
+            torch.full_like(merged_depth_layer, -1),
+        )
+        merged_front_surface = merged_valid & (merged_depth_layer == 0)
+        merged_context_only = merged_valid & (merged_depth_layer > 0)
 
     total_candidate_count = torch.stack(
         [result.candidate_count for result in results], dim=0
@@ -1052,8 +1427,13 @@ def merge_topk_splat_results(
         torch.full_like(confidence_factor, collision_penalty),
         torch.ones_like(confidence_factor),
     )
+    metric_weight_mask = (
+        merged_valid
+        if merged_front_surface is None
+        else merged_front_surface
+    )
     unnormalised = torch.where(
-        merged_valid & merged_source_visibility,
+        metric_weight_mask & merged_source_visibility,
         confidence_factor
         * merged_footprint.to(dtype=compute_dtype)
         * depth_factor
@@ -1101,9 +1481,14 @@ def merge_topk_splat_results(
         merged_hidden = torch.gather(
             union_hidden,
             1,
-            union_order.unsqueeze(2).expand(
+            safe_union_order.unsqueeze(2).expand(
                 -1, -1, union_hidden.shape[2], -1, -1
             ),
+        )
+        merged_hidden = torch.where(
+            selected_slot_valid.unsqueeze(2),
+            merged_hidden,
+            torch.zeros_like(merged_hidden),
         )
         weighted_hidden = (
             weights.unsqueeze(2) * merged_hidden.to(dtype=compute_dtype)
@@ -1135,6 +1520,238 @@ def merge_topk_splat_results(
         weighted_temporal_age_frames=weighted_age,
         warped_hidden_feature=merged_hidden,
         weighted_hidden_feature=weighted_hidden,
+        front_surface_mask=merged_front_surface,
+        context_only_mask=merged_context_only,
+        depth_layer_index=merged_depth_layer,
+        age2_depth_consistent_available_mask=age2_front_available,
+    )
+
+
+def merge_topk_splat_results_v31(
+    results: Sequence[TopKSplatResult],
+    *,
+    top_k: int = 4,
+    per_age_quota: int = 2,
+    depth_temperature_m: float = 0.25,
+    age_temperature_frames: float = 3.0,
+    source_collision_penalty: float = 0.5,
+    surface_depth_gap_m: float = 0.05,
+    surface_relative_depth_gap: float = 0.05,
+    phase_redundancy_sigma_grid_px: float = 0.125,
+    phase_redundancy_penalty: float = 0.25,
+) -> TopKSplatResult:
+    """Explicit v3.1 age/phase-diverse merge without altering v2 defaults."""
+
+    return merge_topk_splat_results(
+        results,
+        top_k=top_k,
+        depth_temperature_m=depth_temperature_m,
+        age_temperature_frames=age_temperature_frames,
+        source_collision_penalty=source_collision_penalty,
+        selection_contract=TOPK_DIVERSITY_V31_CONTRACT,
+        per_age_quota=per_age_quota,
+        surface_depth_gap_m=surface_depth_gap_m,
+        surface_relative_depth_gap=surface_relative_depth_gap,
+        phase_redundancy_sigma_grid_px=phase_redundancy_sigma_grid_px,
+        phase_redundancy_penalty=phase_redundancy_penalty,
+    )
+
+
+def topk_diversity_diagnostics(
+    result: TopKSplatResult,
+    *,
+    reference_disparity_hr_px: Tensor | None = None,
+    reference_valid_mask: Tensor | None = None,
+) -> TopKDiversityDiagnostics:
+    """Compute fail-closed v3.1 diversity and proposal diagnostics.
+
+    Args:
+        result: Output of :func:`merge_topk_splat_results_v31`.
+        reference_disparity_hr_px: Optional teacher/GT disparity
+            ``[B,1,H,W]`` in HR pixels.
+        reference_valid_mask: Optional strict reference mask ``[B,1,H,W]``.
+
+    Empty populations return exact zero rather than NaN.  Back-layer context
+    contributes to phase/depth diversity statistics but never to the weighted
+    metric proposal or its EPE.
+    """
+
+    if not isinstance(result, TopKSplatResult):
+        raise TypeError("result must be a TopKSplatResult")
+    if (
+        result.front_surface_mask is None
+        or result.context_only_mask is None
+        or result.depth_layer_index is None
+        or result.age2_depth_consistent_available_mask is None
+    ):
+        raise ValueError("diversity diagnostics require a v3.1 merged result")
+    valid = result.valid_mask.detach().to(dtype=torch.bool)
+    valid_target = valid.any(dim=1, keepdim=True)
+    scalar_dtype = torch.float32
+    device = valid.device
+
+    def safe_mean(values: Tensor, mask: Tensor) -> Tensor:
+        finite_mask = mask & torch.isfinite(values)
+        numerator = torch.where(
+            finite_mask, values, torch.zeros_like(values)
+        ).sum(dtype=scalar_dtype)
+        denominator = finite_mask.sum().to(dtype=scalar_dtype)
+        return torch.where(
+            denominator > 0,
+            numerator / denominator.clamp_min(1.0),
+            torch.zeros((), dtype=scalar_dtype, device=device),
+        ).detach()
+
+    unique_count = torch.zeros_like(valid_target, dtype=torch.long)
+    for rank in range(result.top_k):
+        current_valid = valid[:, rank : rank + 1]
+        current_sequence = result.source_sequence_index[:, rank : rank + 1]
+        seen = torch.zeros_like(current_valid)
+        for previous_rank in range(rank):
+            seen |= (
+                valid[:, previous_rank : previous_rank + 1]
+                & (result.source_sequence_index[:, previous_rank : previous_rank + 1]
+                   == current_sequence)
+            )
+        unique_count += (current_valid & ~seen).to(dtype=torch.long)
+    unique_age_fraction = safe_mean(
+        (unique_count > 1).to(dtype=scalar_dtype), valid_target
+    )
+
+    age2_retained = (
+        result.front_surface_mask
+        & torch.isclose(
+            result.temporal_age_frames,
+            torch.full_like(result.temporal_age_frames, 2.0),
+            rtol=0.0,
+            atol=1e-4,
+        )
+    ).any(dim=1, keepdim=True)
+    age2_available = result.age2_depth_consistent_available_mask.to(
+        dtype=torch.bool
+    )
+    age2_survival_rate = safe_mean(
+        age2_retained.to(dtype=scalar_dtype), age2_available
+    )
+
+    # Circular sampling-cell variance treats phases -0.75 and +0.25 as
+    # identical, matching bilinear align-corners-false sampling geometry.
+    phase = torch.remainder(
+        result.fractional_offset_grid_px.detach().to(dtype=scalar_dtype), 1.0
+    )
+    uniform_weight = valid.to(dtype=scalar_dtype)
+    count = uniform_weight.sum(dim=1, keepdim=True).clamp_min(1.0)
+    angle = phase * (2.0 * torch.pi)
+    mean_cos = (
+        torch.cos(angle) * uniform_weight.unsqueeze(2)
+    ).sum(dim=1) / count
+    mean_sin = (
+        torch.sin(angle) * uniform_weight.unsqueeze(2)
+    ).sum(dim=1) / count
+    circular_variance = 1.0 - torch.sqrt(
+        (mean_cos.square() + mean_sin.square()).clamp(0.0, 1.0)
+    )
+    phase_variance = safe_mean(
+        circular_variance,
+        valid_target.expand(-1, 2, -1, -1),
+    )
+
+    weight = torch.where(
+        valid,
+        torch.nan_to_num(
+            result.z_aware_weights.detach().to(dtype=scalar_dtype),
+            nan=0.0,
+            posinf=0.0,
+            neginf=0.0,
+        ).clamp_min(0.0),
+        torch.zeros_like(result.z_aware_weights, dtype=scalar_dtype),
+    )
+    entropy_map = -torch.where(
+        weight > 0,
+        weight * torch.log(weight.clamp_min(torch.finfo(scalar_dtype).tiny)),
+        torch.zeros_like(weight),
+    ).sum(dim=1, keepdim=True)
+    weight_entropy = safe_mean(entropy_map, result.aggregate_valid_mask)
+
+    depth = result.depth_m.detach().to(dtype=scalar_dtype)
+    minimum_depth = torch.where(
+        valid, depth, torch.full_like(depth, torch.inf)
+    ).amin(dim=1, keepdim=True)
+    maximum_depth = torch.where(
+        valid, depth, torch.full_like(depth, -torch.inf)
+    ).amax(dim=1, keepdim=True)
+    depth_spread = torch.where(
+        valid_target,
+        (maximum_depth - minimum_depth).clamp_min(0.0),
+        torch.zeros_like(minimum_depth),
+    )
+    mean_depth_spread = safe_mean(depth_spread, valid_target)
+
+    rank0_epe: Tensor | None = None
+    weighted_epe: Tensor | None = None
+    epe_delta: Tensor | None = None
+    if reference_disparity_hr_px is not None:
+        expected_shape = (
+            result.disparity_hr_px.shape[0],
+            1,
+            result.disparity_hr_px.shape[2],
+            result.disparity_hr_px.shape[3],
+        )
+        if (
+            not isinstance(reference_disparity_hr_px, Tensor)
+            or reference_disparity_hr_px.shape != expected_shape
+        ):
+            raise ValueError(
+                "reference_disparity_hr_px must have shape "
+                f"{expected_shape}"
+            )
+        if reference_disparity_hr_px.device != device:
+            raise ValueError("reference disparity must share the result device")
+        if (
+            not reference_disparity_hr_px.is_floating_point()
+            or reference_disparity_hr_px.is_complex()
+        ):
+            raise TypeError("reference disparity must be real floating-point")
+        reference = reference_disparity_hr_px.detach().to(dtype=scalar_dtype)
+        strict_reference = torch.isfinite(reference) & (reference >= 0)
+        if reference_valid_mask is not None:
+            if (
+                not isinstance(reference_valid_mask, Tensor)
+                or reference_valid_mask.shape != expected_shape
+                or reference_valid_mask.device != device
+                or reference_valid_mask.dtype != torch.bool
+            ):
+                raise ValueError(
+                    "reference_valid_mask must be bool, share device, and have "
+                    f"shape {expected_shape}"
+                )
+            strict_reference &= reference_valid_mask
+        rank0_mask = strict_reference & valid[:, :1]
+        weighted_mask = strict_reference & result.aggregate_valid_mask
+        rank0_epe = safe_mean(
+            (result.disparity_hr_px[:, :1].detach().to(dtype=scalar_dtype)
+             - reference).abs(),
+            rank0_mask,
+        )
+        weighted_epe = safe_mean(
+            (result.weighted_disparity_hr_px.detach().to(dtype=scalar_dtype)
+             - reference).abs(),
+            weighted_mask,
+        )
+        epe_delta = (weighted_epe - rank0_epe).detach()
+    elif reference_valid_mask is not None:
+        raise ValueError("reference_valid_mask requires reference disparity")
+
+    return TopKDiversityDiagnostics(
+        valid_target_count=valid_target.sum().detach(),
+        unique_age_fraction=unique_age_fraction,
+        age2_survival_rate=age2_survival_rate,
+        fractional_phase_variance=phase_variance,
+        topk_weight_entropy=weight_entropy,
+        candidate_depth_spread_m=mean_depth_spread,
+        rank0_disparity_epe_hr_px=rank0_epe,
+        weighted_disparity_epe_hr_px=weighted_epe,
+        weighted_minus_rank0_epe_hr_px=epe_delta,
     )
 
 
@@ -1143,8 +1760,12 @@ topk_z_aware_splat_v2 = topk_z_aware_splat
 
 
 __all__ = [
+    "TOPK_DIVERSITY_V31_CONTRACT",
+    "TopKDiversityDiagnostics",
     "TopKSplatResult",
     "merge_topk_splat_results",
+    "merge_topk_splat_results_v31",
+    "topk_diversity_diagnostics",
     "topk_z_aware_splat",
     "topk_z_aware_splat_v2",
 ]
