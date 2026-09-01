@@ -36,6 +36,7 @@ from .cache_dataset import (
     sha256_file,
 )
 from .crop import CropWindow, sample_aligned_crop
+from .manifest import ManifestRecord
 from .stereo_calibration import RectifiedCalibrationIndex
 from .training_dataset import (
     CachedFFSTrainingDataset,
@@ -88,6 +89,10 @@ class TemporalTrainingSample:
     * VGGT poses: ``[T,10,3,4]`` OpenCV camera-from-world metric poses.
       An entire time slice is zero when ``temporal_pose_valid_sequence`` is
       false and must not be used for history reprojection.
+    * Optional Spring/GT poses: ``[T,10,3,4]`` camera-from-world metric poses
+      assembled from the exact five causal manifest records.  These are kept
+      separate from VGGT predictions so experiments can switch pose source
+      without changing the cache lineage.
     * Intrinsics: ``[T,3,3]`` in the cropped HR coordinate system.
     """
 
@@ -115,6 +120,7 @@ class TemporalTrainingSample:
     timestamps: tuple[float, ...]
     manifest_indices: tuple[int, ...]
     identity_metadata: Mapping[str, Any]
+    gt_extrinsics_camera_from_world_sequence: Tensor | None = None
     T_right_rectified_from_left_rectified_m_sequence: Tensor | None = None
 
     @property
@@ -755,6 +761,93 @@ def _stack_optional(values: list[Tensor | None], name: str) -> Tensor | None:
     return torch.stack([value for value in values if value is not None])
 
 
+def _manifest_gt_pose(record: ManifestRecord) -> np.ndarray | None:
+    """Read one manifest GT left-camera pose, if the producer supplied one.
+
+    Spring manifests have used two field spellings while the adapter evolved;
+    accept both so old manifests remain usable.  No VGGT/cache field is ever
+    consulted here: this accessor is intentionally GT-only.
+    """
+
+    extras = record.extras
+    value = None
+    for key in (
+        "gt_extrinsics_camera_from_world",
+        "gt_pose_camera_from_world",
+        "gt_pose",
+    ):
+        if key in extras:
+            value = extras[key]
+            break
+    if value is None:
+        return None
+    try:
+        pose = np.asarray(value, dtype=np.float64)
+    except (TypeError, ValueError) as exc:
+        raise CacheMismatchError(
+            "manifest GT pose metadata is not numeric for "
+            f"{record.sequence_id}/{record.frame_id}"
+        ) from exc
+    if pose.shape != (4, 4) or not np.isfinite(pose).all():
+        raise CacheMismatchError(
+            "manifest GT pose must be finite [4,4] for "
+            f"{record.sequence_id}/{record.frame_id}"
+        )
+    if not np.allclose(pose[3], [0.0, 0.0, 0.0, 1.0], atol=1e-6, rtol=0.0):
+        raise CacheMismatchError(
+            "manifest GT pose homogeneous row is malformed for "
+            f"{record.sequence_id}/{record.frame_id}"
+        )
+    rotation = pose[:3, :3]
+    if not np.allclose(rotation.T @ rotation, np.eye(3), atol=2e-5, rtol=0.0):
+        raise CacheMismatchError(
+            "manifest GT pose rotation is not orthonormal for "
+            f"{record.sequence_id}/{record.frame_id}"
+        )
+    if not math.isclose(float(np.linalg.det(rotation)), 1.0, abs_tol=2e-5):
+        raise CacheMismatchError(
+            "manifest GT pose rotation determinant is not +1 for "
+            f"{record.sequence_id}/{record.frame_id}"
+        )
+    return pose
+
+
+def _manifest_gt_right_pose(record: ManifestRecord, left_pose: np.ndarray) -> np.ndarray:
+    """Resolve a right-camera GT pose, deriving Spring's fixed rig if needed."""
+
+    extras = record.extras
+    value = None
+    for key in (
+        "gt_extrinsics_right_camera_from_world",
+        "gt_pose_right_camera_from_world",
+    ):
+        if key in extras:
+            value = extras[key]
+            break
+    if value is not None:
+        try:
+            right = np.asarray(value, dtype=np.float64)
+        except (TypeError, ValueError) as exc:
+            raise CacheMismatchError(
+                "manifest right GT pose metadata is not numeric for "
+                f"{record.sequence_id}/{record.frame_id}"
+            ) from exc
+        if right.shape != (4, 4) or not np.isfinite(right).all():
+            raise CacheMismatchError(
+                "manifest right GT pose must be finite [4,4] for "
+                f"{record.sequence_id}/{record.frame_id}"
+            )
+        return right
+
+    # Rectified Spring cameras satisfy X_right = X_left - [B,0,0].  For a
+    # generic manifest this is still the least surprising fallback because
+    # ManifestRecord owns the physical baseline and all existing calibration
+    # code uses the same right-from-left convention.
+    transform = np.eye(4, dtype=np.float64)
+    transform[0, 3] = -float(record.baseline_m)
+    return transform @ left_pose
+
+
 class CachedTemporalTrainingDataset(Dataset[TemporalTrainingSample]):
     """Join T=3 cached FFS frames with per-time VGGT-derived geometry.
 
@@ -911,6 +1004,12 @@ class CachedTemporalTrainingDataset(Dataset[TemporalTrainingSample]):
             student_sequence_length=STUDENT_SEQUENCE_LENGTH,
             vggt_context_pairs=VGGT_CONTEXT_PAIRS,
         )
+        # Keep the exact five-record causal context for each endpoint.  Raw
+        # VGGT caches carry the same context, but GT-pose experiments must
+        # reconstruct it from the manifest without borrowing a predicted pose.
+        self._vggt_context_indices_by_endpoint = {
+            window.endpoint_index: window.vggt_indices for window in candidates
+        }
         self.windows = [
             window
             for window in candidates
@@ -1001,6 +1100,45 @@ class CachedTemporalTrainingDataset(Dataset[TemporalTrainingSample]):
         )
         crop.validate_within(height_hr, width_hr)
         return crop
+
+    def _gt_pose_context_for_endpoint(self, endpoint_index: int) -> Tensor | None:
+        """Build ``[10,3,4]`` GT stereo poses for one causal endpoint.
+
+        A Spring manifest stores one left-camera pose per frame.  The right
+        camera is the fixed rectified partner and is derived with the physical
+        baseline.  Returning ``None`` for a manifest without GT pose metadata
+        keeps legacy XD manifests backward-compatible; a partially populated
+        context is rejected by :meth:`__getitem__` below.
+        """
+
+        context_indices = self._vggt_context_indices_by_endpoint.get(endpoint_index)
+        if context_indices is None:
+            return None
+        poses: list[Tensor] = []
+        for context_index in context_indices:
+            record = self.records[context_index]
+            left_pose = _manifest_gt_pose(record)
+            if left_pose is None:
+                return None
+            right_pose = _manifest_gt_right_pose(record, left_pose)
+            poses.extend(
+                (
+                    torch.as_tensor(left_pose[:3, :4], dtype=torch.float32),
+                    torch.as_tensor(right_pose[:3, :4], dtype=torch.float32),
+                )
+            )
+        result = torch.stack(poses, dim=0).contiguous()
+        if result.shape != (VGGT_STEREO_VIEW_COUNT, 3, 4):
+            raise CacheMismatchError(
+                "manifest GT pose context must have shape [10,3,4], got "
+                f"{tuple(result.shape)}"
+            )
+        if not bool(torch.isfinite(result).all().item()):
+            raise CacheMismatchError(
+                f"manifest GT pose context contains non-finite values at index "
+                f"{endpoint_index}"
+            )
+        return result
 
     def _load_derived(
         self,
@@ -1231,6 +1369,21 @@ class CachedTemporalTrainingDataset(Dataset[TemporalTrainingSample]):
             )
         ]
         records = [self.records[item] for item in window.student_indices]
+        gt_pose_contexts = [
+            self._gt_pose_context_for_endpoint(manifest_index)
+            for manifest_index in window.student_indices
+        ]
+        if all(value is None for value in gt_pose_contexts):
+            gt_pose_sequence = None
+        elif any(value is None for value in gt_pose_contexts):
+            raise CacheMismatchError(
+                "manifest GT pose metadata is only partially available in a "
+                f"temporal window for sequence {window.sequence_id!r}"
+            )
+        else:
+            gt_pose_sequence = torch.stack(
+                [value for value in gt_pose_contexts if value is not None], dim=0
+            )
         return TemporalTrainingSample(
             rgb_hr_sequence=torch.stack([sample.rgb_hr for sample in cropped_samples]),
             observation_disparity_hr_px_sequence=torch.stack(
@@ -1308,7 +1461,9 @@ class CachedTemporalTrainingDataset(Dataset[TemporalTrainingSample]):
                     dict(sample.identity_metadata) for sample in cropped_samples
                 ],
                 "per_time_derived": [item[6] for item in derived],
+                "gt_pose_available": gt_pose_sequence is not None,
             },
+            gt_extrinsics_camera_from_world_sequence=gt_pose_sequence,
             T_right_rectified_from_left_rectified_m_sequence=_stack_optional(
                 [
                     sample.T_right_rectified_from_left_rectified_m

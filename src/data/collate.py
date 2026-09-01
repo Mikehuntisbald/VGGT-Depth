@@ -252,6 +252,9 @@ def collate_temporal_training_samples(
         "static_prior_valid_sequence": _stack_temporal_required(
             samples, "static_prior_valid_sequence"
         ),
+        "gt_extrinsics_camera_from_world_sequence": _stack_temporal_optional(
+            samples, "gt_extrinsics_camera_from_world_sequence"
+        ),
         "sequence_id": sequence_ids,
         "frame_ids": torch.tensor(frame_ids, dtype=torch.int64),
         "timestamps": torch.tensor(timestamps, dtype=torch.float64),
@@ -274,6 +277,9 @@ def collate_temporal_training_samples(
     batch["valid_vggt_sequence"] = batch["vggt_valid_mask_sequence"]
     batch["history_pose_valid_sequence"] = batch[
         "temporal_pose_valid_sequence"
+    ]
+    batch["gt_pose_sequence"] = batch[
+        "gt_extrinsics_camera_from_world_sequence"
     ]
     batch["target_disparity_hr_px_sequence"] = batch[
         "teacher_disparity_hr_px_sequence"
