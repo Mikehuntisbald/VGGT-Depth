@@ -1382,9 +1382,10 @@ def _arm_eval_command(
         # auditing cache/checkpoint lineage and reporting LIMITED status.
         if args.limit is not None:
             command.append("--allow-non-holdout-smoke")
-        # Spring's native detail/match/rigid metrics are an explicit side
-        # channel.  Keep the canonical pseudo-GT report intact while making
-        # every bounded Spring temporal arm carry the requested native fields.
+        # Keep native Spring maps/GT metrics in an explicit side-channel.  The
+        # default evaluator contract remains unchanged when this flag is
+        # omitted; bounded S1--S5 runs opt in so the composer can consume the
+        # exact detail/match/temporal/top-K fields.
         command.append("--spring-native-metrics")
     if args.limit is not None:
         command.extend(["--limit", str(args.limit)])
