@@ -42,6 +42,12 @@ def _formal_training_runtime() -> dict[str, object]:
         "bf16_supported": True,
         "autocast_enabled": True,
         "autocast_dtype": "torch.bfloat16",
+        "deterministic_algorithms_enabled": True,
+        "deterministic_algorithms_warn_only": False,
+        "cublas_workspace_config": ":4096:8",
+        "cudnn_deterministic": True,
+        "cudnn_benchmark": False,
+        "strict_determinism_eligible": True,
         "formal_cuda_bf16_eligible": True,
     }
 
@@ -188,9 +194,45 @@ def test_stage_c_checkpoint_requires_a_typed_training_runtime(
         )
 
     payload = _checkpoint(checkpoint)
+    payload["training_runtime"].pop("deterministic_algorithms_enabled")  # type: ignore[union-attr]
+    torch.save(payload, checkpoint)
+    with pytest.raises(CheckpointMismatchError, match="legacy|missing|malformed"):
+        eval_epipolar.load_stage_c_checkpoint(
+            checkpoint, evaluation_config=_config()
+        )
+
+    payload = _checkpoint(checkpoint)
     payload["training_runtime"]["formal_cuda_bf16_eligible"] = False  # type: ignore[index]
     torch.save(payload, checkpoint)
     with pytest.raises(CheckpointMismatchError, match="eligibility flag"):
+        eval_epipolar.load_stage_c_checkpoint(
+            checkpoint, evaluation_config=_config()
+        )
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("deterministic_algorithms_enabled", False),
+        ("deterministic_algorithms_warn_only", True),
+        ("cublas_workspace_config", ":16:8"),
+        ("cudnn_deterministic", False),
+        ("cudnn_benchmark", True),
+    ],
+)
+def test_stage_c_checkpoint_rejects_non_strict_determinism(
+    tmp_path: Path, field: str, value: object
+) -> None:
+    checkpoint = tmp_path / "stage_c.pt"
+    payload = _checkpoint(checkpoint)
+    runtime = payload["training_runtime"]
+    assert isinstance(runtime, dict)
+    runtime[field] = value
+    runtime["strict_determinism_eligible"] = False
+    runtime["formal_cuda_bf16_eligible"] = False
+    torch.save(payload, checkpoint)
+
+    with pytest.raises(CheckpointMismatchError, match="legacy/ineligible"):
         eval_epipolar.load_stage_c_checkpoint(
             checkpoint, evaluation_config=_config()
         )
@@ -502,6 +544,7 @@ def test_formal_crop_must_match_checkpoint_and_384x768() -> None:
 
 
 def test_cpu_execution_is_explicitly_smoke_only() -> None:
+    eval_epipolar.seed_everything(42, deterministic=True)
     train = {
         "precision": "bf16",
         "optimizer": "adamw",

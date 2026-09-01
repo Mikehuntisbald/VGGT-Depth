@@ -78,7 +78,12 @@ from train_epipolar import (  # noqa: E402
     validate_epipolar_config,
 )
 from utils.checkpoint import CheckpointMismatchError, repository_git_hash  # noqa: E402
-from utils.seed import seed_everything  # noqa: E402
+from utils.seed import (  # noqa: E402
+    STRICT_CUBLAS_WORKSPACE_CONFIG,
+    deterministic_runtime_state,
+    seed_everything,
+    strict_determinism_enabled,
+)
 from utils.visualization import (  # noqa: E402
     grayscale_to_rgb_uint8,
     save_rgb_uint8,
@@ -112,6 +117,12 @@ STAGE_C_TRAINING_RUNTIME_FIELDS = {
     "bf16_supported",
     "autocast_enabled",
     "autocast_dtype",
+    "deterministic_algorithms_enabled",
+    "deterministic_algorithms_warn_only",
+    "cublas_workspace_config",
+    "cudnn_deterministic",
+    "cudnn_benchmark",
+    "strict_determinism_eligible",
     "formal_cuda_bf16_eligible",
 }
 
@@ -493,12 +504,15 @@ def validate_formal_execution_contract(
         and evaluation_device_capability
         == recorded_values.get("device_capability")
     )
+    evaluation_determinism = deterministic_runtime_state()
+    evaluation_strict_determinism = strict_determinism_enabled()
     evaluation_runtime_eligible = bool(
         cuda_bf16
         and evaluation_cuda_12_8_or_newer
         and evaluation_blackwell
         and evaluation_rtx_5090
         and evaluation_versions_match_training
+        and evaluation_strict_determinism
     )
     eligible = (
         saved_precision == "bf16"
@@ -543,6 +557,8 @@ def validate_formal_execution_contract(
             "versions_and_device_match_training": (
                 evaluation_versions_match_training
             ),
+            **evaluation_determinism,
+            "strict_determinism_eligible": evaluation_strict_determinism,
             "eligible": evaluation_runtime_eligible,
         },
         "eligible": eligible,
@@ -592,6 +608,11 @@ def validate_stage_c_training_runtime(value: object) -> dict[str, Any]:
         "cuda_available",
         "bf16_supported",
         "autocast_enabled",
+        "deterministic_algorithms_enabled",
+        "deterministic_algorithms_warn_only",
+        "cudnn_deterministic",
+        "cudnn_benchmark",
+        "strict_determinism_eligible",
         "formal_cuda_bf16_eligible",
     )
     if any(type(value.get(name)) is not bool for name in boolean_fields):
@@ -644,12 +665,31 @@ def validate_stage_c_training_runtime(value: object) -> dict[str, Any]:
         raise CheckpointMismatchError(
             "Stage-C disabled autocast has a non-null dtype"
         )
+    cublas_workspace_config = value.get("cublas_workspace_config")
+    deterministic_eligible = bool(
+        value["deterministic_algorithms_enabled"]
+        and not value["deterministic_algorithms_warn_only"]
+        and cublas_workspace_config == STRICT_CUBLAS_WORKSPACE_CONFIG
+        and value["cudnn_deterministic"]
+        and not value["cudnn_benchmark"]
+    )
+    if value["strict_determinism_eligible"] != deterministic_eligible:
+        raise CheckpointMismatchError(
+            "Stage-C strict determinism eligibility flag is inconsistent"
+        )
+    if not deterministic_eligible:
+        raise CheckpointMismatchError(
+            "Stage-C checkpoint is legacy/ineligible: strict deterministic "
+            "algorithms, warn_only=false, CUBLAS_WORKSPACE_CONFIG=:4096:8, "
+            "and deterministic cuDNN settings are required"
+        )
     producer_eligible = bool(
         cuda_device
         and value["cuda_available"]
         and value["bf16_supported"]
         and value["autocast_enabled"]
         and autocast_dtype == "torch.bfloat16"
+        and deterministic_eligible
     )
     if value["formal_cuda_bf16_eligible"] != producer_eligible:
         raise CheckpointMismatchError(
@@ -680,6 +720,7 @@ def validate_stage_c_training_runtime(value: object) -> dict[str, Any]:
     return {
         "recorded": dict(value),
         "producer_cuda_bf16_eligible": producer_eligible,
+        "strict_determinism_eligible": deterministic_eligible,
         "cuda_12_8_or_newer": cuda_12_8_or_newer,
         "blackwell_capability": blackwell_capability,
         "rtx_5090": rtx_5090,

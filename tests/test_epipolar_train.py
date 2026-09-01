@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import copy
 import json
+import os
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -19,6 +20,7 @@ from models.epipolar_stage import FrozenTemporalEpipolarStage
 from test_temporal_training_dataset import _make_temporal_cache
 from train import build_model
 from eval import _run_temporal_endpoint_ablation
+from utils.seed import STRICT_CUBLAS_WORKSPACE_CONFIG, seed_everything
 
 
 def _config() -> object:
@@ -211,6 +213,7 @@ def test_runtime_source_bundle_rejects_scoped_dirty_state(
 
 
 def test_cpu_runtime_receipt_is_never_formal_bf16_eligible() -> None:
+    seed_everything(42, deterministic=True)
     runtime = train_epipolar._training_runtime(
         torch.device("cpu"), use_bf16=False
     )
@@ -218,7 +221,34 @@ def test_cpu_runtime_receipt_is_never_formal_bf16_eligible() -> None:
     assert runtime["device_type"] == "cpu"
     assert runtime["autocast_enabled"] is False
     assert runtime["autocast_dtype"] is None
+    assert runtime["deterministic_algorithms_enabled"] is True
+    assert runtime["deterministic_algorithms_warn_only"] is False
+    assert runtime["cublas_workspace_config"] == STRICT_CUBLAS_WORKSPACE_CONFIG
+    assert runtime["cudnn_deterministic"] is True
+    assert runtime["cudnn_benchmark"] is False
+    assert runtime["strict_determinism_eligible"] is True
     assert runtime["formal_cuda_bf16_eligible"] is False
+
+
+def test_seed_everything_enforces_fail_closed_determinism(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("CUBLAS_WORKSPACE_CONFIG", ":16:8")
+    torch.use_deterministic_algorithms(True, warn_only=True)
+    torch.backends.cudnn.deterministic = False
+    torch.backends.cudnn.benchmark = True
+
+    seed_everything(42, deterministic=True)
+    runtime = train_epipolar._training_runtime(
+        torch.device("cpu"), use_bf16=False
+    )
+
+    assert os.environ["CUBLAS_WORKSPACE_CONFIG"] == ":4096:8"
+    assert runtime["deterministic_algorithms_enabled"] is True
+    assert runtime["deterministic_algorithms_warn_only"] is False
+    assert runtime["cudnn_deterministic"] is True
+    assert runtime["cudnn_benchmark"] is False
+    assert runtime["strict_determinism_eligible"] is True
 
 
 @pytest.mark.parametrize(
@@ -228,6 +258,7 @@ def test_cpu_runtime_receipt_is_never_formal_bf16_eligible() -> None:
 def test_cpu_smoke_policy_allows_only_explicit_bounded_execution(
     dry_run: bool, run_steps: int | None
 ) -> None:
+    seed_everything(42, deterministic=True)
     runtime = train_epipolar._training_runtime(
         torch.device("cpu"), use_bf16=False
     )
@@ -254,6 +285,7 @@ def test_cpu_smoke_policy_rejects_unapproved_or_unbounded_execution(
     run_steps: int | None,
     message: str,
 ) -> None:
+    seed_everything(42, deterministic=True)
     runtime = train_epipolar._training_runtime(
         torch.device("cpu"), use_bf16=False
     )
@@ -268,21 +300,42 @@ def test_cpu_smoke_policy_rejects_unapproved_or_unbounded_execution(
 
 
 def test_cuda_policy_fails_closed_when_runtime_is_not_bf16_eligible() -> None:
+    seed_everything(42, deterministic=True)
+    runtime = train_epipolar._training_runtime(
+        torch.device("cpu"), use_bf16=False
+    )
+    runtime["device_name"] = "test-device"
+    runtime["formal_cuda_bf16_eligible"] = False
     with pytest.raises(RuntimeError, match="native CUDA bf16"):
         train_epipolar._validate_execution_mode(
             torch.device("cuda:0"),
             allow_cpu_smoke=False,
             dry_run=False,
             run_steps=None,
-            training_runtime={
-                "device_name": "test-device",
-                "formal_cuda_bf16_eligible": False,
-            },
+            training_runtime=runtime,
+        )
+
+
+def test_execution_policy_rejects_warn_only_determinism() -> None:
+    seed_everything(42, deterministic=True)
+    runtime = train_epipolar._training_runtime(
+        torch.device("cpu"), use_bf16=False
+    )
+    runtime["deterministic_algorithms_warn_only"] = True
+    runtime["strict_determinism_eligible"] = False
+    with pytest.raises(RuntimeError, match="warn_only=false"):
+        train_epipolar._validate_execution_mode(
+            torch.device("cpu"),
+            allow_cpu_smoke=True,
+            dry_run=True,
+            run_steps=None,
+            training_runtime=runtime,
         )
 
 
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is unavailable")
 def test_cuda_runtime_receipt_binds_actual_device_and_native_bf16() -> None:
+    seed_everything(42, deterministic=True)
     current_device = torch.cuda.current_device()
     with torch.cuda.device(current_device):
         native_bf16_supported = torch.cuda.is_bf16_supported(
@@ -299,6 +352,7 @@ def test_cuda_runtime_receipt_binds_actual_device_and_native_bf16() -> None:
     assert runtime["bf16_supported"] is native_bf16_supported
     assert runtime["autocast_enabled"] is True
     assert runtime["autocast_dtype"] == "torch.bfloat16"
+    assert runtime["strict_determinism_eligible"] is True
     assert runtime["formal_cuda_bf16_eligible"] is native_bf16_supported
 
 
@@ -352,6 +406,7 @@ def test_epipolar_data_cursor_reproduces_exact_next_batches() -> None:
 def test_resume_checkpoint_restores_model_optimizer_scheduler_rng_and_cursor(
     tmp_path: Path,
 ) -> None:
+    seed_everything(42, deterministic=True)
     config = _config()
     first = _tiny_stage(42)
     first_optimizer = torch.optim.AdamW(

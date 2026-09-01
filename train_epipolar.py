@@ -69,7 +69,13 @@ from utils.checkpoint import (  # noqa: E402
     repository_git_hash,
     restore_rng_state,
 )
-from utils.seed import seed_data_worker, seed_everything  # noqa: E402
+from utils.seed import (  # noqa: E402
+    STRICT_CUBLAS_WORKSPACE_CONFIG,
+    deterministic_runtime_state,
+    seed_data_worker,
+    seed_everything,
+    strict_determinism_enabled,
+)
 
 
 STAGE_C_DEFAULTS: dict[str, Any] = {
@@ -102,6 +108,7 @@ PSEUDO_GT_SUPERVISION = {
 
 STAGE_C_RUNTIME_GIT_SCOPES = (
     "train_epipolar.py",
+    "eval_epipolar.py",
     "train.py",
     "eval.py",
     "configs/epipolar_x2.yaml",
@@ -499,6 +506,8 @@ def _training_runtime(device: torch.device, *, use_bf16: bool) -> dict[str, Any]
         concrete_device = device
         bf16_supported = False
     autocast_enabled = bool(use_bf16)
+    deterministic_state = deterministic_runtime_state()
+    deterministic_eligible = strict_determinism_enabled()
     return {
         "device": str(concrete_device),
         "device_type": device.type,
@@ -516,8 +525,13 @@ def _training_runtime(device: torch.device, *, use_bf16: bool) -> dict[str, Any]
         "bf16_supported": bf16_supported,
         "autocast_enabled": autocast_enabled,
         "autocast_dtype": "torch.bfloat16" if autocast_enabled else None,
+        **deterministic_state,
+        "strict_determinism_eligible": deterministic_eligible,
         "formal_cuda_bf16_eligible": bool(
-            cuda_device and bf16_supported and autocast_enabled
+            cuda_device
+            and bf16_supported
+            and autocast_enabled
+            and deterministic_eligible
         ),
     }
 
@@ -532,6 +546,21 @@ def _validate_execution_mode(
 ) -> None:
     """Fail closed unless this is native CUDA bf16 or a bounded CPU smoke."""
 
+    deterministic_eligible = bool(
+        training_runtime.get("strict_determinism_eligible", False)
+        and training_runtime.get("deterministic_algorithms_enabled") is True
+        and training_runtime.get("deterministic_algorithms_warn_only") is False
+        and training_runtime.get("cublas_workspace_config")
+        == STRICT_CUBLAS_WORKSPACE_CONFIG
+        and training_runtime.get("cudnn_deterministic") is True
+        and training_runtime.get("cudnn_benchmark") is False
+    )
+    if not deterministic_eligible:
+        raise RuntimeError(
+            "Stage C requires strict deterministic algorithms with warn_only=false, "
+            f"CUBLAS_WORKSPACE_CONFIG={STRICT_CUBLAS_WORKSPACE_CONFIG}, "
+            "cudnn.deterministic=true, and cudnn.benchmark=false"
+        )
     if device.type == "cpu":
         if not allow_cpu_smoke:
             raise RuntimeError(
@@ -713,12 +742,16 @@ def _stage_c_checkpoint_payload(
         "cuda_bf16_eligible": bool(
             training_runtime.get("formal_cuda_bf16_eligible", False)
         ),
+        "strict_determinism_eligible": bool(
+            training_runtime.get("strict_determinism_eligible", False)
+        ),
     }
     completion["formal_training_complete"] = bool(
         execution_complete
         and canonical_schedule
         and completion["base_complete"]
         and completion["cuda_bf16_eligible"]
+        and completion["strict_determinism_eligible"]
     )
     return {
         "schema_version": STAGE_C_CHECKPOINT_SCHEMA_VERSION,
