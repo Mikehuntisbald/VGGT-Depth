@@ -1,0 +1,210 @@
+{
+  "schema_version": 1,
+  "component": "stage-b-final-holdout-evaluation-with-sign-health",
+  "status": "FINAL_ACCURACY_GATES_PASS_OUTPUT_HEALTH_FAIL",
+  "claim_boundary": {
+    "coverage_eligible": true,
+    "final_training_checkpoint": true,
+    "final_acceptance_eligible": true,
+    "formal_holdout": true,
+    "paper_accuracy": false,
+    "paper_ground_truth": false,
+    "target": "trusted_hr_ffs_teacher_pseudo_gt",
+    "note": "This complete 238-window evaluation of the canonical 15000/15000 checkpoint owns the internal Stage-B engineering decision only. Accuracy, temporal, completeness, and trusted-region gates pass; raw sign health and physical invalid-rate health do not. Same-family FFS pseudo-GT is not independent or paper ground truth."
+  },
+  "checkpoint": {
+    "path": "outputs/ffs_omega_tsr_x2/stage_b/final.pt",
+    "sha256": "1b9a35ebc77784c7ef62c6d03af4fc956b2f28406dc94789056d14fa35ae8637",
+    "step": 15000,
+    "configured_steps": 15000,
+    "training_git_hash": "3e0df0b543f5000d0bf8490740b5f34ad979e3b6"
+  },
+  "training_audit": {
+    "path": "reports/m4/stage_b_training_audit_final.json",
+    "sha256": "c3d6ddc1514b08dab6076cd4773e73020ad83f3fd57acf12f692975f80aa3e13",
+    "status": "PASS",
+    "training_status": "TRAINING_COMPLETE",
+    "logged_steps": 15000,
+    "latest_checkpoint_step": 15000,
+    "checkpoint_lag_steps": 0,
+    "resume_boundaries": [
+      7001
+    ],
+    "strict_json": true,
+    "continuous_steps_from_one": true,
+    "all_numeric_values_finite": true,
+    "checkpoint_state_finite": true,
+    "learning_rate_schedule_exact": true,
+    "completion_receipt_valid": true,
+    "warnings": []
+  },
+  "evaluator": {
+    "git_hash": "2eb521173507df5905012d9ef36f7d344a394d22",
+    "eval_py_sha256": "3d6dcd3f082a8cd9f2b7b22b1f2d742a4b876069f63a2c7e25dc9907a28f27fa",
+    "evaluation_module_sha256": "9ce1551ba73585eb800b5f3749a44250a26a063f1b2eaea8c45f1b794504fa18",
+    "torch_version": "2.10.0+cu128",
+    "cuda_version": "12.8"
+  },
+  "coverage": {
+    "manifest_records": 244,
+    "derived_endpoint_records": 240,
+    "evaluable_t3_windows": 238,
+    "evaluated_t3_windows": 238,
+    "endpoint_pose_valid": 177,
+    "endpoint_pose_rejected": 61,
+    "future_frames": false,
+    "derived_receipt_sha256": "1e05c4e081620b9f634e9b3020779c6e4fdb7e21bf1df55365c3d4cde3d50620"
+  },
+  "metrics": {
+    "t1_vs_bilinear_low_confidence_epe_relative_change_percent": -10.59050302796077,
+    "t1_vs_bilinear_invalid_region_completeness_relative_change_percent": 557.1214036317219,
+    "t1_vs_bilinear_trusted_region_epe_relative_change_percent": -3.675313050288967,
+    "t1_paired_temporal_error_hr_px": 0.36494586714186467,
+    "t3_paired_temporal_error_hr_px": 0.2832220836836873,
+    "t3_vs_t1_temporal_relative_change_percent": -22.39339880684525,
+    "t3_vs_bilinear_low_confidence_epe_relative_change_percent": 10.579594540686488,
+    "t3_vs_bilinear_invalid_region_completeness_relative_change_percent": 571.8610384572065,
+    "t3_vs_bilinear_trusted_region_epe_relative_change_percent": 0.40355449108856273,
+    "t3_vggt_vs_t3_epe_relative_change_percent": -17.00688144705474,
+    "t3_vggt_vs_bilinear_low_confidence_epe_relative_change_percent": -12.839864886341836,
+    "t3_vggt_vs_bilinear_invalid_region_completeness_relative_change_percent": 668.6773374047331,
+    "t3_vggt_vs_bilinear_trusted_region_epe_relative_change_percent": -6.394684849520718,
+    "t3_vggt_epe_hr_px": 0.1562472998858943,
+    "t3_vggt_boundary_epe_hr_px": 0.9242974033072645,
+    "t3_vggt_bad_1": 0.008148206025322338,
+    "t3_vggt_bad_2": 0.003062173939264313,
+    "t3_vggt_raw_nan_rate_percent": 0.0,
+    "t3_vggt_raw_infinite_rate_percent": 0.0,
+    "t3_vggt_raw_negative_rate_percent": 2.7844725536699055,
+    "t3_vggt_raw_invalid_rate_percent": 2.7844725536699055,
+    "t3_vggt_clamp0_negative_rate_percent": 0.0,
+    "t3_vggt_clamp0_zero_invalid_rate_percent": 2.7844725536699055
+  },
+  "engineering_gates": {
+    "t1_low_confidence_epe_improves_at_least_10_percent": true,
+    "t3_temporal_error_improves_at_least_10_percent": true,
+    "t3_vggt_low_confidence_epe_improves_at_least_10_percent": true,
+    "invalid_region_completeness_improves_at_least_15_percent": true,
+    "trusted_region_error_degradation_at_most_2_percent": true,
+    "raw_nan_or_negative_rate_below_0_5_percent": false,
+    "physical_clamp0_nan_or_negative_rate_below_0_5_percent": true,
+    "physical_clamp0_invalid_rate_below_0_5_percent": false
+  },
+  "engineering_gate_evidence": {
+    "t1_spatial_vs_bilinear": {
+      "low_confidence_epe_relative_change_percent": -10.59050302796077,
+      "invalid_region_completeness_relative_change_percent": 557.1214036317219,
+      "trusted_region_epe_relative_change_percent": -3.675313050288967,
+      "all_declared_t1_gates_pass": true
+    },
+    "t3_temporal_vs_t1": {
+      "paired_temporal_error_relative_change_percent": -22.39339880684525,
+      "declared_temporal_gate_pass": true
+    },
+    "final_t3_vggt_vs_bilinear": {
+      "low_confidence_epe_relative_change_percent": -12.839864886341836,
+      "invalid_region_completeness_relative_change_percent": 668.6773374047331,
+      "trusted_region_epe_relative_change_percent": -6.394684849520718,
+      "all_accuracy_completeness_and_trusted_region_checks_pass": true
+    },
+    "output_health": {
+      "threshold_percent": 0.5,
+      "raw_nan_percent": 0.0,
+      "raw_infinite_percent": 0.0,
+      "raw_negative_and_invalid_percent": 2.7844725536699055,
+      "physical_clamp0_nan_or_negative_percent": 0.0,
+      "physical_clamp0_zero_and_invalid_percent": 2.7844725536699055,
+      "raw_gate_pass": false,
+      "physical_sign_gate_pass": true,
+      "physical_invalid_gate_pass": false
+    }
+  },
+  "engineering_gate_summary": {
+    "accuracy_temporal_completeness_and_trusted_region": "PASS",
+    "raw_output_health": "FAIL",
+    "physical_clamp0_sign_health": "PASS",
+    "physical_clamp0_invalid_health": "FAIL",
+    "all_engineering_gates": "FAIL"
+  },
+  "diagnostic_ablation_checks": {
+    "history_only_t3_low_confidence_epe_improves_at_least_10_percent": false,
+    "history_only_t3_low_confidence_epe_relative_change_percent": 10.579594540686488,
+    "note": "The declared final model is T3_VGGT. History-only T3 passes the paired temporal gate but worsens low-confidence EPE and is retained as an ablation, not substituted for the final model."
+  },
+  "sign_health": {
+    "method": "T3_VGGT",
+    "records": 238,
+    "hr_domain_pixels": 70189056,
+    "lr_domain_pixels": 17547264,
+    "nonfinite_count_all_stages": 0,
+    "stage_negative_counts": {
+      "source_mix_lr": 309734,
+      "post_lr_residual": 1732924,
+      "post_convex": 7061335,
+      "post_hr_residual_raw": 5276657,
+      "post_anchor_final": 1954395
+    },
+    "stage_negative_rates_percent": {
+      "source_mix_lr": 1.7651412778653126,
+      "post_lr_residual": 9.875750430380485,
+      "post_convex": 10.060450164766428,
+      "post_hr_residual_raw": 7.51777741532811,
+      "post_anchor_final": 2.7844725536699055
+    },
+    "final_negative_by_bilinear_band": {
+      "bilinear_lt_0": 591552,
+      "bilinear_ge_0_lt_0_25": 1233282,
+      "bilinear_ge_0_25": 129561,
+      "share_below_0_25_percent": 93.37078737921453
+    },
+    "final_negative_by_availability": {
+      "ffs_invalid": 609806,
+      "history_invalid": 1546112,
+      "pose_invalid": 1056985
+    },
+    "final_negative_rate_by_availability_percent": {
+      "ffs_invalid": 34.63783427623657,
+      "ffs_valid": 1.9649536269488507,
+      "history_invalid": 5.553819763369817,
+      "history_valid": 0.9640606916468349,
+      "pose_invalid": 5.8755231902464705,
+      "pose_valid": 1.7191952156406937
+    }
+  },
+  "trajectory": {
+    "temporal_improvement_percent": {
+      "step2500": -10.561315662814508,
+      "step5000": -12.282528991375505,
+      "step7500": -14.252219843956606,
+      "step10000": -23.430741196290974,
+      "step12500": -21.856295082788208,
+      "step15000": -22.39339880684525
+    },
+    "vggt_prior_epe_effect_percent": {
+      "step2500": -1.5365621439070787,
+      "step5000": -8.36401517646691,
+      "step7500": -9.03051220305855,
+      "step10000": -16.426865263796177,
+      "step12500": -16.866013220344122,
+      "step15000": -17.00688144705474
+    },
+    "t3_vggt_raw_negative_rate_percent": {
+      "step5000": 1.4553080753785889,
+      "step7500": 5.118581449506886,
+      "step10000": 2.7824280753968252,
+      "step12500": 3.004092261904762,
+      "step15000": 2.7844725536699055
+    },
+    "step15000_vs_step12500_negative_count_change_percent": -7.310684529229648
+  },
+  "artifacts": {
+    "metrics_json": "outputs/ffs_omega_tsr_x2/stage_b_eval/metrics.json",
+    "metrics_json_sha256": "2ba036ad502cc26dab531a40ea6d4cbe361f179d8b035374c43a6aecda922fd8",
+    "metrics_csv": "outputs/ffs_omega_tsr_x2/stage_b_eval/metrics.csv",
+    "metrics_csv_sha256": "80da4e6c34693419c3a96442bf4a2d547c6f2f71ad2e463f69f856d8b82dc10d",
+    "training_audit": "reports/m4/stage_b_training_audit_final.json",
+    "training_audit_sha256": "c3d6ddc1514b08dab6076cd4773e73020ad83f3fd57acf12f692975f80aa3e13",
+    "visualizations_written": 4,
+    "elapsed_seconds": 52.5067081140005
+  }
+}

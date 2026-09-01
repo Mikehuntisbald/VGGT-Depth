@@ -492,11 +492,44 @@ and still fails output health. The five negative rates are 1.7651% source mix,
 trajectory reinforces the decision to judge the unchanged run only at the
 declared final checkpoint. Evidence: `reports/m4/stage_b_eval_step12500.json`.
 
-The training process was later found externally terminated after its last
-atomic checkpoint at step 7,000. The interrupted log contained complete but
-uncheckpointed records through step 7,144 and a partial JSON record for step
-7,145. The original log was archived, the formal log was rolled back to its
-checkpoint boundary, and training resumed from the preserved step-7,000
+The canonical Stage-B run then completed all 15,000 optimizer steps. Its
+read-only final audit passes strict JSON continuity, continuous steps from one,
+finite log/checkpoint state, exact learning-rate scheduling, checkpoint
+identity, and the completion receipt with zero checkpoint lag and no warnings.
+The sole resume boundary remains the already verified step 7,001 boundary.
+The final checkpoint SHA-256 is
+`1b9a35ebc77784c7ef62c6d03af4fc956b2f28406dc94789056d14fa35ae8637`;
+the audit is `reports/m4/stage_b_training_audit_final.json`.
+
+On all 238 formal held-out causal windows, final paired TEPE falls from
+0.364946 px for independently run T1 to 0.283222 px for history-only T3, a
+22.3934% improvement. The complete T3+VGGT model improves low-confidence EPE
+by 12.8399%, invalid-region completeness by 668.68%, and trusted-region EPE by
+6.3947% relative to bilinear; the quality-gated VGGT prior improves T3 overall
+EPE by 17.0069%. T1 itself retains its 10.5905% low-confidence improvement.
+Thus every declared temporal, low-confidence, completeness, and trusted-region
+engineering gate passes. History-only T3 is still an informative non-winning
+spatial ablation: its low-confidence EPE is 10.5796% worse than bilinear even
+while its paired temporal gate passes.
+
+Output health remains a separate final non-pass. Raw T3+VGGT has zero NaN/Inf
+but 2.7845% negative/invalid disparity, above the 0.5% gate. The declared
+`clamp_min(0)` physical row passes the NaN/negative gate with zero negatives,
+but the same 2.7845% remains honestly zero/invalid, so its invalid-rate gate
+fails. The five reproducible negative rates are 1.7651% at source mix, 9.8758%
+post-LR residual, 10.0605% post-convex, 7.5178% post-HR residual, and 2.7845%
+post-anchor; all five taps have zero non-finite values. Consequently the final
+status is accuracy/temporal/completeness PASS with raw and physical-invalid
+output-health FAIL, not an unconditional all-gates pass. These metrics target
+trusted same-family FFS pseudo-GT and are engineering evidence, not independent
+or paper ground truth. Evidence and exact hashes:
+`reports/m4/stage_b_eval_final.json`.
+
+Earlier in this same run, the training process was found externally terminated
+after its last atomic checkpoint at step 7,000. The interrupted log contained
+complete but uncheckpointed records through step 7,144 and a partial JSON
+record for step 7,145. The original log was archived, the formal log was rolled
+back to its checkpoint boundary, and training resumed from the preserved step-7,000
 artifact using a detached worktree at the original training commit
 `3e0df0b543f5000d0bf8490740b5f34ad979e3b6`. Optimizer state, scheduler,
 all RNG states, and the deterministic data cursor were restored. Recomputed
@@ -520,8 +553,9 @@ used 1,649 trusted teacher pixels, produced finite loss 0.0422251, saved every
 required model/optimizer/scheduler/scaler/config/Git field, and reproduced all
 18 refiner tensors bit-for-bit across two same-seed runs. This is execution
 evidence only because its one-step Stage-B base was trained on the validation
-cache; formal Stage-C training waits for the completed Stage-B checkpoint.
-Evidence: `reports/m6/stage_c_integration_smoke.json`.
+cache. Formal Stage-C training has since started from the audited final Stage-B
+checkpoint in a frozen source worktree; its completion and held-out evaluation
+remain pending. Evidence: `reports/m6/stage_c_integration_smoke.json`.
 
 A subsequent calibration audit caught an important coordinate discrepancy:
 all manifests advertise `K_right.cy-K_left.cy=+5.4` HR px, while actual
@@ -597,10 +631,9 @@ strict CUDA runtime receipts, and supervised-domain non-finite fail-fast.
 
 | Blocker | Required resolution |
 |---|---|
-| Stage-B training | the formal causal T=3 run is active on the declared 15,000-step schedule; completion receipt and final audit remain pending |
-| Final temporal evidence | intermediate full-holdout checkpoints pass the TEPE threshold, but the final T3-vs-T1 acceptance claim waits for completed Stage-B training/evaluation |
-| Formal Stage C | the producer/evaluator and geometry/runtime contracts are implemented; formal training waits for the completed 15,000-step Stage-B checkpoint |
-| Independent accuracy | current Stage-A metrics use same-family FFS pseudo-GT; add real GT or an independent benchmark before paper claims |
+| Formal Stage C | the strict 5,000-step run is active from the audited final Stage-B checkpoint in a frozen source worktree; completion receipt and full held-out evaluation remain pending |
+| Output health | final raw Stage-B has 2.7845% negative disparity; `clamp_min(0)` removes negative values but leaves the same 2.7845% honestly invalid, so a matched positivity/output-validity resolution is still required |
+| Independent accuracy | Stage-A and Stage-B engineering metrics use same-family FFS pseudo-GT; add real GT or an independent benchmark before paper claims |
 
 ## Claim boundary
 
@@ -610,8 +643,11 @@ declared disparity-unit/cache contracts on the formal split. M2 proves metric
 baseline scaling, quality-gated priors/poses, and rejected-record zero safety;
 M3 proves numerical HR z-buffer conventions. The formal Stage-A artifacts prove
 its internal pseudo-GT engineering thresholds and completed-run throughput;
-training smokes prove only execution and provenance plumbing. No current
-artifact proves the *final* Stage-B go/no-go result, independent-GT accuracy,
-point-cloud accuracy, or paper-level performance. The complete step-7,500
-holdout diagnostic crosses the internal temporal/accuracy/completeness gates
-but does not replace the declared 15,000-step completion receipt.
+training smokes prove only execution and provenance plumbing. The canonical
+15,000-step Stage-B checkpoint, final training audit, and complete 238-window
+holdout evaluation now prove the final internal pseudo-GT go/no-go result:
+temporal, low-confidence, completeness, and trusted-region gates pass, while
+raw sign health and physical invalid-rate health fail. `final_acceptance_eligible`
+means the formal coverage and schedules are complete; it does not mean every
+metric threshold passes. No current artifact proves independent-GT accuracy,
+point-cloud accuracy, Stage-C final performance, or paper-level performance.

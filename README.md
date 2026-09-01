@@ -17,9 +17,9 @@ offline cache producers and are never optimized with the TSR model.
 
 M0 is **PASS_WITH_FALLBACK**, M1 is **PASS**, M2/M3 geometry is complete, and
 the formal Stage-A spatial run has a conditional pseudo-GT engineering PASS.
-Formal Stage-B is running after a verified exact resume from its last atomic
-checkpoint. Complete held-out intermediate evaluations are trend diagnostics;
-the 15,000-step final checkpoint and audit own the final Stage-B go/no-go.
+Formal Stage-B completed all 15,000 steps and its final training audit passes.
+On the complete held-out pseudo-GT domain, its temporal, low-confidence,
+completeness, and trusted-region gates pass; raw output health remains a fail.
 
 - Three isolated cu128 environments pass RTX 5090/SM120 FP16 and BF16 CUDA
   checks; both upstream repositories are clean pinned submodules.
@@ -44,14 +44,22 @@ the 15,000-step final checkpoint and audit own the final Stage-B go/no-go.
   transport and HR temporal loss.
 - A separate 69,905-parameter HR local epipolar refiner, audited same-row pixel
   contract, training entrypoint, and strict held-out evaluator are implemented.
-  CPU one-step and CUDA BF16 dry-run artifacts are integration evidence only;
-  formal Stage-C training waits for the completed Stage-B checkpoint.
+  CPU one-step and CUDA BF16 dry-run artifacts are integration evidence only.
+  Formal Stage-C training is now active from the audited final Stage-B
+  checkpoint in a frozen source worktree; completion evidence remains pending.
 - Formal Stage-A completed 5,000 steps at 3.682 step/s. On all 244 held-out
   frames at full 800×1280 resolution, low-confidence EPE improves 11.996%,
   invalid-region completeness improves 725.3%, and trusted-region EPE improves
   4.269%. Raw disparity still has 3.722% negatives; the explicitly reported
   `clamp_min(0)` deployment row removes negatives without inventing positive
   epsilon depth, leaving those pixels honestly zero/invalid.
+- Formal Stage-B completed 15,000 steps with a strict 15,000-record audit. On
+  all 238 held-out causal windows, T3 improves paired temporal error by 22.393%
+  over T1; T3+VGGT improves low-confidence EPE by 12.840%, completeness by
+  668.7%, and trusted-region EPE by 6.395% over bilinear. These are same-family
+  FFS pseudo-GT engineering metrics, not paper accuracy. Raw T3+VGGT still has
+  2.784% negative disparity; `clamp_min(0)` removes the sign violation but
+  leaves the same 2.784% zero/invalid, so the all-gates result remains a fail.
 
 The M0 fallback remains historical and confined to the separate NGC interface
 probe; it is not used by M1 caches. See [`REPORT.md`](REPORT.md) for exact
