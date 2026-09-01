@@ -31,7 +31,7 @@ import torch
 
 AUDIT_SCHEMA_VERSION = 1
 CHECKPOINT_SCHEMA_VERSION = 1
-EXPECTED_LOSS_TERMS = (
+BASELINE_LOSS_TERMS = (
     "disparity",
     "epipolar",
     "gate_regularizer",
@@ -214,6 +214,31 @@ def _configured_stage_and_steps(config: Mapping[str, Any]) -> tuple[str, int]:
         f"checkpoint config.train.{steps_key} must be a positive integer",
     )
     return str(stage), int(configured_steps)
+
+
+def _expected_loss_terms(config: Mapping[str, Any]) -> tuple[str, ...]:
+    """Derive the exact log schema from the checkpoint's resolved config.
+
+    Baseline Stage-A/B runs retain the historical eight-term schema.  The
+    separate D-025 run is the only declared extension: it must carry exactly
+    one additional, weighted ``positivity_penalty`` term in every log record.
+    """
+
+    positivity = config.get("positivity_ablation")
+    if positivity is None:
+        return BASELINE_LOSS_TERMS
+    _require(
+        isinstance(positivity, Mapping),
+        "checkpoint positivity_ablation must be a mapping",
+    )
+    enabled = positivity.get("enabled")
+    _require(
+        isinstance(enabled, bool),
+        "checkpoint positivity_ablation.enabled must be boolean",
+    )
+    if not enabled:
+        return BASELINE_LOSS_TERMS
+    return tuple(sorted((*BASELINE_LOSS_TERMS, "positivity_penalty")))
 
 
 def _learning_rate_multiplier(update_index: int, total_steps: int, warmup_steps: int) -> float:
@@ -406,7 +431,8 @@ def _validate_training_log(
     elapsed_values: list[float] = []
     learning_rates: list[float] = []
     gradient_norms: list[float] = []
-    losses: dict[str, list[float]] = {name: [] for name in EXPECTED_LOSS_TERMS}
+    expected_loss_terms = _expected_loss_terms(checkpoint.config)
+    losses: dict[str, list[float]] = {name: [] for name in expected_loss_terms}
 
     for line_number, record in enumerate(records, start=1):
         missing = sorted(required.difference(record))
@@ -429,11 +455,17 @@ def _validate_training_log(
         loss = record["loss"]
         _require(isinstance(loss, Mapping), f"loss at line {line_number} is not a mapping")
         _require(
-            set(loss) == set(EXPECTED_LOSS_TERMS),
+            set(loss) == set(expected_loss_terms),
             f"loss schema mismatch at line {line_number}: {sorted(loss)}",
         )
-        for name in EXPECTED_LOSS_TERMS:
-            losses[name].append(_finite_float(loss[name], f"line {line_number} loss.{name}"))
+        for name in expected_loss_terms:
+            value = _finite_float(loss[name], f"line {line_number} loss.{name}")
+            if name == "positivity_penalty":
+                _require(
+                    value >= 0.0,
+                    f"negative positivity_penalty at line {line_number}",
+                )
+            losses[name].append(value)
         if previous_elapsed is not None and elapsed <= previous_elapsed:
             resume_boundaries.append(int(step))
         previous_step = int(step)
@@ -456,6 +488,8 @@ def _validate_training_log(
         "learning_rates": learning_rates,
         "gradient_norms": gradient_norms,
         "losses": losses,
+        "expected_loss_terms": list(expected_loss_terms),
+        "positivity_ablation_enabled": "positivity_penalty" in expected_loss_terms,
         "resume_boundaries": resume_boundaries,
     }
 
@@ -785,6 +819,12 @@ def audit_training_run(
             "checkpoint_identity_consistent": final is None or complete,
             "learning_rates_nonnegative": True,
             "learning_rate_schedule_exact": True,
+            "loss_schema": {
+                "terms": log_validation["expected_loss_terms"],
+                "positivity_ablation_enabled": log_validation[
+                    "positivity_ablation_enabled"
+                ],
+            },
             "completion_receipt_valid": complete,
             "resume_boundaries": log_validation["resume_boundaries"],
         },

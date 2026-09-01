@@ -45,7 +45,13 @@ def _sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-def _build_run(root: Path, *, complete: bool, gradient_norm: float = 2.5) -> dict:
+def _build_run(
+    root: Path,
+    *,
+    complete: bool,
+    gradient_norm: float = 2.5,
+    positivity_ablation: bool = False,
+) -> dict:
     root.mkdir(parents=True)
     total_steps = 4
     checkpoint_step = total_steps if complete else 2
@@ -53,17 +59,25 @@ def _build_run(root: Path, *, complete: bool, gradient_norm: float = 2.5) -> dic
     base_lr = 2.0e-4
     warmup = 1
     config = {
-        "data": {"sequence_length": 1},
+        "data": {"sequence_length": 3 if positivity_ablation else 1},
         "train": {
-            "stage": "spatial",
+            "stage": "temporal" if positivity_ablation else "spatial",
             "steps_spatial": total_steps,
-            "steps": 8,
+            "steps": total_steps if positivity_ablation else 8,
             "learning_rate": base_lr,
             "warmup_steps": warmup,
             "checkpoint_interval": 2,
             "gradient_clip": 1.0,
         },
     }
+    if positivity_ablation:
+        config["positivity_ablation"] = {"enabled": True}
+    stage = str(config["train"]["stage"])
+    loss_terms = (
+        tuple(sorted((*LOSS_TERMS, "positivity_penalty")))
+        if positivity_ablation
+        else LOSS_TERMS
+    )
     model = nn.Linear(3, 2)
     optimizer = torch.optim.AdamW(model.parameters(), lr=base_lr)
     scheduler = torch.optim.lr_scheduler.LambdaLR(
@@ -109,11 +123,11 @@ def _build_run(root: Path, *, complete: bool, gradient_norm: float = 2.5) -> dic
         records.append(
             {
                 "step": step,
-                "stage": "spatial",
+                "stage": stage,
                 "learning_rate": learning_rate,
                 "gradient_norm": gradient_norm if step == 2 else 0.5,
                 "elapsed_seconds": float(step),
-                "loss": {name: 0.1 * step for name in LOSS_TERMS},
+                "loss": {name: 0.1 * step for name in loss_terms},
             }
         )
     (root / "train.jsonl").write_text(
@@ -123,7 +137,7 @@ def _build_run(root: Path, *, complete: bool, gradient_norm: float = 2.5) -> dic
     if complete:
         fingerprint = hashlib.sha256(config_fingerprint(config).encode("utf-8")).hexdigest()
         summary = {
-            "stage": "spatial",
+            "stage": stage,
             "status": "TRAINING_COMPLETE",
             "steps": total_steps,
             "run_steps": total_steps,
@@ -170,6 +184,10 @@ def test_completed_run_passes_full_audit_and_reports_preclip_gradient(tmp_path: 
     assert report["training_status"] == "TRAINING_COMPLETE"
     assert report["logged_steps"] == 4
     assert report["validation"]["learning_rate_schedule_exact"] is True
+    assert report["validation"]["loss_schema"] == {
+        "terms": list(LOSS_TERMS),
+        "positivity_ablation_enabled": False,
+    }
     gradient = report["statistics"]["gradient_norm_pre_clip"]
     assert gradient["above_configured_clip_count"] == 1
     assert gradient["rolling"]["window_size"] == 2
@@ -207,6 +225,57 @@ def test_discontinuous_steps_and_nonfinite_values_are_rejected(tmp_path: Path) -
     nonfinite_path.write_text(nonfinite, encoding="utf-8")
     with pytest.raises(TrainingAuditError, match="non-finite"):
         audit_training_run(tmp_path / "nonfinite")
+
+
+def test_d025_positivity_loss_schema_is_required_and_statistically_audited(
+    tmp_path: Path,
+) -> None:
+    run = tmp_path / "d025"
+    _build_run(run, complete=True, positivity_ablation=True)
+    report = audit_training_run(run)
+
+    assert report["status"] == "PASS"
+    assert report["validation"]["loss_schema"] == {
+        "terms": list(tuple(sorted((*LOSS_TERMS, "positivity_penalty")))),
+        "positivity_ablation_enabled": True,
+    }
+    positivity_statistics = report["statistics"]["loss"]["positivity_penalty"]
+    assert positivity_statistics["count"] == 4
+    assert positivity_statistics["minimum"] >= 0.0
+
+
+def test_d025_positivity_missing_extra_or_negative_loss_terms_are_rejected(
+    tmp_path: Path,
+) -> None:
+    missing = tmp_path / "missing"
+    _build_run(missing, complete=True, positivity_ablation=True)
+    records = [json.loads(line) for line in (missing / "train.jsonl").read_text().splitlines()]
+    del records[0]["loss"]["positivity_penalty"]
+    (missing / "train.jsonl").write_text(
+        "".join(json.dumps(record) + "\n" for record in records), encoding="utf-8"
+    )
+    with pytest.raises(TrainingAuditError, match="loss schema mismatch"):
+        audit_training_run(missing)
+
+    extra = tmp_path / "extra"
+    _build_run(extra, complete=True, positivity_ablation=True)
+    records = [json.loads(line) for line in (extra / "train.jsonl").read_text().splitlines()]
+    records[0]["loss"]["malicious_extra"] = 0.0
+    (extra / "train.jsonl").write_text(
+        "".join(json.dumps(record) + "\n" for record in records), encoding="utf-8"
+    )
+    with pytest.raises(TrainingAuditError, match="loss schema mismatch"):
+        audit_training_run(extra)
+
+    negative = tmp_path / "negative"
+    _build_run(negative, complete=True, positivity_ablation=True)
+    records = [json.loads(line) for line in (negative / "train.jsonl").read_text().splitlines()]
+    records[0]["loss"]["positivity_penalty"] = -0.1
+    (negative / "train.jsonl").write_text(
+        "".join(json.dumps(record) + "\n" for record in records), encoding="utf-8"
+    )
+    with pytest.raises(TrainingAuditError, match="negative positivity_penalty"):
+        audit_training_run(negative)
 
 
 def test_false_completion_and_summary_sha_mismatch_are_rejected(tmp_path: Path) -> None:

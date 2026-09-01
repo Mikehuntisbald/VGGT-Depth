@@ -72,3 +72,11 @@ Report this lineage separately and retain raw, clamped, and `d > 0` validity
 metrics.  Do not use an improved clamped validity count as a completeness
 claim. Do not pass a formal Stage-B checkpoint to `--resume` or label any
 shortened diagnostic as this arm.
+
+After the full rerun, audit its training directory with
+`tools/audit_training_run.py`. Its checkpoint-resolved config enables the
+strict nine-term D-025 log schema: the eight baseline terms plus exactly one
+finite, non-negative `positivity_penalty`. The audit reports a separate
+rolling statistic for that weighted penalty and rejects missing, extra, or
+negative terms. Baseline runs remain constrained to exactly the original eight
+terms.
