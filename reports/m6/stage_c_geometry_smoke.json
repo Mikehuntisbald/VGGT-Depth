@@ -10,8 +10,8 @@
     "reason": "The latest strict producer uses the formal train-lineage Stage-B step-7000 checkpoint, while earlier integration artifacts use step 7500; neither base is the completed 15000-step checkpoint. CPU fresh/resume, CUDA dry-run, and CUDA one-step artifacts are bounded integration evidence and explicitly ineligible for formal acceptance."
   },
   "source": {
-    "git_hash": "91d66c66261092889243bc849aa407b44bccd478",
-    "runtime_source_bundle_sha256": "7583b650570c915701104d9f08dee0b0184f7c6ad2a2dfb6f955380aaca20545",
+    "git_hash": "a883663a67ce470ae94e27a0c2f280ff1e01e1f3",
+    "runtime_source_bundle_sha256": "8af874260139ad6447b0e4799f35ad1dbca1d2ffbc26e4fcc3066e57b7cd7df0",
     "runtime_source_file_count": 52,
     "runtime_relevant_paths_clean": true,
     "base_checkpoint": "/tmp/ffs_omega_tsr_stage_b_step7000.pt",
@@ -199,6 +199,36 @@
       "metrics_csv_sha256": "c467ec6674cf16e1d378d1e998293d6b6d5774c081b83f4bcded44feb227b969"
     },
     "test_suite": "270 passed"
+  },
+  "horizontal_correspondence_oob_monitor": {
+    "source_git_hash": "a883663a67ce470ae94e27a0c2f280ff1e01e1f3",
+    "evaluator_feature_commit": "2fd5eb3",
+    "runtime_source_bundle_sha256": "8af874260139ad6447b0e4799f35ad1dbca1d2ffbc26e4fcc3066e57b7cd7df0",
+    "role": "DIAGNOSTIC_ONLY",
+    "changes_training_mask": false,
+    "changes_accuracy_metrics": false,
+    "optimizer_steps": 1,
+    "loss_total": 0.11345264315605164,
+    "valid_supervision_pixels": 621300,
+    "strict_runtime_eligible": true,
+    "base_complete": false,
+    "checkpoint": "/tmp/ffs_omega_tsr_stage_c_oob_monitor_step1_v2_2fd5eb3/latest.pt",
+    "checkpoint_sha256": "69e95ba1a83c02c59eff56e8b79df486f116996dddc9e51aaef84c87e644db9e",
+    "training_log_sha256": "86147bdc5d7661c0ecbe46bb3bc3b77b08e6f64efffc51a178d8e4e9d2e39f52",
+    "limited_evaluation": {
+      "status": "LIMITED_SMOKE_ONLY",
+      "windows": 2,
+      "metrics_json": "/tmp/ffs_omega_tsr_stage_c_oob_monitor_eval_limit2_2fd5eb3/metrics.json",
+      "metrics_json_sha256": "6cadc87a0e52eb8a1bd91a2b7a71c6bd7150edfb59f5d01232771122d06c1232",
+      "metrics_csv_sha256": "4f1d939224b524eda6664744ae2464543336788f08aaeedadaa97c1fb7e0e8f3",
+      "nonfinite_coordinates": 0,
+      "all_pixels_oob_rate_percent": 0.6298489040798611,
+      "candidate_any_valid_oob_rate_percent": 0.2683405764302706,
+      "teacher_trusted_oob_rate_percent": 0.6502259352477251,
+      "candidate_boundary_band_oob_rate_percent": 50.28698979591837,
+      "all_oob_direction": "left"
+    },
+    "test_suite": "272 passed"
   },
   "prior_determinism_check": {
     "git_hash": "f73ea6b91e11d199aa3433de0ab08ffc0972845d",

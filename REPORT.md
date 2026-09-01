@@ -480,6 +480,18 @@ original LR-residual diagnosis still holds while the HR residual/anchor have
 recovered 1,639,724 final negative pixels since 7,500. Evidence:
 `reports/m4/stage_b_eval_step10000.json`.
 
+At step 12,500, paired TEPE improvement eases slightly to 21.8563% but remains
+well above the gate. VGGT-on spatial metrics continue improving: versus
+bilinear, low-confidence EPE falls 13.3269%, invalid-region completeness rises
+642.95%, and trusted-region EPE falls 6.4198%; the prior improves T3 overall
+EPE by 16.8660%. History-only low-confidence EPE remains 9.7600% worse than
+bilinear. Raw VGGT-on negative/invalid rate ticks up from 2.7824% to 3.0041%
+and still fails output health. The five negative rates are 1.7651% source mix,
+9.9279% post-LR residual, 10.1169% post-convex, 7.6393% post-HR residual, and
+3.0041% post-anchor, with zero non-finite values. This non-monotonic sign
+trajectory reinforces the decision to judge the unchanged run only at the
+declared final checkpoint. Evidence: `reports/m4/stage_b_eval_step12500.json`.
+
 The training process was later found externally terminated after its last
 atomic checkpoint at step 7,000. The interrupted log contained complete but
 uncheckpointed records through step 7,144 and a partial JSON record for step
@@ -549,7 +561,11 @@ benchmark disabled. A real strict CUDA optimizer checkpoint and strict limited
 evaluation pass those runtime checks but remain acceptance-ineligible because
 the base and Stage C are incomplete. Supervised-domain non-finite refined
 disparity/correction/confidence/correlation now fail immediately instead of
-being silently removed by a finite mask. Evidence:
+being silently removed by a finite mask. The evaluator also reports horizontal
+correspondence OOB without changing any loss, mask, or accuracy metric; a
+strict two-window smoke measures 0.268% OOB where at least one discrete
+candidate is valid and 50.29% inside the narrow candidate-boundary band, with
+zero non-finite coordinates. Evidence:
 `reports/m6/stage_c_geometry_smoke.json`.
 
 ## Tests
@@ -560,7 +576,7 @@ conda run -n env-tsr pytest -q
 ........................................................................ [ 53%]
 ........................................................................ [ 80%]
 ......................................................                   [100%]
-270 passed
+272 passed
 ```
 
 The current suite includes receipt/cache identity, manifest/crop/intrinsics,
