@@ -606,11 +606,12 @@ zero non-finite coordinates. Evidence:
 
 ```text
 conda run -n env-tsr pytest -q
-........................................................................ [ 26%]
-........................................................................ [ 53%]
-........................................................................ [ 80%]
-......................................................                   [100%]
-272 passed
+........................................................................ [ 22%]
+........................................................................ [ 44%]
+........................................................................ [ 67%]
+........................................................................ [ 89%]
+..................................                                       [100%]
+322 passed
 ```
 
 The current suite includes receipt/cache identity, manifest/crop/intrinsics,
@@ -626,6 +627,11 @@ periodic checkpoint publication, exact optimizer/RNG/data-cursor resume,
 crash-tail reconciliation, and the rule that bounded smoke runs cannot publish
 a formal completion receipt. It also tests deterministic same-row sampling,
 strict CUDA runtime receipts, and supervised-domain non-finite fail-fast.
+It additionally covers calibrated Stage-A/B and Stage-C point-cloud export,
+streaming flicker-video fallback/cleanup, deterministic failure-sample
+selection, D-025 positivity/preflight/loss-schema isolation, and independent
+Stage-C training/evaluation artifact audits with JSON/CSV and cache-lineage
+cross-checks.
 
 ## Current open work
 
