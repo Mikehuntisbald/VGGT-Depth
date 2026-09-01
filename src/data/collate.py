@@ -123,7 +123,10 @@ def _temporal_field(
     if isinstance(sample, TemporalTrainingSample):
         return getattr(sample, name)
     if isinstance(sample, Mapping):
-        return sample.get(name)
+        value = sample.get(name)
+        if value is None and name == "gt_extrinsics_camera_from_world_sequence":
+            value = sample.get("gt_pose_sequence")
+        return value
     raise TypeError(
         "samples must be TemporalTrainingSample instances or mappings, got "
         f"{type(sample).__name__}"
