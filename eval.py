@@ -387,6 +387,285 @@ class SpatialEndpointPrediction:
     transport: TemporalTransport
 
 
+# These names deliberately describe operations rather than implementation
+# modules.  They form the stable machine-readable sign-health contract for the
+# primary causal T3+VGGT endpoint.
+T3_VGGT_SIGN_HEALTH_STAGES: tuple[tuple[str, str, str], ...] = (
+    (
+        "source_mix_lr",
+        "disparity_source_mix_hr_px_lr_grid",
+        "LR",
+    ),
+    (
+        "post_lr_residual",
+        "disparity_post_lr_residual_hr_px_lr_grid",
+        "LR",
+    ),
+    ("post_convex", "disparity_post_convex_hr_px", "HR"),
+    ("post_hr_residual_raw", "disparity_raw_hr_px", "HR"),
+    ("post_anchor_final", "disparity_hr_px", "HR"),
+)
+
+T3_VGGT_SIGN_HEALTH_STRATA: tuple[str, ...] = (
+    "all_pixels",
+    "bilinear_disparity_lt_0_hr_px",
+    "bilinear_disparity_ge_0_lt_0_25_hr_px",
+    "bilinear_disparity_ge_0_25_hr_px",
+    "bilinear_disparity_nonfinite",
+    "ffs_valid",
+    "ffs_invalid",
+    "history_valid",
+    "history_invalid",
+    "pose_valid",
+    "pose_invalid",
+)
+
+
+class T3VGGTSignHealthAccumulator:
+    """Accumulate native-grid sign diagnostics without changing predictions.
+
+    Every stage is counted over its own complete native grid.  No teacher,
+    pseudo-GT, confidence, or trusted mask is applied.  The masks supplied to
+    :meth:`update` are the exact primary ``T3_VGGT`` endpoint masks used by the
+    evaluator.  This class is intentionally evaluation-only and never alters a
+    tensor consumed by a metric or a later model step.
+    """
+
+    _COUNT_NAMES = (
+        "diagnostic_domain_count",
+        "finite_count",
+        "negative_count",
+        "nonfinite_count",
+    )
+
+    def __init__(self) -> None:
+        self.records_accumulated = 0
+        self._counts = {
+            stage_name: {
+                stratum: {count_name: 0 for count_name in self._COUNT_NAMES}
+                for stratum in T3_VGGT_SIGN_HEALTH_STRATA
+            }
+            for stage_name, _, _ in T3_VGGT_SIGN_HEALTH_STAGES
+        }
+
+    @staticmethod
+    def _check_mask(name: str, mask: Tensor, reference: Tensor) -> Tensor:
+        if mask.ndim == 3:
+            mask = mask.unsqueeze(1)
+        if mask.shape != reference.shape:
+            raise ValueError(
+                f"{name} must have shape {tuple(reference.shape)}, got {tuple(mask.shape)}"
+            )
+        return mask.to(device=reference.device, dtype=torch.bool)
+
+    @staticmethod
+    def _resize_mask(mask: Tensor, size_hw: tuple[int, int]) -> Tensor:
+        if tuple(mask.shape[-2:]) == size_hw:
+            return mask.to(dtype=torch.bool)
+        return functional.interpolate(
+            mask.to(dtype=torch.float32), size=size_hw, mode="nearest"
+        ).to(dtype=torch.bool)
+
+    @staticmethod
+    def _stage_tensors(output: ModelOutput) -> dict[str, Tensor]:
+        tensors: dict[str, Tensor] = {}
+        for stage_name, field_name, _ in T3_VGGT_SIGN_HEALTH_STAGES:
+            value = getattr(output, field_name)
+            if not isinstance(value, Tensor):
+                raise RuntimeError(
+                    "T3_VGGT sign-health requires a real FFSOmegaTSR output; "
+                    f"diagnostic field {field_name!r} is unavailable"
+                )
+            if value.ndim != 4 or value.shape[1] != 1 or not value.is_floating_point():
+                raise ValueError(
+                    f"{field_name} must be floating [B,1,H,W], got {tuple(value.shape)}"
+                )
+            tensors[stage_name] = value.float()
+        return tensors
+
+    def update(
+        self,
+        output: ModelOutput,
+        *,
+        bilinear_disparity_hr_px: Tensor,
+        ffs_valid_lr: Tensor,
+        ffs_valid_hr: Tensor,
+        history_valid_lr: Tensor,
+        history_valid_hr: Tensor,
+        pose_valid: Tensor,
+    ) -> None:
+        """Add one endpoint batch to every operation-stage/stratum counter."""
+
+        stages = self._stage_tensors(output)
+        final = stages["post_anchor_final"]
+        if (
+            bilinear_disparity_hr_px.ndim != 4
+            or bilinear_disparity_hr_px.shape[1] != 1
+            or bilinear_disparity_hr_px.shape[0] != final.shape[0]
+        ):
+            raise ValueError("bilinear_disparity_hr_px must be [B,1,H_hr,W_hr]")
+        bilinear_disparity_hr_px = bilinear_disparity_hr_px.float()
+        ffs_valid_lr = self._check_mask(
+            "ffs_valid_lr", ffs_valid_lr, stages["source_mix_lr"]
+        )
+        ffs_valid_hr = self._check_mask("ffs_valid_hr", ffs_valid_hr, final)
+        history_valid_lr = self._check_mask(
+            "history_valid_lr", history_valid_lr, stages["source_mix_lr"]
+        )
+        history_valid_hr = self._check_mask(
+            "history_valid_hr", history_valid_hr, final
+        )
+        if pose_valid.ndim != 1 or pose_valid.shape[0] != final.shape[0]:
+            raise ValueError(
+                f"pose_valid must have shape [{final.shape[0]}], got {tuple(pose_valid.shape)}"
+            )
+        pose_valid = pose_valid.to(device=final.device, dtype=torch.bool)
+
+        for stage_name, _, grid in T3_VGGT_SIGN_HEALTH_STAGES:
+            value = stages[stage_name]
+            size_hw = tuple(int(item) for item in value.shape[-2:])
+            if value.shape[0] != final.shape[0]:
+                raise ValueError("all sign-health stages must have the same batch size")
+            bilinear_native = functional.interpolate(
+                bilinear_disparity_hr_px,
+                size=size_hw,
+                mode="bilinear",
+                align_corners=False,
+            )
+            if grid == "LR":
+                ffs_valid_native = self._resize_mask(ffs_valid_lr, size_hw)
+                history_valid_native = self._resize_mask(history_valid_lr, size_hw)
+            else:
+                ffs_valid_native = self._resize_mask(ffs_valid_hr, size_hw)
+                history_valid_native = self._resize_mask(history_valid_hr, size_hw)
+            pose_valid_native = pose_valid.reshape(-1, 1, 1, 1).expand_as(value)
+            bilinear_finite = torch.isfinite(bilinear_native)
+            strata = {
+                "all_pixels": torch.ones_like(value, dtype=torch.bool),
+                "bilinear_disparity_lt_0_hr_px": (
+                    bilinear_finite & (bilinear_native < 0.0)
+                ),
+                "bilinear_disparity_ge_0_lt_0_25_hr_px": (
+                    bilinear_finite
+                    & (bilinear_native >= 0.0)
+                    & (bilinear_native < 0.25)
+                ),
+                "bilinear_disparity_ge_0_25_hr_px": (
+                    bilinear_finite & (bilinear_native >= 0.25)
+                ),
+                "bilinear_disparity_nonfinite": ~bilinear_finite,
+                "ffs_valid": ffs_valid_native,
+                "ffs_invalid": ~ffs_valid_native,
+                "history_valid": history_valid_native,
+                "history_invalid": ~history_valid_native,
+                "pose_valid": pose_valid_native,
+                "pose_invalid": ~pose_valid_native,
+            }
+            finite = torch.isfinite(value)
+            negative = finite & (value < 0.0)
+            domain_stack = torch.stack(
+                [strata[name] for name in T3_VGGT_SIGN_HEALTH_STRATA], dim=0
+            )
+            reduction_dims = tuple(range(1, domain_stack.ndim))
+            batch_counts = torch.stack(
+                (
+                    domain_stack.sum(dim=reduction_dims),
+                    (domain_stack & finite.unsqueeze(0)).sum(dim=reduction_dims),
+                    (domain_stack & negative.unsqueeze(0)).sum(dim=reduction_dims),
+                    (domain_stack & ~finite.unsqueeze(0)).sum(dim=reduction_dims),
+                ),
+                dim=1,
+            ).detach().cpu().tolist()
+            for stratum, values in zip(
+                T3_VGGT_SIGN_HEALTH_STRATA, batch_counts, strict=True
+            ):
+                destination = self._counts[stage_name][stratum]
+                for count_name, count in zip(self._COUNT_NAMES, values, strict=True):
+                    destination[count_name] += int(count)
+        self.records_accumulated += int(final.shape[0])
+
+    @staticmethod
+    def _finalize_counts(counts: dict[str, int]) -> dict[str, int | float | None]:
+        domain_count = counts["diagnostic_domain_count"]
+        finite_count = counts["finite_count"]
+        negative_count = counts["negative_count"]
+        nonfinite_count = counts["nonfinite_count"]
+        if finite_count + nonfinite_count != domain_count:
+            raise RuntimeError("sign-health finite/non-finite counts do not partition domain")
+        if negative_count > finite_count:
+            raise RuntimeError("sign-health negative count exceeds finite count")
+        return {
+            **counts,
+            "negative_rate_over_diagnostic_domain": (
+                None if domain_count == 0 else negative_count / domain_count
+            ),
+            "negative_rate_over_finite": (
+                None if finite_count == 0 else negative_count / finite_count
+            ),
+            "nonfinite_rate_over_diagnostic_domain": (
+                None if domain_count == 0 else nonfinite_count / domain_count
+            ),
+        }
+
+    def finalize(self) -> dict[str, Any]:
+        """Return an exhaustive JSON-safe diagnostic receipt."""
+
+        stages: dict[str, Any] = {}
+        for stage_name, field_name, grid in T3_VGGT_SIGN_HEALTH_STAGES:
+            strata = {
+                stratum: self._finalize_counts(self._counts[stage_name][stratum])
+                for stratum in T3_VGGT_SIGN_HEALTH_STRATA
+            }
+            stages[stage_name] = {
+                "model_output_field": field_name,
+                "native_grid": grid,
+                "disparity_unit": "HR_PIXEL",
+                "diagnostic_domain": (
+                    "all primary T3_VGGT endpoint pixels on this operation's "
+                    "native grid; no pseudo-GT, teacher, confidence, or trusted mask"
+                ),
+                "diagnostic_domain_count": strata["all_pixels"][
+                    "diagnostic_domain_count"
+                ],
+                "strata": strata,
+            }
+        return {
+            "schema_version": 1,
+            "method": "T3_VGGT",
+            "causal_endpoint_time_index": 2,
+            "records_accumulated": self.records_accumulated,
+            "negative_definition": "isfinite(disparity) AND disparity < 0",
+            "nonfinite_definition": "NOT isfinite(disparity)",
+            "rate_unit": "fraction",
+            "bilinear_strata_reference": (
+                "the exact sanitized HR bilinear FFS metric baseline used by this "
+                "evaluation, bilinearly resized to each operation's native grid"
+            ),
+            "mask_strata_reference": {
+                "ffs_valid": "endpoint observation valid mask at native LR/HR grid",
+                "history_valid": (
+                    "primary T3_VGGT endpoint z-buffer valid-history mask at native "
+                    "LR/HR grid"
+                ),
+                "pose_valid": (
+                    "endpoint VGGT temporal-pose valid flag broadcast over native grid"
+                ),
+            },
+            "partition_contract": {
+                "bilinear_disparity": [
+                    "bilinear_disparity_lt_0_hr_px",
+                    "bilinear_disparity_ge_0_lt_0_25_hr_px",
+                    "bilinear_disparity_ge_0_25_hr_px",
+                    "bilinear_disparity_nonfinite",
+                ],
+                "ffs_validity": ["ffs_valid", "ffs_invalid"],
+                "history_validity": ["history_valid", "history_invalid"],
+                "pose_validity": ["pose_valid", "pose_invalid"],
+            },
+            "stages": stages,
+        }
+
+
 def _build_eval_transport(
     *,
     previous_output: ModelOutput,
@@ -642,6 +921,7 @@ def _save_visualization(
     sample_root = root / sample_name
     target_mask = target_trusted_mask.to(dtype=torch.bool)
     absolute_error = (output_hr_px - target_hr_px).abs()
+    final_negative_mask = torch.isfinite(output_hr_px) & (output_hr_px < 0.0)
     save_rgb_uint8(sample_root / "rgb.png", _rgb_chw_to_uint8(rgb_hr))
     for filename, value, mask in (
         ("bilinear_ffs_hr_px.png", baseline_hr_px, None),
@@ -654,6 +934,12 @@ def _save_visualization(
             sample_root / filename,
             scalar_to_rgb_uint8(value, valid_mask=mask),
         )
+    save_rgb_uint8(
+        sample_root / "final_negative_mask.png",
+        grayscale_to_rgb_uint8(
+            final_negative_mask.to(dtype=torch.float32), minimum=0.0, maximum=1.0
+        ),
+    )
     source_names = ("ffs", "vggt", "history")
     for source_index, source_name in enumerate(source_names):
         source_hr = functional.interpolate(
@@ -1434,6 +1720,9 @@ def run(args: argparse.Namespace) -> int:
     visualization_records: list[dict[str, Any]] = []
     endpoint_pose_valid_count = 0
     endpoint_static_prior_valid_count = 0
+    t3_vggt_sign_health = (
+        T3VGGTSignHealthAccumulator() if stage == "temporal" else None
+    )
     started = time.perf_counter()
 
     use_cuda_bf16 = (
@@ -1611,6 +1900,22 @@ def run(args: argparse.Namespace) -> int:
                         "T3_VGGT": MetricResult.invalid(),
                         "T3_VGGT_mask_off": MetricResult.invalid(),
                     }
+            if stage == "temporal":
+                assert temporal_visualization is not None
+                assert t3_vggt_sign_health is not None
+                t3_vggt_sign_health.update(
+                    temporal_visualization.vggt_on,
+                    bilinear_disparity_hr_px=baseline,
+                    ffs_valid_lr=endpoint_ffs_valid,
+                    ffs_valid_hr=valid_hr,
+                    history_valid_lr=(
+                        temporal_visualization.shared_transport.valid_history
+                    ),
+                    history_valid_hr=(
+                        temporal_visualization.shared_transport.valid_history_hr
+                    ),
+                    pose_valid=batch["temporal_pose_valid_sequence"][:, 2],
+                )
             predictions: dict[str, Tensor] = {}
             for method_name, prediction in raw_predictions.items():
                 predictions[method_name] = prediction
@@ -1944,6 +2249,13 @@ def run(args: argparse.Namespace) -> int:
         },
         "methods": finalized,
         "comparisons": comparisons,
+        "diagnostics": {
+            "t3_vggt_sign_health": (
+                None
+                if t3_vggt_sign_health is None
+                else t3_vggt_sign_health.finalize()
+            )
+        },
         "point_to_plane": dict(POINT_TO_PLANE_NOT_AVAILABLE),
         "records_evaluated": sample_count,
         "selection_start": start_index,

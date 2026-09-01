@@ -370,6 +370,159 @@ def test_physical_clamp_uses_zero_not_epsilon_and_preserves_nonfinite() -> None:
     assert torch.isneginf(result[5])
 
 
+def _sign_health_output() -> ModelOutput:
+    source_mix = torch.tensor([[[[-2.0, float("nan"), 0.2, 1.0]]]])
+    post_lr = torch.tensor([[[[-1.0, -0.5, 0.2, float("inf")]]]])
+    post_convex = torch.tensor(
+        [
+            [
+                [
+                    [-1.0, -1.0, float("nan"), float("nan"), 0.1, 0.1, 1.0, 1.0],
+                    [-1.0, -1.0, float("nan"), float("nan"), 0.1, 0.1, 1.0, 1.0],
+                ]
+            ]
+        ]
+    )
+    raw = post_convex + 0.5
+    final = torch.tensor(
+        [
+            [
+                [
+                    [-0.1, 0.0, 0.1, 0.2, 0.3, 0.4, float("-inf"), 1.0],
+                    [-0.1, 0.0, 0.1, 0.2, 0.3, 0.4, float("-inf"), 1.0],
+                ]
+            ]
+        ]
+    )
+    return ModelOutput(
+        disparity_hr_px=final,
+        disparity_raw_hr_px=raw,
+        source_weights=torch.ones((1, 3, 1, 4)) / 3.0,
+        log_variance=torch.zeros_like(final),
+        uncertainty=torch.ones_like(final),
+        hidden_state=(),
+        anchor_gate=torch.ones_like(final),
+        source_valid_mask=torch.ones((1, 3, 1, 4), dtype=torch.bool),
+        disparity_source_mix_hr_px_lr_grid=source_mix,
+        disparity_post_lr_residual_hr_px_lr_grid=post_lr,
+        disparity_post_convex_hr_px=post_convex,
+    )
+
+
+def test_t3_vggt_sign_health_counts_native_stages_and_exhaustive_strata() -> None:
+    accumulator = eval_cli.T3VGGTSignHealthAccumulator()
+    bilinear = torch.tensor(
+        [
+            [
+                [
+                    [-1.0, -1.0, 0.1, 0.1, 0.25, 0.25, 1.0, 1.0],
+                    [-1.0, -1.0, 0.1, 0.1, 0.25, 0.25, 1.0, 1.0],
+                ]
+            ]
+        ]
+    )
+    ffs_lr = torch.tensor([[[[True, True, False, False]]]])
+    history_lr = torch.tensor([[[[True, False, True, False]]]])
+    accumulator.update(
+        _sign_health_output(),
+        bilinear_disparity_hr_px=bilinear,
+        ffs_valid_lr=ffs_lr,
+        ffs_valid_hr=torch.nn.functional.interpolate(
+            ffs_lr.float(), size=(2, 8), mode="nearest"
+        ).bool(),
+        history_valid_lr=history_lr,
+        history_valid_hr=torch.nn.functional.interpolate(
+            history_lr.float(), size=(2, 8), mode="nearest"
+        ).bool(),
+        pose_valid=torch.tensor([True]),
+    )
+    report = accumulator.finalize()
+
+    assert report["method"] == "T3_VGGT"
+    assert report["records_accumulated"] == 1
+    source = report["stages"]["source_mix_lr"]
+    assert source["native_grid"] == "LR"
+    assert source["diagnostic_domain_count"] == 4
+    all_pixels = source["strata"]["all_pixels"]
+    assert all_pixels == {
+        "diagnostic_domain_count": 4,
+        "finite_count": 3,
+        "negative_count": 1,
+        "nonfinite_count": 1,
+        "negative_rate_over_diagnostic_domain": pytest.approx(0.25),
+        "negative_rate_over_finite": pytest.approx(1.0 / 3.0),
+        "nonfinite_rate_over_diagnostic_domain": pytest.approx(0.25),
+    }
+    assert source["strata"]["bilinear_disparity_lt_0_hr_px"][
+        "negative_count"
+    ] == 1
+    assert source["strata"]["bilinear_disparity_ge_0_lt_0_25_hr_px"][
+        "nonfinite_count"
+    ] == 1
+    assert source["strata"]["ffs_valid"]["diagnostic_domain_count"] == 2
+    assert source["strata"]["history_valid"]["negative_count"] == 1
+    assert source["strata"]["pose_valid"]["diagnostic_domain_count"] == 4
+    assert source["strata"]["pose_invalid"]["diagnostic_domain_count"] == 0
+
+    for stage in report["stages"].values():
+        strata = stage["strata"]
+        all_count = strata["all_pixels"]["diagnostic_domain_count"]
+        assert sum(
+            strata[name]["diagnostic_domain_count"]
+            for name in report["partition_contract"]["bilinear_disparity"]
+        ) == all_count
+        assert (
+            strata["ffs_valid"]["diagnostic_domain_count"]
+            + strata["ffs_invalid"]["diagnostic_domain_count"]
+            == all_count
+        )
+        assert (
+            strata["history_valid"]["diagnostic_domain_count"]
+            + strata["history_invalid"]["diagnostic_domain_count"]
+            == all_count
+        )
+        assert (
+            strata["pose_valid"]["diagnostic_domain_count"]
+            + strata["pose_invalid"]["diagnostic_domain_count"]
+            == all_count
+        )
+
+    final = report["stages"]["post_anchor_final"]["strata"]["all_pixels"]
+    assert final["diagnostic_domain_count"] == 16
+    assert final["negative_count"] == 2
+    assert final["nonfinite_count"] == 2
+
+
+def test_visualization_writes_exact_finite_final_negative_mask(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    written: dict[str, object] = {}
+    monkeypatch.setattr(
+        eval_cli,
+        "save_rgb_uint8",
+        lambda path, image: written.__setitem__(Path(path).name, image),
+    )
+    output = torch.tensor([[[-1.0, 0.0], [float("-inf"), 2.0]]])
+    eval_cli._save_visualization(
+        tmp_path,
+        sample_name="sample",
+        rgb_hr=torch.zeros((3, 2, 2)),
+        baseline_hr_px=torch.ones((1, 2, 2)),
+        output_hr_px=output,
+        target_hr_px=torch.ones((1, 2, 2)),
+        target_trusted_mask=torch.ones((1, 2, 2), dtype=torch.bool),
+        source_weights_lr=torch.ones((3, 1, 1)) / 3.0,
+        uncertainty_hr=torch.ones((1, 2, 2)),
+    )
+
+    mask = written["final_negative_mask.png"]
+    assert getattr(mask, "shape") == (2, 2, 3)
+    assert mask[0, 0].tolist() == [255, 255, 255]  # type: ignore[index]
+    assert mask[0, 1].tolist() == [0, 0, 0]  # type: ignore[index]
+    # -inf is non-finite and belongs only in the JSON non-finite counter.
+    assert mask[1, 0].tolist() == [0, 0, 0]  # type: ignore[index]
+
+
 def _formal_coverage_fixture(tmp_path: Path) -> SimpleNamespace:
     records = [
         ManifestRecord(

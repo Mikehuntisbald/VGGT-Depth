@@ -37,6 +37,22 @@ def test_default_model_shapes_are_x2_and_parameter_budget_is_below_12m() -> None
 
     assert output.disparity_hr_px.shape == (2, 1, 2 * height_lr, 2 * width_lr)
     assert output.disparity_raw_hr_px.shape == output.disparity_hr_px.shape
+    assert output.disparity_source_mix_hr_px_lr_grid is not None
+    assert output.disparity_post_lr_residual_hr_px_lr_grid is not None
+    assert output.disparity_post_convex_hr_px is not None
+    assert output.disparity_source_mix_hr_px_lr_grid.shape == (
+        2,
+        1,
+        height_lr,
+        width_lr,
+    )
+    assert output.disparity_post_lr_residual_hr_px_lr_grid.shape == (
+        2,
+        1,
+        height_lr,
+        width_lr,
+    )
+    assert output.disparity_post_convex_hr_px.shape == output.disparity_hr_px.shape
     assert output.source_weights.shape == (2, 3, height_lr, width_lr)
     assert output.log_variance.shape == output.disparity_hr_px.shape
     assert output.uncertainty.shape == output.disparity_hr_px.shape
@@ -49,11 +65,22 @@ def test_default_model_shapes_are_x2_and_parameter_budget_is_below_12m() -> None
         for tensor in (
             output.disparity_hr_px,
             output.disparity_raw_hr_px,
+            output.disparity_source_mix_hr_px_lr_grid,
+            output.disparity_post_lr_residual_hr_px_lr_grid,
+            output.disparity_post_convex_hr_px,
             output.source_weights,
             output.log_variance,
             output.uncertainty,
         )
     )
+
+    # Diagnostic taps are plain outputs: they add no state and therefore keep
+    # legacy checkpoints strictly loadable.
+    reloaded = FFSOmegaTSR().eval()
+    incompatible = reloaded.load_state_dict(model.state_dict(), strict=True)
+    assert incompatible.missing_keys == []
+    assert incompatible.unexpected_keys == []
+    assert tuple(reloaded.state_dict()) == tuple(model.state_dict())
 
 
 def test_convex_upsampling_preserves_hr_pixel_units_and_constant_borders() -> None:

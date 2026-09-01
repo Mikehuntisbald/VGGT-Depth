@@ -28,6 +28,17 @@ class ModelOutput:
         hidden_state: Two causal ConvGRU states, each ``[B,96,H,W]``.
         anchor_gate: Applied FFS correction gate ``[B,1,2H,2W]``.
         source_valid_mask: Effective pre-fallback source mask ``[B,3,H,W]``.
+        disparity_source_mix_hr_px_lr_grid: Three-source mixture before the LR
+            residual, shaped ``[B,1,H,W]`` and expressed in HR pixels.
+        disparity_post_lr_residual_hr_px_lr_grid: Source mixture after the
+            bounded LR residual, shaped ``[B,1,H,W]`` in HR pixels.
+        disparity_post_convex_hr_px: Convex-upsampled disparity before the
+            shallow HR residual, shaped ``[B,1,2H,2W]`` in HR pixels.
+
+    The final three fields are diagnostic tensor taps only.  They do not add
+    modules, parameters, buffers, or checkpoint state.  Their optional defaults
+    keep manually constructed legacy ``ModelOutput`` fixtures source-compatible;
+    every real :class:`FFSOmegaTSR` forward populates them.
     """
 
     disparity_hr_px: Tensor
@@ -38,6 +49,9 @@ class ModelOutput:
     hidden_state: tuple[Tensor, ...]
     anchor_gate: Tensor
     source_valid_mask: Tensor
+    disparity_source_mix_hr_px_lr_grid: Tensor | None = None
+    disparity_post_lr_residual_hr_px_lr_grid: Tensor | None = None
+    disparity_post_convex_hr_px: Tensor | None = None
 
 
 def count_trainable_parameters(module: nn.Module) -> int:
@@ -442,4 +456,9 @@ class FFSOmegaTSR(nn.Module):
             hidden_state=next_hidden_state,
             anchor_gate=anchor_gate,
             source_valid_mask=source_valid_mask,
+            disparity_source_mix_hr_px_lr_grid=disparity_mix_hr_px,
+            disparity_post_lr_residual_hr_px_lr_grid=(
+                disparity_refined_hr_px_lr_grid
+            ),
+            disparity_post_convex_hr_px=disparity_convex_hr_px,
         )
