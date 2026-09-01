@@ -444,7 +444,12 @@ gradient norm, and every loss component (144/144 records, maximum absolute
 difference zero). Only wall-clock `elapsed_seconds` restarts at the resume
 boundary. The resumable artifact SHA-256 is
 `da502de3f0d2b39982e10005a217f49f78bfb8b51ea96e6117069ce6dc2dbd29`;
-evidence: `reports/m4/stage_b_resume_step7000.json`.
+evidence: `reports/m4/stage_b_resume_step7000.json`. A read-only audit after
+the next atomic save found step 7,500 in the checkpoint and 7,617 strict,
+continuous, finite log records. It independently passes checkpoint identity,
+state finiteness, exact learning-rate schedule, and identifies the sole resume
+boundary at step 7,001; it remains correctly labeled `IN_PROGRESS` because no
+completion receipt exists (`reports/m4/stage_b_training_audit_step7500.json`).
 
 Stage-C now has a separate training entrypoint that runs the full frozen
 VGGT-on Stage-B endpoint through the exact three-step causal unroll, loads the
