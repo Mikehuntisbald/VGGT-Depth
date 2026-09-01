@@ -319,11 +319,15 @@ def main() -> int:
                 "records_evaluated": report.get("records_evaluated", report.get("metrics", {}).get("frames")),
                 "windows_evaluated": report.get("windows_evaluated"),
                 "evaluation_status": report.get("status"),
-                "evaluation_crop_mode": report.get(
-                    "crop_mode",
-                    report.get("crop_contract", {}).get("evaluation_crop_mode")
-                    if isinstance(report.get("crop_contract"), Mapping)
-                    else None,
+                "evaluation_crop_mode": (
+                    "full"
+                    if name == "S0"
+                    else report.get(
+                        "crop_mode",
+                        report.get("crop_contract", {}).get("evaluation_crop_mode")
+                        if isinstance(report.get("crop_contract"), Mapping)
+                        else None,
+                    )
                 ),
                 "evaluation_hr_crop": report.get(
                     "hr_crop",
