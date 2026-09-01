@@ -454,6 +454,16 @@ scale 1 / offset 0, retains `K_right` only as a diagnostic, and rejects the
 legacy smoke checkpoint because it predates this receipt binding. Evidence:
 `reports/m6/epipolar_rectification_audit.json`.
 
+After binding that receipt, a new Stage-C smoke used the formal train-side
+step-5,000 Stage-B checkpoint and all exact train cache artifacts. It verified
+the observation/teacher receipt and manifest hashes, a 2,775-endpoint right
+source digest, frozen 1,619,882-parameter base, and a non-empty 1,219-pixel
+teacher mask. One CPU optimizer step produced finite loss 0.00284933 and a
+real correction-head update; two runs reproduced all 18 refiner tensors
+bit-for-bit. It remains acceptance-ineligible because the base is incomplete
+and Stage C ran only one step. Evidence:
+`reports/m6/stage_c_geometry_smoke.json`.
+
 ## Tests
 
 ```text

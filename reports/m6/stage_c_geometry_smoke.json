@@ -1,0 +1,67 @@
+{
+  "schema_version": 1,
+  "component": "stage-c-audited-geometry-integration-smoke",
+  "status": "INCOMPLETE_BASE_INTEGRATION_PASS",
+  "claim_boundary": {
+    "acceptance_eligible": false,
+    "formal_holdout": false,
+    "paper_accuracy": false,
+    "paper_ground_truth": false,
+    "reason": "The base is the formal train-lineage Stage-B step-5000 checkpoint and Stage C ran one optimizer step. This proves the corrected producer/runtime contract, not final accuracy."
+  },
+  "source": {
+    "git_hash": "f73ea6b91e11d199aa3433de0ab08ffc0972845d",
+    "base_checkpoint": "/tmp/ffs_omega_tsr_stage_b_step5000.pt",
+    "base_checkpoint_sha256": "aacbe154f161c0697f3cb924e7e68c6507b13cbba3ffecc3061165c657c7f9a5",
+    "base_checkpoint_step": 5000,
+    "base_parameter_count": 1619882,
+    "base_parameters_frozen": true,
+    "trainable_refiner_parameter_count": 69905
+  },
+  "geometry": {
+    "contract_version": "audited_same_row_rectified_pixels_v1",
+    "runtime_right_row_scale": 1.0,
+    "runtime_right_row_offset_hr_px": 0.0,
+    "rectification_audit": "reports/m6/epipolar_rectification_audit.json",
+    "rectification_audit_sha256": "3eb3e8853e4723b9e0703aeaffd36b9ef482b311ff5b9cff5a79e28e60e84429",
+    "sampled_frames": 96,
+    "ransac_inliers": 71436,
+    "median_right_y_minus_left_y_px": -0.0723114013671875,
+    "p95_abs_right_y_minus_left_y_px": 2.0238914489746094,
+    "metadata_right_minus_left_cy_px": 5.399999999999977,
+    "metadata_pixel_disagreement_px": 5.472311401367165
+  },
+  "lineage": {
+    "train_manifest_sha256": "596702933688f695d9aac480d9f01e5764f40a4d7b28d72d73c550eb209b301c",
+    "observation_receipt_sha256": "8c2bfb9ba9bbfdae3cba62739007f7467829eac9c378f7d6fce35f255ab9e839",
+    "observation_manifest_sha256": "07c5f6c4ee36f8fb496954d17db447540bb88753efe0762406487a372fddabee",
+    "teacher_receipt_sha256": "7111620c6fc03a8fb6599ff41200e8a34ec7b60169208ba3e5d58f522d7d1c01",
+    "teacher_manifest_sha256": "61dbf1adb0a51df16ae49100656a9caa68bf46aec19e7ae7b455c04918c4162c",
+    "endpoint_right_source_records": 2775,
+    "endpoint_right_source_digest_sha256": "ae283814edd4e51f3c05187dd2694a4f6cf7bf7e7df09db3fe4b7f1055fd4384"
+  },
+  "execution": {
+    "device": "cpu",
+    "optimizer_steps": 1,
+    "crop_hr_hw": [32, 64],
+    "crop_mode": "fixed",
+    "valid_supervision_pixels": 1219,
+    "loss_total": 0.002849332755431533,
+    "loss_disparity": 0.002849332755431533,
+    "loss_correction_regularizer": 0.0,
+    "correction_head_updated": true,
+    "model_state_tensor_count": 18
+  },
+  "determinism": {
+    "same_seed_runs": 2,
+    "model_tensors_compared": 18,
+    "bit_exact_model_state": true,
+    "bit_exact_loss": true
+  },
+  "artifacts": {
+    "first_checkpoint": "/tmp/ffs_omega_tsr_stage_c_geometry_smoke_v1/final.pt",
+    "first_checkpoint_sha256": "90e041352bb64fa2bbffee23af8d1bacc9c4f19cc46017209dc53a25956ad06a",
+    "second_checkpoint": "/tmp/ffs_omega_tsr_stage_c_geometry_smoke_v2/final.pt",
+    "second_checkpoint_sha256": "19c96993847c91bd8bcfd2de71d737f5d6e7d326e5f1f146cef7c8f2cbed8102"
+  }
+}
