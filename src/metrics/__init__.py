@@ -17,7 +17,13 @@ from .disparity import (
     low_confidence_region_epe,
     output_validity_metrics,
 )
-from .pointcloud import PointCloudResult, disparity_to_point_cloud, point_to_plane_error
+from .pointcloud import (
+    PointCloudExportResult,
+    PointCloudResult,
+    disparity_to_point_cloud,
+    export_colored_point_cloud_ply,
+    point_to_plane_error,
+)
 from .temporal import (
     TrustedRegionDegradationReport,
     temporal_disparity_error,
@@ -29,6 +35,7 @@ __all__ = [
     "DisparityMetricReport",
     "MetricResult",
     "OutputValidityReport",
+    "PointCloudExportResult",
     "PointCloudResult",
     "TrustedRegionDegradationReport",
     "bad_n",
@@ -39,6 +46,7 @@ __all__ = [
     "disparity_to_point_cloud",
     "end_point_error",
     "epe",
+    "export_colored_point_cloud_ply",
     "invalid_negative_nan_rate",
     "invalid_region_completeness",
     "invalid_region_completeness_improvement",

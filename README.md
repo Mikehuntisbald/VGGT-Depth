@@ -67,6 +67,15 @@ artifact identities, receipts, and claim boundaries.
 4. Temporal transport is forward splatting with a z-buffer, never a bare
    backward `grid_sample` of disparity.
 
+## Colored point-cloud export
+
+`metrics.export_colored_point_cloud_ply` writes one calibrated camera-frame
+ASCII PLY from HR-pixel disparity, the matching real HR intrinsics `K`, and the
+physical stereo baseline. It requires RGB colors (uint8 or normalized float),
+never invents normals/correspondences or point-to-plane scores, and writes only
+finite pixels with strictly positive disparity. Optional finite confidence,
+minimum-depth, and maximum-depth masks make visualization filtering explicit.
+
 ## Start here
 
 Read [`CODEX_TASK.md`](CODEX_TASK.md), then follow [`RUNBOOK.md`](RUNBOOK.md).
