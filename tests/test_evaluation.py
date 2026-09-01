@@ -616,6 +616,40 @@ def test_temporal_checkpoint_lineage_checks_stage_policy_and_active_config() -> 
         )
 
 
+def test_spring_override_source_hashes_are_not_cross_split_policy() -> None:
+    """Split-local source hashes must not invalidate an otherwise identical arm."""
+    config = _temporal_checkpoint_config()
+    checkpoint_config = copy.deepcopy(config)
+    saved_derived = checkpoint_config["data"]["derived_cache_lineage"]  # type: ignore[index]
+    assert isinstance(saved_derived, dict)
+    saved_policy = saved_derived["config"]
+    assert isinstance(saved_policy, dict)
+    saved_policy.update(
+        {
+            "pose_source": "Spring_GT_pose",
+            "depth_source": "copied_from_vggt_derived",
+            "source_derived_receipt_sha256": "a" * 64,
+            "source_derived_manifest_sha256": "b" * 64,
+        }
+    )
+    current_derived = copy.deepcopy(checkpoint_config["data"]["derived_cache_lineage"])  # type: ignore[index]
+    assert isinstance(current_derived, dict)
+    current_policy = current_derived["config"]
+    assert isinstance(current_policy, dict)
+    current_policy["source_derived_receipt_sha256"] = "c" * 64
+    current_policy["source_derived_manifest_sha256"] = "d" * 64
+
+    result = validate_checkpoint_lineage(
+        {"training_config": checkpoint_config},
+        required_stage="temporal",
+        observation_cache_identity=_cache_identity_dict("ffs-observation"),
+        teacher_cache_identity=_cache_identity_dict("ffs-teacher"),
+        derived_cache_lineage=current_derived,
+        evaluation_config=checkpoint_config,
+    )
+    assert result["stage_a_initialization_sha256"] == "c" * 64
+
+
 @pytest.mark.parametrize(
     ("section_name", "field_name", "replacement"),
     (

@@ -674,6 +674,17 @@ def validate_checkpoint_lineage(
     )
     def comparable_policy(value: Mapping[str, Any]) -> dict[str, Any]:
         result = dict(value)
+        # A Spring GT-pose override records the exact source VGGT receipt and
+        # cache-manifest hashes in its config.  Those hashes intentionally
+        # differ between the train and validation split (each split has its
+        # own derived cache), but they do not change the geometry policy or
+        # model behavior.  Keep them in the receipt/provenance while omitting
+        # them from the cross-split policy equality check.
+        for split_specific_key in (
+            "source_derived_receipt_sha256",
+            "source_derived_manifest_sha256",
+        ):
+            result.pop(split_specific_key, None)
         calibration = result.get("rectified_stereo_calibration")
         if isinstance(calibration, Mapping):
             result["rectified_stereo_calibration"] = {
