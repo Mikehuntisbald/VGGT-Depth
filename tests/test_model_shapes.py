@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import torch
 
+from losses import lower_bound_penalty
 from models.convex_upsampler import ConvexUpsampler
 from models.ffs_omega_tsr import FFSOmegaTSR, count_trainable_parameters
 from models.source_gating import masked_source_softmax
@@ -191,6 +192,106 @@ def test_ffs_confidence_anchor_applies_exact_correction_bounds() -> None:
         low_confidence_output.disparity_hr_px,
         low_confidence_output.disparity_raw_hr_px,
     )
+
+
+def test_d025_positivity_opt_in_sanitizes_all_invalid_without_epsilon_fill() -> None:
+    baseline = FFSOmegaTSR().eval()
+    ablation = FFSOmegaTSR(
+        sanitize_invalid_source_disparities=True,
+        positivity_floor_hr_px=0.0,
+    ).eval()
+    incompatible = ablation.load_state_dict(baseline.state_dict(), strict=True)
+    assert incompatible.missing_keys == []
+    assert incompatible.unexpected_keys == []
+
+    rgb_hr = torch.rand(1, 3, 4, 6)
+    negative_ffs = torch.full((1, 1, 2, 3), -3.0)
+    confidence = torch.ones_like(negative_ffs)
+    valid = torch.zeros_like(negative_ffs, dtype=torch.bool)
+    with torch.no_grad():
+        baseline_output = baseline(
+            rgb_hr, negative_ffs, confidence, valid_ffs=valid
+        )
+        ablation_output = ablation(
+            rgb_hr, negative_ffs, confidence, valid_ffs=valid
+        )
+
+    assert (baseline_output.disparity_hr_px < 0).all()
+    assert not ablation_output.source_valid_mask.any()
+    torch.testing.assert_close(
+        ablation_output.source_weights,
+        torch.tensor([[[[1.0] * 3] * 2, [[0.0] * 3] * 2, [[0.0] * 3] * 2]]),
+    )
+    for tensor in (
+        ablation_output.disparity_source_mix_hr_px_lr_grid,
+        ablation_output.disparity_post_lr_residual_hr_px_lr_grid,
+        ablation_output.disparity_post_convex_hr_px,
+        ablation_output.disparity_raw_hr_px,
+        ablation_output.disparity_hr_px,
+    ):
+        assert tensor is not None
+        # Exactly zero remains an invalid measurement; no epsilon or softplus
+        # creates a fake positive completion at the all-invalid pixels.
+        torch.testing.assert_close(tensor, torch.zeros_like(tensor))
+
+
+def test_d025_positivity_keeps_high_confidence_anchor_and_has_finite_gradient() -> None:
+    model = FFSOmegaTSR(
+        sanitize_invalid_source_disparities=True,
+        positivity_floor_hr_px=0.0,
+    ).train()
+    rgb_hr, disparity_ffs_hr_px, confidence_ffs = _base_inputs()
+    confidence_ffs.fill_(1.0)
+    with torch.no_grad():
+        model.disparity_residual_head.bias.fill_(-1.0)
+    output = model(rgb_hr, disparity_ffs_hr_px, confidence_ffs)
+
+    assert output.disparity_pre_lower_bound_hr_px_lr_grid is not None
+    assert output.disparity_pre_lower_bound_raw_hr_px is not None
+    torch.testing.assert_close(
+        output.anchor_gate, torch.full_like(output.anchor_gate, 0.1)
+    )
+    baseline_hr_px = torch.nn.functional.interpolate(
+        disparity_ffs_hr_px, scale_factor=2, mode="bilinear", align_corners=False
+    )
+    torch.testing.assert_close(
+        output.disparity_hr_px - baseline_hr_px,
+        0.1 * (output.disparity_raw_hr_px - baseline_hr_px),
+    )
+    penalty = lower_bound_penalty(
+        output.disparity_pre_lower_bound_hr_px_lr_grid, lower_bound_hr_px=0.0
+    ) + lower_bound_penalty(
+        output.disparity_pre_lower_bound_raw_hr_px, lower_bound_hr_px=0.0
+    )
+    penalty.backward()
+    assert model.disparity_residual_head.bias.grad is not None
+    assert bool(torch.isfinite(model.disparity_residual_head.bias.grad).all())
+    assert model.disparity_residual_head.bias.grad.abs().item() > 0.0
+
+
+def test_default_positivity_options_leave_the_forward_path_bitwise_unchanged() -> None:
+    reference = FFSOmegaTSR().eval()
+    explicit_default = FFSOmegaTSR(
+        sanitize_invalid_source_disparities=False,
+        positivity_floor_hr_px=None,
+    ).eval()
+    explicit_default.load_state_dict(reference.state_dict(), strict=True)
+    rgb_hr, disparity_ffs_hr_px, confidence_ffs = _base_inputs()
+    with torch.no_grad():
+        before = reference(rgb_hr, disparity_ffs_hr_px, confidence_ffs)
+        after = explicit_default(rgb_hr, disparity_ffs_hr_px, confidence_ffs)
+    for name in (
+        "disparity_hr_px",
+        "disparity_raw_hr_px",
+        "source_weights",
+        "log_variance",
+        "disparity_source_mix_hr_px_lr_grid",
+        "disparity_post_lr_residual_hr_px_lr_grid",
+        "disparity_post_convex_hr_px",
+    ):
+        torch.testing.assert_close(getattr(before, name), getattr(after, name), rtol=0, atol=0)
+    assert after.disparity_pre_lower_bound_hr_px_lr_grid is None
+    assert after.disparity_pre_lower_bound_raw_hr_px is None
 
 
 def test_recurrence_is_deterministic_on_reset_and_advances_with_prior_state() -> None:

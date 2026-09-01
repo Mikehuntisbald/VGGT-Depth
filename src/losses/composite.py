@@ -33,11 +33,14 @@ class LossBreakdown:
     epipolar: Tensor
     uncertainty_nll: Tensor
     gate_regularizer: Tensor
+    # Populated only by the separate D-025 ablation.  Keeping this optional
+    # preserves the baseline loss log schema and computation path exactly.
+    positivity_penalty: Tensor | None = None
 
     def detached_scalars(self) -> dict[str, float]:
         """Return logging values without retaining an autograd graph."""
 
-        return {
+        values = {
             name: float(value.detach().cpu().item())
             for name, value in (
                 ("total", self.total),
@@ -50,6 +53,11 @@ class LossBreakdown:
                 ("gate_regularizer", self.gate_regularizer),
             )
         }
+        if self.positivity_penalty is not None:
+            values["positivity_penalty"] = float(
+                self.positivity_penalty.detach().cpu().item()
+            )
+        return values
 
 
 def combine_loss_terms(

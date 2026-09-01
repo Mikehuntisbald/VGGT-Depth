@@ -18,7 +18,7 @@ import sys
 import tempfile
 import time
 from collections.abc import Iterator, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 
@@ -52,6 +52,7 @@ from losses import (  # noqa: E402
     ffs_gate_regularizer,
     gradient_loss,
     laplace_uncertainty_nll,
+    lower_bound_penalty,
     measurement_consistency_loss,
     sample_hr_at_lr_centers,
     temporal_consistency_loss,
@@ -166,6 +167,73 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "gate_regularizer": 0.02,
     },
 }
+
+
+@dataclass(frozen=True, slots=True)
+class PositivityAblation:
+    """Explicit D-025-only controls, absent from all baseline configs.
+
+    The default is intentionally not represented in ``DEFAULT_CONFIG``.  That
+    keeps resolved baseline configs byte-for-byte identical for exact
+    checkpoint resume; only the dedicated ablation YAML opts in.
+    """
+
+    enabled: bool = False
+    sanitize_invalid_sources: bool = False
+    lower_bound_hr_px: float | None = None
+    lr_negative_penalty_weight: float = 0.0
+    raw_negative_penalty_weight: float = 0.0
+
+
+def positivity_ablation_from_config(
+    config: Mapping[str, Any] | DictConfig,
+) -> PositivityAblation:
+    """Parse the opt-in D-025 physical positivity ablation strictly."""
+
+    section = config.get("positivity_ablation")
+    if section is None:
+        return PositivityAblation()
+    if not isinstance(section, Mapping):
+        raise ValueError("positivity_ablation must be a mapping")
+
+    def required(name: str) -> Any:
+        if name not in section:
+            raise ValueError(f"positivity_ablation.{name} is required")
+        return section[name]
+
+    enabled = required("enabled")
+    if not isinstance(enabled, bool):
+        raise ValueError("positivity_ablation.enabled must be a bool")
+    if not enabled:
+        return PositivityAblation()
+
+    sanitize_invalid_sources = required("sanitize_invalid_sources")
+    if sanitize_invalid_sources is not True:
+        raise ValueError(
+            "D-025 positivity ablation requires sanitize_invalid_sources=true"
+        )
+    lower_bound_hr_px = float(required("lower_bound_hr_px"))
+    if not math.isfinite(lower_bound_hr_px) or lower_bound_hr_px != 0.0:
+        raise ValueError(
+            "D-025 lower_bound_hr_px must be exactly 0.0; epsilon fills are forbidden"
+        )
+    lr_weight = float(required("lr_negative_penalty_weight"))
+    raw_weight = float(required("raw_negative_penalty_weight"))
+    if (
+        not math.isfinite(lr_weight)
+        or not math.isfinite(raw_weight)
+        or lr_weight < 0
+        or raw_weight < 0
+        or (lr_weight == 0 and raw_weight == 0)
+    ):
+        raise ValueError("D-025 negative-penalty weights must be finite and at least one positive")
+    return PositivityAblation(
+        enabled=True,
+        sanitize_invalid_sources=True,
+        lower_bound_hr_px=lower_bound_hr_px,
+        lr_negative_penalty_weight=lr_weight,
+        raw_negative_penalty_weight=raw_weight,
+    )
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -334,6 +402,8 @@ def validate_stage_a_config(config: DictConfig) -> None:
 
     if int(config.data.sequence_length) != 1:
         raise ValueError("Stage A is T=1: data.sequence_length must equal 1")
+    if positivity_ablation_from_config(config).enabled:
+        raise ValueError("D-025 positivity ablation is restricted to a separate Stage-B run")
     _validate_common_training_config(
         config, total_steps=int(config.train.steps_spatial)
     )
@@ -356,6 +426,9 @@ def validate_stage_b_config(config: DictConfig) -> None:
         raise ValueError("Stage B must initialize from the spatial stage")
     if not bool(config.train.history_detach):
         raise ValueError("Stage B MVP requires detached disparity history")
+    # Parsing here makes a malformed ablation config fail before cache/model
+    # construction, while an absent section leaves the formal contract alone.
+    positivity_ablation_from_config(config)
     for name in (
         "photometric_temperature",
         "disparity_temperature_hr_px",
@@ -604,6 +677,7 @@ def build_temporal_dataset_and_identities(
 
 
 def build_model(config: DictConfig) -> FFSOmegaTSR:
+    positivity_ablation = positivity_ablation_from_config(config)
     model = FFSOmegaTSR(
         rgb_channels=tuple(int(value) for value in config.model.rgb_channels),
         geometry_channels=int(config.model.geometry_channels),
@@ -611,6 +685,10 @@ def build_model(config: DictConfig) -> FFSOmegaTSR:
         gru_layers=int(config.model.gru_layers),
         scale=int(config.model.convex_scale),
         residual_limit_hr_px=float(config.model.residual_limit_hr_px),
+        sanitize_invalid_source_disparities=(
+            positivity_ablation.sanitize_invalid_sources
+        ),
+        positivity_floor_hr_px=positivity_ablation.lower_bound_hr_px,
     )
     parameter_count = count_trainable_parameters(model)
     if parameter_count <= 0 or parameter_count >= 12_000_000:
@@ -626,6 +704,7 @@ def compute_stage_a_loss(
     *,
     scale: int = 2,
     weights: LossWeights = LossWeights(),
+    positivity_ablation: PositivityAblation = PositivityAblation(),
 ) -> LossBreakdown:
     """Compute the exact Stage-A objective from teacher and observation masks."""
 
@@ -677,7 +756,7 @@ def compute_stage_a_loss(
     # Stage A has neither temporal transport nor the later HR epipolar head.
     # Tie explicit zero terms to the graph so they remain differentiable.
     differentiable_zero = output.disparity_hr_px.sum() * 0.0
-    return combine_loss_terms(
+    baseline = combine_loss_terms(
         disparity=disparity,
         measurement=measurement,
         gradient=gradient,
@@ -686,6 +765,36 @@ def compute_stage_a_loss(
         uncertainty_nll=uncertainty_nll,
         gate_regularizer=gate_regularizer,
         weights=weights,
+    )
+    if not positivity_ablation.enabled:
+        return baseline
+    return _with_positivity_penalty(baseline, output, positivity_ablation)
+
+
+def _with_positivity_penalty(
+    baseline: LossBreakdown,
+    output: ModelOutput,
+    positivity_ablation: PositivityAblation,
+) -> LossBreakdown:
+    """Attach the separately weighted D-025 loss without touching baseline math."""
+
+    if not positivity_ablation.enabled:
+        return baseline
+    pre_lr = output.disparity_pre_lower_bound_hr_px_lr_grid
+    pre_raw = output.disparity_pre_lower_bound_raw_hr_px
+    if pre_lr is None or pre_raw is None:
+        raise ValueError("positivity ablation requires pre-lower-bound model taps")
+    assert positivity_ablation.lower_bound_hr_px is not None
+    penalty = (
+        positivity_ablation.lr_negative_penalty_weight
+        * lower_bound_penalty(pre_lr, lower_bound_hr_px=positivity_ablation.lower_bound_hr_px)
+        + positivity_ablation.raw_negative_penalty_weight
+        * lower_bound_penalty(pre_raw, lower_bound_hr_px=positivity_ablation.lower_bound_hr_px)
+    )
+    return replace(
+        baseline,
+        total=baseline.total + penalty,
+        positivity_penalty=penalty,
     )
 
 
@@ -962,10 +1071,17 @@ def compute_stage_b_step_loss(
     scale: int = 2,
     weights: LossWeights = LossWeights(),
     max_photometric_residual: float = 0.10,
+    positivity_ablation: PositivityAblation = PositivityAblation(),
 ) -> LossBreakdown:
     """Compute spatial supervision plus visibility-gated temporal consistency."""
 
-    spatial = compute_stage_a_loss(output, batch, scale=scale, weights=weights)
+    spatial = compute_stage_a_loss(
+        output,
+        batch,
+        scale=scale,
+        weights=weights,
+        positivity_ablation=positivity_ablation,
+    )
     if transport is None:
         temporal = output.disparity_hr_px.sum() * 0.0
     else:
@@ -980,7 +1096,7 @@ def compute_stage_b_step_loss(
             geometry_consistent_mask=transport.geometry_consistent_mask_hr,
             history_confidence=transport.confidence_history_hr,
         )
-    return combine_loss_terms(
+    baseline = combine_loss_terms(
         disparity=spatial.disparity,
         measurement=spatial.measurement,
         gradient=spatial.gradient,
@@ -989,6 +1105,17 @@ def compute_stage_b_step_loss(
         uncertainty_nll=spatial.uncertainty_nll,
         gate_regularizer=spatial.gate_regularizer,
         weights=weights,
+    )
+    # ``spatial`` already owns the weighted ablation term.  Recombine the
+    # standard Stage-B terms first, then add it once after temporal loss.
+    if not positivity_ablation.enabled:
+        return baseline
+    if spatial.positivity_penalty is None:
+        raise RuntimeError("enabled positivity ablation produced no penalty")
+    return replace(
+        baseline,
+        total=baseline.total + spatial.positivity_penalty,
+        positivity_penalty=spatial.positivity_penalty,
     )
 
 
@@ -1001,6 +1128,15 @@ def average_loss_breakdowns(
     def mean(name: str) -> Tensor:
         return torch.stack([getattr(value, name) for value in values]).mean()
 
+    positivity_values = [value.positivity_penalty for value in values]
+    if any(value is None for value in positivity_values):
+        if not all(value is None for value in positivity_values):
+            raise ValueError("cannot mix baseline and positivity-ablation loss breakdowns")
+        positivity_penalty = None
+    else:
+        positivity_penalty = torch.stack(
+            [value for value in positivity_values if value is not None]
+        ).mean()
     return LossBreakdown(
         total=mean("total"),
         disparity=mean("disparity"),
@@ -1010,6 +1146,7 @@ def average_loss_breakdowns(
         epipolar=mean("epipolar"),
         uncertainty_nll=mean("uncertainty_nll"),
         gate_regularizer=mean("gate_regularizer"),
+        positivity_penalty=positivity_penalty,
     )
 
 
@@ -1057,6 +1194,7 @@ def _forward_temporal_loss(
     *,
     config: DictConfig,
     weights: LossWeights,
+    positivity_ablation: PositivityAblation = PositivityAblation(),
     diagnostic: bool = False,
 ) -> LossBreakdown:
     """Unroll exactly three causal steps and average their supervised losses."""
@@ -1152,6 +1290,7 @@ def _forward_temporal_loss(
                 max_photometric_residual=float(
                     config.train.temporal_photometric_threshold
                 ),
+                positivity_ablation=positivity_ablation,
             )
         )
         hidden_state = output.hidden_state
@@ -1166,6 +1305,7 @@ def _forward_loss(
     *,
     scale: int,
     weights: LossWeights,
+    positivity_ablation: PositivityAblation = PositivityAblation(),
     diagnostic: bool = False,
 ) -> LossBreakdown:
     output = model(
@@ -1184,7 +1324,13 @@ def _forward_loss(
         )
         if not bool(finite.all().item()):
             raise FloatingPointError("Stage-A model output is non-finite")
-    breakdown = compute_stage_a_loss(output, batch, scale=scale, weights=weights)
+    breakdown = compute_stage_a_loss(
+        output,
+        batch,
+        scale=scale,
+        weights=weights,
+        positivity_ablation=positivity_ablation,
+    )
     if diagnostic and not bool(torch.isfinite(breakdown.total.detach()).item()):
         raise FloatingPointError("Stage-A total loss is non-finite")
     return breakdown
@@ -1449,6 +1595,7 @@ def run(args: argparse.Namespace) -> int:
         ):
             raise ValueError("Stage-A checkpoint changed while the run was being built")
     weights = loss_weights_from_config(config)
+    positivity_ablation = positivity_ablation_from_config(config)
     warmup_steps = int(config.train.warmup_steps)
     optimizer = torch.optim.AdamW(
         model.parameters(),
@@ -1477,6 +1624,7 @@ def run(args: argparse.Namespace) -> int:
                     batch,
                     scale=int(config.data.scale),
                     weights=weights,
+                    positivity_ablation=positivity_ablation,
                     diagnostic=True,
                 )
             else:
@@ -1485,6 +1633,7 @@ def run(args: argparse.Namespace) -> int:
                     batch,
                     config=config,
                     weights=weights,
+                    positivity_ablation=positivity_ablation,
                     diagnostic=True,
                 )
         print(
@@ -1575,6 +1724,7 @@ def run(args: argparse.Namespace) -> int:
                             batch,
                             scale=int(config.data.scale),
                             weights=weights,
+                            positivity_ablation=positivity_ablation,
                             diagnostic=diagnostic,
                         )
                     else:
@@ -1583,11 +1733,12 @@ def run(args: argparse.Namespace) -> int:
                             batch,
                             config=config,
                             weights=weights,
+                            positivity_ablation=positivity_ablation,
                             diagnostic=diagnostic,
                         )
                     scaled_loss = breakdown.total / float(accumulation)
                 scaled_loss.backward()
-                for name in (
+                term_names = [
                     "total",
                     "disparity",
                     "measurement",
@@ -1596,7 +1747,10 @@ def run(args: argparse.Namespace) -> int:
                     "epipolar",
                     "uncertainty_nll",
                     "gate_regularizer",
-                ):
+                ]
+                if breakdown.positivity_penalty is not None:
+                    term_names.append("positivity_penalty")
+                for name in term_names:
                     value = getattr(breakdown, name).detach()
                     summed_terms[name] = summed_terms.get(name, value.new_zeros(())) + value
                 if not should_optimizer_step(accumulation_index + 1, accumulation):

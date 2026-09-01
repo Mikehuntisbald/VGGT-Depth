@@ -1,0 +1,17 @@
+# Separate D-025 Stage-B lineage.  This file is deliberately not inherited by
+# the formal Stage-A/B/C configs, preserving their resolved config fingerprints.
+experiment: ffs_omega_tsr_temporal_x2_d025_positivity
+defaults_from: configs/temporal_x2.yaml
+
+positivity_ablation:
+  enabled: true
+  # Zero finite-negative values which failed source validity before both the
+  # deterministic all-invalid FFS fallback and the confidence anchor.
+  sanitize_invalid_sources: true
+  # Zero is a physical boundary/invalid value, never an epsilon completion.
+  lower_bound_hr_px: 0.0
+  # Squared hinge penalties are evaluated on the pre-clamp LR and raw-HR taps.
+  # These are starter values for an independently reported ablation, not a
+  # claim about the frozen formal Stage-B trajectory.
+  lr_negative_penalty_weight: 0.10
+  raw_negative_penalty_weight: 0.01

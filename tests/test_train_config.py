@@ -49,6 +49,8 @@ def test_config_defaults_dotlist_and_contract_validation(tmp_path: Path) -> None
 def test_temporal_config_resolves_to_strict_causal_stage_b() -> None:
     config = train.resolve_config("configs/temporal_x2.yaml")
     assert train.validate_training_config(config) == "temporal"
+    assert "positivity_ablation" not in config
+    assert not train.positivity_ablation_from_config(config).enabled
     assert config.data.sequence_length == 3
     assert config.train.steps == 15000
     noncausal = train.resolve_config(
@@ -56,6 +58,22 @@ def test_temporal_config_resolves_to_strict_causal_stage_b() -> None:
     )
     with pytest.raises(ValueError, match="non-causal"):
         train.validate_stage_b_config(noncausal)
+
+
+def test_d025_positivity_config_is_separate_opt_in_and_rejects_epsilon(tmp_path: Path) -> None:
+    config = train.resolve_config("configs/ablations/d025_positivity_t3.yaml")
+    assert train.validate_training_config(config) == "temporal"
+    ablation = train.positivity_ablation_from_config(config)
+    assert ablation.enabled
+    assert ablation.sanitize_invalid_sources
+    assert ablation.lower_bound_hr_px == 0.0
+
+    epsilon = train.resolve_config(
+        "configs/ablations/d025_positivity_t3.yaml",
+        ["positivity_ablation.lower_bound_hr_px=0.001"],
+    )
+    with pytest.raises(ValueError, match="epsilon"):
+        train.validate_stage_b_config(epsilon)
 
 
 def test_accumulation_boundary_and_learning_rate_schedule() -> None:

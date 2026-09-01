@@ -138,6 +138,33 @@ def gradient_loss(
     )
 
 
+def lower_bound_penalty(
+    disparity_hr_px: Tensor,
+    *,
+    lower_bound_hr_px: float = 0.0,
+) -> Tensor:
+    """Penalize finite values below a physical disparity lower bound.
+
+    This is a squared hinge, not an epsilon fill or a positive-valued output
+    transform: values at and above the bound receive exactly zero penalty.
+    Non-finite values are excluded so the result remains a finite,
+    differentiable scalar even for diagnostic inputs.
+    """
+
+    if not isinstance(disparity_hr_px, Tensor) or not disparity_hr_px.is_floating_point():
+        raise TypeError("disparity_hr_px must be a floating-point torch.Tensor")
+    if not math.isfinite(lower_bound_hr_px) or lower_bound_hr_px < 0:
+        raise ValueError("lower_bound_hr_px must be finite and non-negative")
+    bound = disparity_hr_px.new_tensor(float(lower_bound_hr_px))
+    finite = torch.isfinite(disparity_hr_px)
+    violation = torch.where(
+        finite,
+        (bound - disparity_hr_px).clamp_min(0.0),
+        torch.zeros_like(disparity_hr_px),
+    )
+    return finite_masked_mean(violation.square(), finite)
+
+
 def epipolar_disparity_loss(
     prediction_disparity_hr_px: Tensor,
     epipolar_disparity_hr_px: Tensor,
@@ -161,4 +188,5 @@ __all__ = [
     "epipolar_disparity_loss",
     "finite_masked_mean",
     "gradient_loss",
+    "lower_bound_penalty",
 ]

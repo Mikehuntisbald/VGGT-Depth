@@ -34,8 +34,12 @@ class ModelOutput:
             bounded LR residual, shaped ``[B,1,H,W]`` in HR pixels.
         disparity_post_convex_hr_px: Convex-upsampled disparity before the
             shallow HR residual, shaped ``[B,1,2H,2W]`` in HR pixels.
+        disparity_pre_lower_bound_hr_px_lr_grid: LR disparity before an
+            opt-in physical lower bound, if that ablation is enabled.
+        disparity_pre_lower_bound_raw_hr_px: Raw HR disparity before an
+            opt-in physical lower bound, if that ablation is enabled.
 
-    The final three fields are diagnostic tensor taps only.  They do not add
+    The final five fields are diagnostic tensor taps only.  They do not add
     modules, parameters, buffers, or checkpoint state.  Their optional defaults
     keep manually constructed legacy ``ModelOutput`` fixtures source-compatible;
     every real :class:`FFSOmegaTSR` forward populates them.
@@ -52,6 +56,8 @@ class ModelOutput:
     disparity_source_mix_hr_px_lr_grid: Tensor | None = None
     disparity_post_lr_residual_hr_px_lr_grid: Tensor | None = None
     disparity_post_convex_hr_px: Tensor | None = None
+    disparity_pre_lower_bound_hr_px_lr_grid: Tensor | None = None
+    disparity_pre_lower_bound_raw_hr_px: Tensor | None = None
 
 
 def count_trainable_parameters(module: nn.Module) -> int:
@@ -105,6 +111,8 @@ class FFSOmegaTSR(nn.Module):
         scale: int = 2,
         residual_limit_hr_px: float = 8.0,
         log_variance_bounds: tuple[float, float] = (-10.0, 10.0),
+        sanitize_invalid_source_disparities: bool = False,
+        positivity_floor_hr_px: float | None = None,
     ) -> None:
         super().__init__()
         if rgb_channels != (32, 64, 96):
@@ -118,12 +126,27 @@ class FFSOmegaTSR(nn.Module):
         minimum_log_variance, maximum_log_variance = log_variance_bounds
         if minimum_log_variance >= maximum_log_variance:
             raise ValueError("log_variance_bounds must be strictly increasing")
+        if not isinstance(sanitize_invalid_source_disparities, bool):
+            raise TypeError("sanitize_invalid_source_disparities must be a bool")
+        if positivity_floor_hr_px is not None and (
+            not isinstance(positivity_floor_hr_px, (int, float))
+            or isinstance(positivity_floor_hr_px, bool)
+            or not torch.isfinite(torch.tensor(positivity_floor_hr_px))
+            or positivity_floor_hr_px < 0
+        ):
+            raise ValueError("positivity_floor_hr_px must be finite and non-negative")
 
         self.scale = scale
         self.residual_limit_hr_px = float(residual_limit_hr_px)
         self.log_variance_bounds = (
             float(minimum_log_variance),
             float(maximum_log_variance),
+        )
+        # These are behavior-only opt-ins: no parameters or buffers are added,
+        # so a baseline checkpoint remains strictly state-dict compatible.
+        self.sanitize_invalid_source_disparities = sanitize_invalid_source_disparities
+        self.positivity_floor_hr_px = (
+            None if positivity_floor_hr_px is None else float(positivity_floor_hr_px)
         )
         self.rgb_encoder = RGBPyramidEncoder(rgb_channels)
         self.geometry_encoder = GeometryEncoder(geometry_channels)
@@ -368,6 +391,17 @@ class FFSOmegaTSR(nn.Module):
         safe_disparities_hr_px = tuple(
             sanitize(tensor) for tensor in raw_disparities_hr_px
         )
+        if self.sanitize_invalid_source_disparities:
+            # A source which failed the validity contract must not contribute a
+            # finite negative value through the deterministic all-invalid FFS
+            # fallback or through the FFS anchor.  Invalid pixels become zero,
+            # not epsilon-filled positive pseudo-measurements.
+            safe_disparities_hr_px = tuple(
+                torch.where(valid, disparity, torch.zeros_like(disparity))
+                for valid, disparity in zip(
+                    source_valid_masks, safe_disparities_hr_px, strict=True
+                )
+            )
         safe_confidences = tuple(
             sanitize(tensor).clamp(0.0, 1.0) for tensor in raw_confidences
         )
@@ -410,7 +444,14 @@ class FFSOmegaTSR(nn.Module):
         residual_hr_px_lr_grid = self.residual_limit_hr_px * torch.tanh(
             self.disparity_residual_head(fused_feature_lr)
         )
-        disparity_refined_hr_px_lr_grid = disparity_mix_hr_px + residual_hr_px_lr_grid
+        disparity_pre_lower_bound_lr_grid = (
+            disparity_mix_hr_px + residual_hr_px_lr_grid
+        )
+        disparity_refined_hr_px_lr_grid = disparity_pre_lower_bound_lr_grid
+        if self.positivity_floor_hr_px is not None:
+            disparity_refined_hr_px_lr_grid = disparity_refined_hr_px_lr_grid.clamp_min(
+                self.positivity_floor_hr_px
+            )
         convex_mask_logits = self.convex_mask_head(fused_feature_lr)
         disparity_convex_hr_px = self.convex_upsampler(
             disparity_refined_hr_px_lr_grid, convex_mask_logits
@@ -427,7 +468,10 @@ class FFSOmegaTSR(nn.Module):
         )
         residual_hr_px = hr_outputs[:, :1]
         log_variance = hr_outputs[:, 1:2].clamp(*self.log_variance_bounds)
-        disparity_raw_hr_px = disparity_convex_hr_px + residual_hr_px
+        disparity_pre_lower_bound_raw_hr_px = disparity_convex_hr_px + residual_hr_px
+        disparity_raw_hr_px = disparity_pre_lower_bound_raw_hr_px
+        if self.positivity_floor_hr_px is not None:
+            disparity_raw_hr_px = disparity_raw_hr_px.clamp_min(self.positivity_floor_hr_px)
 
         disparity_ffs_bilinear_hr_px = functional.interpolate(
             safe_disparities_hr_px[0],
@@ -461,4 +505,14 @@ class FFSOmegaTSR(nn.Module):
                 disparity_refined_hr_px_lr_grid
             ),
             disparity_post_convex_hr_px=disparity_convex_hr_px,
+            disparity_pre_lower_bound_hr_px_lr_grid=(
+                disparity_pre_lower_bound_lr_grid
+                if self.positivity_floor_hr_px is not None
+                else None
+            ),
+            disparity_pre_lower_bound_raw_hr_px=(
+                disparity_pre_lower_bound_raw_hr_px
+                if self.positivity_floor_hr_px is not None
+                else None
+            ),
         )

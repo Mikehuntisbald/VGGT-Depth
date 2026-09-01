@@ -10,6 +10,7 @@ from losses import (
     ffs_gate_regularizer,
     gradient_loss,
     laplace_uncertainty_nll,
+    lower_bound_penalty,
     measurement_consistency_loss,
     sample_hr_at_lr_centers,
     temporal_consistency_loss,
@@ -50,6 +51,21 @@ def test_hr_center_sampling_and_measurement_unit_conversion() -> None:
 def test_gradient_loss_is_zero_for_equal_edges() -> None:
     target = torch.arange(12, dtype=torch.float32).reshape(1, 1, 3, 4)
     assert gradient_loss(target.clone(), target).item() == 0.0
+
+
+def test_lower_bound_penalty_is_a_finite_zero_floor_hinge() -> None:
+    disparity = torch.tensor(
+        [[[[1.0, 0.0, -2.0, float("nan")]]]], requires_grad=True
+    )
+    penalty = lower_bound_penalty(disparity, lower_bound_hr_px=0.0)
+    # The finite elements are [1, 0, -2], therefore mean([0, 0, 4]).
+    assert penalty.item() == pytest.approx(4.0 / 3.0)
+    penalty.backward()
+    assert disparity.grad is not None
+    assert bool(torch.isfinite(disparity.grad).all())
+    assert disparity.grad[0, 0, 0, 0].item() == 0.0
+    assert disparity.grad[0, 0, 0, 1].item() == 0.0
+    assert disparity.grad[0, 0, 0, 2].item() < 0.0
 
 
 def test_temporal_loss_excludes_collision_and_photometric_failure() -> None:
