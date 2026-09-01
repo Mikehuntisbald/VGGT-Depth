@@ -38,8 +38,18 @@ from data.cache_dataset import (
     save_cache_record,
     sha256_file,
 )
+from data.stereo_calibration import (
+    RECTIFIED_CALIBRATION_CONTRACT,
+    RectifiedCalibrationIndex,
+    RectifiedCalibrationRecord,
+    calibration_window_sha256,
+    load_rectified_calibration_sidecar,
+)
 from geometry.pose_quality import validate_raw_cache_pair
 from tools.derive_geometry_cache import (
+    CALIBRATED_DERIVED_ALGORITHM,
+    CALIBRATED_DERIVED_COMPONENT,
+    CALIBRATED_DERIVED_SCHEMA_VERSION,
     DERIVED_SCHEMA_VERSION,
     GeometryThresholds,
     _source_metadata,
@@ -179,6 +189,8 @@ def audit_safe_zero_contract(rows: Sequence[Mapping[str, Any]]) -> dict[str, Any
     pose_rejected_zero = 0
     static_rejected_zero = 0
     all_float_tensors_finite = 0
+    calibrated_records = 0
+    calibrated_pose_rejected_zero = 0
     for row in rows:
         cache_path = Path(str(row["cache_path"]))
         payload = load_cache_record(cache_path)
@@ -229,6 +241,34 @@ def audit_safe_zero_contract(rows: Sequence[Mapping[str, Any]]) -> dict[str, Any
                     f"safe-zero audit: rejected temporal pose is non-zero in {cache_path}"
                 )
             pose_rejected_zero += 1
+        component = payload.get("identity", {}).get("component")
+        if component == CALIBRATED_DERIVED_COMPONENT:
+            calibrated_records += 1
+            stereo_valid = tensors.get("stereo_calibration_valid")
+            transform = tensors.get("T_right_rectified_from_left_rectified_m")
+            constrained = tensors.get(
+                "vggt_extrinsics_camera_from_world_metric_temporal_stereo_constrained"
+            )
+            if (
+                not isinstance(stereo_valid, torch.Tensor)
+                or stereo_valid.dtype != torch.bool
+                or stereo_valid.numel() != 1
+                or not bool(stereo_valid.item())
+                or not isinstance(transform, torch.Tensor)
+                or transform.shape != (4, 4)
+                or not isinstance(constrained, torch.Tensor)
+                or constrained.shape != (10, 3, 4)
+            ):
+                raise CacheMismatchError(
+                    f"safe-zero audit: calibrated stereo tensors malformed in {cache_path}"
+                )
+            if not pose_valid:
+                if bool(torch.count_nonzero(constrained).item()):
+                    raise CacheMismatchError(
+                        "safe-zero audit: rejected constrained pose is non-zero in "
+                        f"{cache_path}"
+                    )
+                calibrated_pose_rejected_zero += 1
         if not static_valid:
             aligned = tensors.get("vggt_disparity_current_left_aligned_hr_px")
             aligned_confidence = tensors.get("vggt_aligned_confidence")
@@ -250,7 +290,7 @@ def audit_safe_zero_contract(rows: Sequence[Mapping[str, Any]]) -> dict[str, Any
                 )
             static_rejected_zero += 1
         audited += 1
-    return {
+    result = {
         "passed": True,
         "records_audited": audited,
         "weights_only_safe_load_records": audited,
@@ -259,6 +299,16 @@ def audit_safe_zero_contract(rows: Sequence[Mapping[str, Any]]) -> dict[str, Any
         "pose_rejected_zero_temporal_extrinsics": pose_rejected_zero,
         "static_rejected_zero_prior_tensors": static_rejected_zero,
     }
+    if calibrated_records:
+        result.update(
+            {
+                "calibrated_stereo_records": calibrated_records,
+                "pose_rejected_zero_stereo_constrained_extrinsics": (
+                    calibrated_pose_rejected_zero
+                ),
+            }
+        )
+    return result
 
 
 def _is_within(path: Path, root: Path) -> bool:
@@ -400,11 +450,21 @@ def validate_causal_window_unchanged(
 
 
 def _derived_config(
-    thresholds: GeometryThresholds, *, cache_dtype: str
+    thresholds: GeometryThresholds,
+    *,
+    cache_dtype: str,
+    calibration_index: RectifiedCalibrationIndex | None = None,
 ) -> dict[str, Any]:
-    return {
-        "schema_version": DERIVED_SCHEMA_VERSION,
-        "algorithm": "baseline_metric_scale+scale_only_alignment+strict_pose_quality",
+    calibrated = calibration_index is not None
+    result: dict[str, Any] = {
+        "schema_version": (
+            CALIBRATED_DERIVED_SCHEMA_VERSION if calibrated else DERIVED_SCHEMA_VERSION
+        ),
+        "algorithm": (
+            CALIBRATED_DERIVED_ALGORITHM
+            if calibrated
+            else "baseline_metric_scale+scale_only_alignment+strict_pose_quality"
+        ),
         "extrinsics_convention": "camera-from-world",
         "previous_left_view_index": 6,
         "current_left_view_index": 8,
@@ -413,6 +473,18 @@ def _derived_config(
         "missing_diagnostic_policy": "invalid",
         "invalid_temporal_pose_policy": "zero-filled with false validity tensor",
     }
+    if calibration_index is not None:
+        result["rectified_stereo_calibration"] = {
+            "component": CALIBRATED_DERIVED_COMPONENT,
+            "contract_version": RECTIFIED_CALIBRATION_CONTRACT,
+            "sidecar_path": str(calibration_index.sidecar_path),
+            "sidecar_sha256": calibration_index.sidecar_sha256,
+            "receipt_path": str(calibration_index.receipt_path),
+            "receipt_sha256": calibration_index.receipt_sha256,
+            "pixel_audit_path": str(calibration_index.pixel_audit_path),
+            "pixel_audit_sha256": calibration_index.pixel_audit_sha256,
+        }
+    return result
 
 
 def _derived_identity(
@@ -422,11 +494,16 @@ def _derived_identity(
     vggt_cache_sha256: str,
     ffs_cache_sha256: str,
     config: Mapping[str, Any],
+    calibration_window: Sequence[RectifiedCalibrationRecord] | None = None,
 ) -> CacheIdentity:
     vggt_identity = vggt_payload["identity"]
     ffs_identity = ffs_payload["identity"]
     return CacheIdentity(
-        component="vggt-ffs-derived-geometry",
+        component=(
+            CALIBRATED_DERIVED_COMPONENT
+            if calibration_window is not None
+            else "vggt-ffs-derived-geometry"
+        ),
         upstream_commit=canonical_json_sha256(
             {
                 "vggt": vggt_identity["upstream_commit"],
@@ -437,6 +514,15 @@ def _derived_identity(
             {
                 "vggt_raw_cache_sha256": vggt_cache_sha256,
                 "ffs_raw_cache_sha256": ffs_cache_sha256,
+                **(
+                    {
+                        "rectified_calibration_window_sha256": (
+                            calibration_window_sha256(calibration_window)
+                        )
+                    }
+                    if calibration_window is not None
+                    else {}
+                ),
             }
         ),
         torch_version=torch.__version__,
@@ -456,6 +542,8 @@ def derive_geometry_manifest(
     start_window: int = 0,
     limit: int | None = None,
     overwrite: bool = False,
+    rectified_calibration_sidecar: Path | None = None,
+    rectified_calibration_receipt: Path | None = None,
 ) -> dict[str, Any]:
     """Derive a selected raw-manifest slice and return its run receipt."""
 
@@ -470,6 +558,18 @@ def derive_geometry_manifest(
         raise ValueError("cache_dtype must be float16 or float32")
     thresholds = thresholds or GeometryThresholds()
     thresholds.validate()
+    if rectified_calibration_receipt is not None and (
+        rectified_calibration_sidecar is None
+    ):
+        raise ValueError(
+            "rectified_calibration_receipt requires rectified_calibration_sidecar"
+        )
+    calibration_index: RectifiedCalibrationIndex | None = None
+    if rectified_calibration_sidecar is not None:
+        calibration_index = load_rectified_calibration_sidecar(
+            rectified_calibration_sidecar,
+            receipt_path=rectified_calibration_receipt,
+        )
     raw_manifest_path = vggt_root / "cache_manifest.jsonl"
     all_entries = load_raw_vggt_manifest(raw_manifest_path, vggt_root=vggt_root)
     raw_canonical_receipt_path = vggt_root / "run_receipt.json"
@@ -507,7 +607,11 @@ def derive_geometry_manifest(
     if not selected:
         raise ValueError("selected raw VGGT cache window range is empty")
 
-    config = _derived_config(thresholds, cache_dtype=cache_dtype)
+    config = _derived_config(
+        thresholds,
+        cache_dtype=cache_dtype,
+        calibration_index=calibration_index,
+    )
     tensor_dtype = torch.float16 if cache_dtype == "float16" else torch.float32
     started_wall = datetime.now(timezone.utc)
     started = time.perf_counter()
@@ -534,6 +638,21 @@ def derive_geometry_manifest(
 
     for batch_index, entry in enumerate(selected, start=1):
         vggt_payload = load_cache_record(entry.cache_path)
+        calibration_window: tuple[RectifiedCalibrationRecord, ...] | None = None
+        if calibration_index is not None:
+            vggt_metadata = vggt_payload.get("metadata")
+            vggt_source = (
+                vggt_metadata.get("source")
+                if isinstance(vggt_metadata, Mapping)
+                else None
+            )
+            if not isinstance(vggt_source, Mapping):
+                raise CacheMismatchError(
+                    f"raw VGGT source metadata is missing at {entry.cache_path}"
+                )
+            calibration_window = calibration_index.records_for_vggt_source(
+                vggt_source
+            )
         vggt_identity = vggt_payload["identity"]
         if expected_vggt_identity is None:
             expected_vggt_identity = vggt_identity
@@ -584,6 +703,8 @@ def derive_geometry_manifest(
             vggt_cache_sha256=vggt_cache_sha256,
             ffs_cache_sha256=ffs_cache_sha256,
             linkage=linkage,
+            rectified_calibration_index=calibration_index,
+            rectified_calibration_window=calibration_window,
         )
         identity = _derived_identity(
             vggt_payload,
@@ -591,6 +712,7 @@ def derive_geometry_manifest(
             vggt_cache_sha256=vggt_cache_sha256,
             ffs_cache_sha256=ffs_cache_sha256,
             config=config,
+            calibration_window=calibration_window,
         )
         output_path = (
             output_root
@@ -612,6 +734,7 @@ def derive_geometry_manifest(
                 ffs_payload,
                 thresholds=thresholds,
                 cache_dtype=tensor_dtype,
+                rectified_calibration_window=calibration_window,
             )
             metadata = {"source": source, "config": config, **derived_metadata}
             save_cache_record(
@@ -669,6 +792,15 @@ def derive_geometry_manifest(
                 "static_prior_valid": static_prior_valid,
                 "failure_reasons": failure_reasons,
                 "diagnostics": diagnostics,
+                **(
+                    {
+                        "rectified_calibration_window_sha256": (
+                            calibration_window_sha256(calibration_window)
+                        )
+                    }
+                    if calibration_window is not None
+                    else {}
+                ),
             }
         )
         print(
@@ -698,8 +830,12 @@ def derive_geometry_manifest(
     elapsed_seconds = time.perf_counter() - started
     completed_wall = datetime.now(timezone.utc)
     receipt: dict[str, Any] = {
-        "schema_version": DERIVED_SCHEMA_VERSION,
-        "component": "vggt-ffs-derived-geometry-batch",
+        "schema_version": config["schema_version"],
+        "component": (
+            f"{CALIBRATED_DERIVED_COMPONENT}-batch"
+            if calibration_index is not None
+            else "vggt-ffs-derived-geometry-batch"
+        ),
         "run_id": run_id,
         "started_at_utc": started_wall.isoformat(),
         "completed_at_utc": completed_wall.isoformat(),
@@ -711,6 +847,30 @@ def derive_geometry_manifest(
             "vggt_cache_manifest_sha256": sha256_file(raw_manifest_path),
             "vggt_available_windows": len(all_entries),
             "ffs_root": str(ffs_root),
+            **(
+                {
+                    "rectified_calibration_sidecar": str(
+                        calibration_index.sidecar_path
+                    ),
+                    "rectified_calibration_sidecar_sha256": (
+                        calibration_index.sidecar_sha256
+                    ),
+                    "rectified_calibration_receipt": str(
+                        calibration_index.receipt_path
+                    ),
+                    "rectified_calibration_receipt_sha256": (
+                        calibration_index.receipt_sha256
+                    ),
+                    "pixel_rectification_audit": str(
+                        calibration_index.pixel_audit_path
+                    ),
+                    "pixel_rectification_audit_sha256": (
+                        calibration_index.pixel_audit_sha256
+                    ),
+                }
+                if calibration_index is not None
+                else {}
+            ),
         },
         "raw_input_audit": {
             "passed": True,
@@ -835,6 +995,15 @@ def derive_geometry_manifest(
             verification_arguments.extend(
                 ("--report", str(report_path.expanduser().resolve()))
             )
+        if calibration_index is not None:
+            verification_arguments.extend(
+                (
+                    "--rectified-calibration-sidecar",
+                    str(calibration_index.sidecar_path),
+                    "--rectified-calibration-receipt",
+                    str(calibration_index.receipt_path),
+                )
+            )
         receipt["safe_zero_audit"]["verification_command"] = shlex.join(
             verification_arguments
         )
@@ -875,6 +1044,8 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--start-window", type=int, default=0)
     parser.add_argument("--limit", type=int)
     parser.add_argument("--overwrite", action="store_true")
+    parser.add_argument("--rectified-calibration-sidecar", type=Path)
+    parser.add_argument("--rectified-calibration-receipt", type=Path)
     return parser.parse_args()
 
 
@@ -889,6 +1060,8 @@ def main() -> int:
         start_window=args.start_window,
         limit=args.limit,
         overwrite=args.overwrite,
+        rectified_calibration_sidecar=args.rectified_calibration_sidecar,
+        rectified_calibration_receipt=args.rectified_calibration_receipt,
     )
     print(
         json.dumps(

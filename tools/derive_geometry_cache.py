@@ -22,7 +22,7 @@ import os
 from pathlib import Path
 import sys
 import tempfile
-from typing import Any, Mapping
+from typing import Any, Mapping, Sequence
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT / "src"))
@@ -36,6 +36,13 @@ from data.cache_dataset import (
     load_cache_record,
     save_cache_record,
     sha256_file,
+)
+from data.stereo_calibration import (
+    RECTIFIED_CALIBRATION_CONTRACT,
+    RectifiedCalibrationIndex,
+    RectifiedCalibrationRecord,
+    calibration_window_sha256,
+    load_rectified_calibration_sidecar,
 )
 from geometry.align_vggt import (
     align_vggt_depth_to_ffs_disparity,
@@ -56,6 +63,14 @@ from geometry.pose_scale import (
 
 
 DERIVED_SCHEMA_VERSION = 1
+CALIBRATED_DERIVED_SCHEMA_VERSION = 2
+CALIBRATED_DERIVED_COMPONENT = (
+    "vggt-ffs-derived-geometry-calibrated-stereo-v2"
+)
+CALIBRATED_DERIVED_ALGORITHM = (
+    "baseline_metric_scale+scale_only_alignment+strict_pose_quality+"
+    "calibrated_stereo_constraint_v2"
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -150,6 +165,19 @@ def _parse_args() -> argparse.Namespace:
         "--max-photometric-median-absolute-rgb", type=float, default=0.12
     )
     parser.add_argument("--overwrite", action="store_true")
+    parser.add_argument(
+        "--rectified-calibration-sidecar",
+        type=Path,
+        help=(
+            "Opt in to calibrated-stereo-v2 using an immutable sidecar. "
+            "Legacy derivation is unchanged when omitted."
+        ),
+    )
+    parser.add_argument(
+        "--rectified-calibration-receipt",
+        type=Path,
+        help="Explicit sidecar receipt (default: SIDECAR with .receipt.json suffix)",
+    )
     return parser.parse_args()
 
 
@@ -247,14 +275,138 @@ def _source_metadata(
     vggt_cache_sha256: str,
     ffs_cache_sha256: str,
     linkage: Mapping[str, Any],
+    rectified_calibration_index: RectifiedCalibrationIndex | None = None,
+    rectified_calibration_window: Sequence[RectifiedCalibrationRecord] | None = None,
 ) -> dict[str, Any]:
-    return {
+    result: dict[str, Any] = {
         "vggt_cache_path": str(vggt_cache.resolve()),
         "vggt_cache_sha256": vggt_cache_sha256,
         "ffs_cache_path": str(ffs_cache.resolve()),
         "ffs_cache_sha256": ffs_cache_sha256,
         "linkage": dict(linkage),
     }
+    if (rectified_calibration_index is None) != (
+        rectified_calibration_window is None
+    ):
+        raise ValueError(
+            "calibration index and window must be supplied together or omitted"
+        )
+    if rectified_calibration_index is not None:
+        assert rectified_calibration_window is not None
+        result["rectified_stereo_calibration"] = {
+            "component": CALIBRATED_DERIVED_COMPONENT,
+            "contract_version": RECTIFIED_CALIBRATION_CONTRACT,
+            "sidecar_path": str(rectified_calibration_index.sidecar_path),
+            "sidecar_sha256": rectified_calibration_index.sidecar_sha256,
+            "receipt_path": str(rectified_calibration_index.receipt_path),
+            "receipt_sha256": rectified_calibration_index.receipt_sha256,
+            "pixel_audit_path": str(rectified_calibration_index.pixel_audit_path),
+            "pixel_audit_sha256": rectified_calibration_index.pixel_audit_sha256,
+            "window_sha256": calibration_window_sha256(
+                rectified_calibration_window
+            ),
+            "ordered_record_sha256": [
+                record.calibration_record_sha256
+                for record in rectified_calibration_window
+            ],
+        }
+    return result
+
+
+def _homogeneous_camera_from_world(extrinsic: torch.Tensor) -> torch.Tensor:
+    if extrinsic.shape != (3, 4):
+        raise ValueError("camera-from-world extrinsic must have shape [3,4]")
+    result = torch.eye(4, dtype=extrinsic.dtype, device=extrinsic.device)
+    result[:3] = extrinsic
+    return result
+
+
+def constrain_metric_stereo_extrinsics(
+    extrinsics_camera_from_world_metric: torch.Tensor,
+    calibration_window: Sequence[RectifiedCalibrationRecord],
+    *,
+    pose_valid: bool,
+) -> torch.Tensor:
+    """Compose exact calibrated right poses from the five VGGT left poses.
+
+    The input remains the raw metric-scaled VGGT estimate and continues to own
+    all pre-constraint quality gates.  This function changes only the exposed
+    right pose after those gates pass; it never turns a rejected pose into a
+    valid one.
+    """
+
+    if extrinsics_camera_from_world_metric.shape != (10, 3, 4):
+        raise ValueError("metric VGGT extrinsics must have shape [10,3,4]")
+    if len(calibration_window) != 5:
+        raise ValueError("calibrated stereo constraint requires five records")
+    if not pose_valid:
+        return torch.zeros_like(extrinsics_camera_from_world_metric)
+    if not bool(torch.isfinite(extrinsics_camera_from_world_metric).all()):
+        raise ValueError("metric VGGT extrinsics contain NaN or infinity")
+    constrained = extrinsics_camera_from_world_metric.clone()
+    for pair_index, calibration in enumerate(calibration_window):
+        left_index = 2 * pair_index
+        right_index = left_index + 1
+        transform_right_left = calibration.as_tensor(
+            dtype=constrained.dtype, device=constrained.device
+        )
+        if transform_right_left.shape != (4, 4) or not bool(
+            torch.isfinite(transform_right_left).all()
+        ):
+            raise ValueError("rectified stereo transform must be finite [4,4]")
+        expected_rotation = torch.eye(
+            3, dtype=constrained.dtype, device=constrained.device
+        )
+        if not torch.allclose(
+            transform_right_left[:3, :3], expected_rotation, atol=1e-7, rtol=0.0
+        ):
+            raise ValueError("runtime rectified stereo rotation must be identity")
+        right = transform_right_left @ _homogeneous_camera_from_world(
+            constrained[left_index]
+        )
+        constrained[right_index] = right[:3]
+    if not bool(torch.isfinite(constrained).all()):
+        raise RuntimeError("calibrated stereo composition became non-finite")
+    return constrained
+
+
+def _validate_calibration_window_against_raw_source(
+    vggt_payload: Mapping[str, Any],
+    calibration_window: Sequence[RectifiedCalibrationRecord],
+) -> None:
+    if len(calibration_window) != 5:
+        raise CacheMismatchError("rectified calibration window must contain five rows")
+    metadata = vggt_payload.get("metadata")
+    source = metadata.get("source") if isinstance(metadata, Mapping) else None
+    records = source.get("manifest_records") if isinstance(source, Mapping) else None
+    if not isinstance(records, list) or len(records) != 5:
+        raise CacheMismatchError("raw VGGT source has no five-row manifest window")
+    for source_record, calibration in zip(records, calibration_window, strict=True):
+        if not isinstance(source_record, Mapping):
+            raise CacheMismatchError("raw VGGT manifest record is malformed")
+        if calibration.source_record_sha256 != canonical_json_sha256(
+            dict(source_record)
+        ):
+            raise CacheMismatchError("rectified calibration record/source hash mismatch")
+        if (
+            calibration.sequence_id != source_record.get("sequence_id")
+            or calibration.frame_id != source_record.get("frame_id")
+            or calibration.timestamp != source_record.get("timestamp")
+        ):
+            raise CacheMismatchError("rectified calibration record/source identity mismatch")
+        baseline = source_record.get("baseline_m")
+        if (
+            isinstance(baseline, bool)
+            or not isinstance(baseline, (int, float))
+            or not math.isfinite(float(baseline))
+            or float(baseline) <= 0
+        ):
+            raise CacheMismatchError("raw source baseline is malformed")
+        transform = calibration.as_tensor(dtype=torch.float64)
+        if not math.isclose(
+            float(-transform[0, 3]), float(baseline), abs_tol=1e-9, rel_tol=0.0
+        ):
+            raise CacheMismatchError("rectified calibration/source baseline mismatch")
 
 
 def derive_geometry(
@@ -263,6 +415,7 @@ def derive_geometry(
     *,
     thresholds: GeometryThresholds,
     cache_dtype: torch.dtype = torch.float32,
+    rectified_calibration_window: Sequence[RectifiedCalibrationRecord] | None = None,
 ) -> tuple[dict[str, torch.Tensor], dict[str, Any]]:
     """Derive metric tensors and strict pose-quality metadata in memory."""
 
@@ -270,6 +423,10 @@ def derive_geometry(
     if cache_dtype not in {torch.float16, torch.float32}:
         raise ValueError("cache_dtype must be float16 or float32")
     linkage = validate_raw_cache_pair(vggt_payload, ffs_payload)
+    if rectified_calibration_window is not None:
+        _validate_calibration_window_against_raw_source(
+            vggt_payload, rectified_calibration_window
+        )
     _validate_grid_and_calibration(vggt_payload, ffs_payload)
     _validate_live_photometric_sources(linkage)
     vggt = vggt_payload["tensors"]
@@ -437,6 +594,17 @@ def derive_geometry(
         if complete_quality.pose_valid
         else torch.zeros_like(extrinsics_metric_diagnostic)
     )
+    constrained_temporal_extrinsics: torch.Tensor | None = None
+    target_rectified_transform: torch.Tensor | None = None
+    if rectified_calibration_window is not None:
+        constrained_temporal_extrinsics = constrain_metric_stereo_extrinsics(
+            extrinsics_metric_diagnostic,
+            rectified_calibration_window,
+            pose_valid=complete_quality.pose_valid,
+        )
+        target_rectified_transform = rectified_calibration_window[-1].as_tensor(
+            dtype=torch.float32
+        )
     static_prior_valid = bool(
         alignment is not None
         and alignment.valid
@@ -462,6 +630,18 @@ def derive_geometry(
         "vggt_disparity_current_left_aligned_hr_px": aligned_disparity,
         "vggt_aligned_confidence": aligned_confidence,
     }
+    if constrained_temporal_extrinsics is not None:
+        assert target_rectified_transform is not None
+        float_tensors.update(
+            {
+                "T_right_rectified_from_left_rectified_m": (
+                    target_rectified_transform
+                ),
+                "vggt_extrinsics_camera_from_world_metric_temporal_stereo_constrained": (
+                    constrained_temporal_extrinsics
+                ),
+            }
+        )
     converted: dict[str, torch.Tensor] = {}
     for name, tensor in float_tensors.items():
         value = tensor.to(cache_dtype)
@@ -479,6 +659,8 @@ def derive_geometry(
             "static_prior_valid": torch.tensor(static_prior_valid),
         }
     )
+    if rectified_calibration_window is not None:
+        converted["stereo_calibration_valid"] = torch.tensor(True)
 
     pose_quality = complete_quality.as_dict()
     pose_quality["baseline"] = {
@@ -553,6 +735,42 @@ def derive_geometry(
             ),
         },
     }
+    if rectified_calibration_window is not None:
+        metadata["stereo_calibration"] = {
+            "component": CALIBRATED_DERIVED_COMPONENT,
+            "contract_version": RECTIFIED_CALIBRATION_CONTRACT,
+            "extrinsics_convention": (
+                "right-camera-from-left-camera; X_right=T_right_left@X_left"
+            ),
+            "window_sha256": calibration_window_sha256(
+                rectified_calibration_window
+            ),
+            "ordered_record_sha256": [
+                record.calibration_record_sha256
+                for record in rectified_calibration_window
+            ],
+            "target_record_sha256": (
+                rectified_calibration_window[-1].calibration_record_sha256
+            ),
+            "quality_policy": (
+                "raw VGGT stereo residuals own metric-scale and pose-valid gates; "
+                "post-constraint exact stereo geometry is not quality evidence"
+            ),
+            "hybrid_pose_valid": complete_quality.pose_valid,
+        }
+        metadata["tensor_semantics"].update(
+            {
+                "rectified_stereo_extrinsic": (
+                    "target right-from-left [4,4] metres in stored rectified "
+                    "virtual-camera coordinates"
+                ),
+                "metric_pose_temporal_stereo_constrained": (
+                    "left poses retain metric-scaled VGGT values; each right pose "
+                    "is exact calibrated T_right_left @ E_left; zero-filled unless "
+                    "the original raw-pose quality gate passes"
+                ),
+            }
+        )
     return converted, metadata
 
 
@@ -588,6 +806,21 @@ def main() -> int:
     vggt_payload = load_cache_record(args.vggt_cache)
     ffs_payload = load_cache_record(args.ffs_cache)
     linkage = validate_raw_cache_pair(vggt_payload, ffs_payload)
+    calibration_index: RectifiedCalibrationIndex | None = None
+    calibration_window: tuple[RectifiedCalibrationRecord, ...] | None = None
+    if args.rectified_calibration_receipt is not None and (
+        args.rectified_calibration_sidecar is None
+    ):
+        raise ValueError(
+            "--rectified-calibration-receipt requires --rectified-calibration-sidecar"
+        )
+    if args.rectified_calibration_sidecar is not None:
+        calibration_index = load_rectified_calibration_sidecar(
+            args.rectified_calibration_sidecar,
+            receipt_path=args.rectified_calibration_receipt,
+        )
+        vggt_source = vggt_payload["metadata"]["source"]
+        calibration_window = calibration_index.records_for_vggt_source(vggt_source)
     vggt_cache_sha256 = sha256_file(args.vggt_cache)
     ffs_cache_sha256 = sha256_file(args.ffs_cache)
     source = _source_metadata(
@@ -596,10 +829,19 @@ def main() -> int:
         vggt_cache_sha256=vggt_cache_sha256,
         ffs_cache_sha256=ffs_cache_sha256,
         linkage=linkage,
+        rectified_calibration_index=calibration_index,
+        rectified_calibration_window=calibration_window,
     )
-    config = {
-        "schema_version": DERIVED_SCHEMA_VERSION,
-        "algorithm": "baseline_metric_scale+scale_only_alignment+strict_pose_quality",
+    calibrated = calibration_window is not None
+    config: dict[str, Any] = {
+        "schema_version": (
+            CALIBRATED_DERIVED_SCHEMA_VERSION if calibrated else DERIVED_SCHEMA_VERSION
+        ),
+        "algorithm": (
+            CALIBRATED_DERIVED_ALGORITHM
+            if calibrated
+            else "baseline_metric_scale+scale_only_alignment+strict_pose_quality"
+        ),
         "extrinsics_convention": "camera-from-world",
         "previous_left_view_index": PREVIOUS_LEFT_VIEW_INDEX,
         "current_left_view_index": CURRENT_LEFT_VIEW_INDEX,
@@ -608,10 +850,22 @@ def main() -> int:
         "missing_diagnostic_policy": "invalid",
         "invalid_temporal_pose_policy": "zero-filled with false validity tensor",
     }
+    if calibration_index is not None:
+        config["rectified_stereo_calibration"] = {
+            "component": CALIBRATED_DERIVED_COMPONENT,
+            "contract_version": RECTIFIED_CALIBRATION_CONTRACT,
+            "sidecar_sha256": calibration_index.sidecar_sha256,
+            "receipt_sha256": calibration_index.receipt_sha256,
+            "pixel_audit_sha256": calibration_index.pixel_audit_sha256,
+        }
     vggt_identity = vggt_payload["identity"]
     ffs_identity = ffs_payload["identity"]
     identity = CacheIdentity(
-        component="vggt-ffs-derived-geometry",
+        component=(
+            CALIBRATED_DERIVED_COMPONENT
+            if calibrated
+            else "vggt-ffs-derived-geometry"
+        ),
         upstream_commit=canonical_json_sha256(
             {
                 "vggt": vggt_identity["upstream_commit"],
@@ -622,6 +876,15 @@ def main() -> int:
             {
                 "vggt_raw_cache_sha256": vggt_cache_sha256,
                 "ffs_raw_cache_sha256": ffs_cache_sha256,
+                **(
+                    {
+                        "rectified_calibration_window_sha256": (
+                            calibration_window_sha256(calibration_window)
+                        )
+                    }
+                    if calibration_window is not None
+                    else {}
+                ),
             }
         ),
         torch_version=torch.__version__,
@@ -645,6 +908,7 @@ def main() -> int:
             ffs_payload,
             thresholds=thresholds,
             cache_dtype=cache_dtype,
+            rectified_calibration_window=calibration_window,
         )
         metadata = {
             "source": source,
@@ -660,7 +924,7 @@ def main() -> int:
         status = "written"
 
     receipt = {
-        "schema_version": DERIVED_SCHEMA_VERSION,
+        "schema_version": config["schema_version"],
         "status": status,
         "output": str(args.output.resolve()),
         "output_sha256": sha256_file(args.output),
