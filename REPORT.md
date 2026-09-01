@@ -445,6 +445,25 @@ zero/invalid values. Training continues because this is neither the final
 15,000-step result nor independent-GT evidence. Evidence:
 `reports/m4/stage_b_eval_step7500.json`.
 
+A full 238-window hook diagnostic isolates the negative-disparity regression.
+Of the 3,592,681 reproduced negative pixels, 94.53% occur where bilinear FFS
+is below 0.25 HR px, and 92.05% have magnitude below 0.1 px; 24,603 pixels are
+still below -1 px and cannot be dismissed as sign-rounding noise. The LR source
+mix has 309,734 negative elements, almost exactly the all-sources-invalid
+count, but the bounded LR residual raises that to 1,770,626 and introduces
+1,465,842 new negatives. Convex upsampling propagates those LR neighborhoods;
+the HR residual and FFS anchor repair more negatives than they introduce.
+Pose-rejected/history-invalid regions are much worse, but all three T3
+branches regress together and VGGT-on actually has fewer negatives than
+history-only, so disabling VGGT is not supported by the evidence. The current
+formal trajectory remains unchanged through 15,000; 10k/12.5k/final snapshots
+must track stage-wise and disparity-stratified sign health. `clamp_min(0)` plus
+an explicit `d>0` point-cloud mask remains the fail-closed deployment baseline,
+but its 5.1186% zero/invalid rate is not a completeness fix. The explanatory
+hook run differs from the formal evaluator by three near-zero BF16 boundary
+pixels and explicitly has no persisted script/source hash; claim boundaries
+remain in `reports/m4/stage_b_negative_diagnostic_step7500.json`.
+
 The training process was later found externally terminated after its last
 atomic checkpoint at step 7,000. The interrupted log contained complete but
 uncheckpointed records through step 7,144 and a partial JSON record for step
@@ -488,28 +507,32 @@ scale 1 / offset 0, retains `K_right` only as a diagnostic, and rejects the
 legacy smoke checkpoint because it predates this receipt binding. Evidence:
 `reports/m6/epipolar_rectification_audit.json`.
 
-After binding that receipt, the current Stage-C producer used the formal
-train-side step-7,000 Stage-B checkpoint and all exact train cache artifacts.
-Its checkpoint now binds a clean 51-file runtime source bundle, actual device,
-PyTorch/CUDA versions, native-BF16 capability and autocast state. A one-step
-CPU integration smoke used 1,219 trusted pixels, produced finite loss
-0.00411383 and updated the correction head, but its receipt explicitly marks
-`formal_cuda_bf16_eligible=false`. An independent CUDA dry-run on the RTX 5090
-executed BF16 autocast with capability 12.0 and CUDA 12.8, produced finite loss
-0.00409022, and records `formal_cuda_bf16_eligible=true`; it made no optimizer
-update. Both remain acceptance-ineligible because the base is incomplete and
-neither is a formal Stage-C training result. Earlier two-run CPU integration
-still establishes bit-exact refiner determinism. Evidence:
-`reports/m6/stage_c_geometry_smoke.json`.
+After binding that receipt, the current Stage-C producer adds full long-run
+transactions: periodic atomic `latest.pt`, durable per-step JSONL, exact
+optimizer/scheduler/RNG/data-cursor resume, tail reconciliation, finite-state
+checks, and `final.pt/run_summary.json` publication only at the configured
+5,000-step boundary. An unbounded formal run refuses any base other than the
+completed canonical Stage-B 15,000/15,000 checkpoint. A real train-cache smoke
+used the step-7,500 base, ran a fresh CPU optimizer step, resumed its complete
+state for step two, and produced log steps `[1,2]`, scheduler epoch two and the
+exact next data cursor; it correctly published neither final checkpoint nor
+run summary and records `formal_training_complete=false`. The strict Stage-C
+evaluator loaded that checkpoint and labeled its one-window held-out run
+`LIMITED_SMOKE_ONLY`. An independent RTX 5090 CUDA dry-run binds the same
+51-file source bundle, capability 12.0, CUDA 12.8 and native BF16 autocast; it
+makes no optimizer update. All remain acceptance-ineligible because the base
+is incomplete. Earlier two-run CPU integration still establishes bit-exact
+refiner determinism. Evidence: `reports/m6/stage_c_geometry_smoke.json`.
 
 ## Tests
 
 ```text
 conda run -n env-tsr pytest -q
-........................................................................ [ 40%]
-........................................................................ [ 81%]
+........................................................................ [ 28%]
+........................................................................ [ 57%]
+........................................................................ [ 86%]
 .................................                                        [100%]
-177 passed
+249 passed
 ```
 
 The current suite includes receipt/cache identity, manifest/crop/intrinsics,
@@ -519,7 +542,11 @@ model shapes/anchor/recurrence, strict temporal holdout/cache lineage,
 paired-domain TEPE, physical clamp reporting, visualization, and empty-safe
 losses. It also covers completed/in-progress training receipt distinction,
 strict JSON/log continuity, checkpoint finite-state validation, and exact
-learning-rate schedule auditing.
+learning-rate schedule auditing. Stage-C coverage now includes runtime/device
+eligibility, right-image SHA lineage, same-domain refined/base metrics,
+periodic checkpoint publication, exact optimizer/RNG/data-cursor resume,
+crash-tail reconciliation, and the rule that bounded smoke runs cannot publish
+a formal completion receipt.
 
 ## Current open work
 

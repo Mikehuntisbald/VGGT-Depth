@@ -98,10 +98,18 @@ This workstation already has an equivalent ModelScope cache artifact. Reuse it
 without duplicating 4.58 GB:
 
 ```bash
+export VGGT_MODELSCOPE_SOURCE=/home/haoyi/.cache/modelscope/hub/models/facebook/VGGT-Omega/vggt_omega_1b_512.pt
+export VGGT_PROJECT_LINK=/home/haoyi/ffs_omega_tsr/checkpoints/vggt/vggt_omega_1b_512.pt
+test -f "$VGGT_MODELSCOPE_SOURCE"
 mkdir -p checkpoints/vggt
-ln -s \
-  /home/haoyi/.cache/modelscope/hub/models/facebook/VGGT-Omega/vggt_omega_1b_512.pt \
-  checkpoints/vggt/vggt_omega_1b_512.pt
+if test -L "$VGGT_PROJECT_LINK"; then
+  test "$(readlink -f "$VGGT_PROJECT_LINK")" = "$VGGT_MODELSCOPE_SOURCE"
+elif test -e "$VGGT_PROJECT_LINK"; then
+  echo "refusing to replace existing non-symlink: $VGGT_PROJECT_LINK" >&2
+  exit 1
+else
+  ln -s "$VGGT_MODELSCOPE_SOURCE" "$VGGT_PROJECT_LINK"
+fi
 sha256sum checkpoints/vggt/vggt_omega_1b_512.pt
 ```
 
@@ -316,13 +324,174 @@ conda run --no-capture-output -n env-tsr python train.py \
   --device cuda
 ```
 
-Resume with `--resume outputs/ffs_omega_tsr_x2/stage_b/latest.pt` and omit
-`--init-from`; the saved initialization lineage, cache identities, deterministic
-sampler epoch, and micro-batch cursor are restored exactly. If this stage OOMs,
-first set `train.micro_batch_size=1 train.grad_accumulation=8` so the effective
-batch remains eight.
+Resume only from an atomic checkpoint produced by the same Git commit. Stop the
+old process first, then audit the run and compare `latest_checkpoint_step` with
+the last complete JSONL step:
 
-## Status and exit codes
+```bash
+conda run --no-capture-output -n env-tsr \
+  python tools/audit_training_run.py \
+  --output-dir outputs/ffs_omega_tsr_x2/stage_b \
+  --expected-stage temporal --expected-steps 15000 \
+  --json-out /tmp/stage_b_pre_resume_audit.json
+```
+
+If `train.jsonl` is ahead of the checkpoint, has a partial final record, or is
+otherwise malformed, archive it and reconcile the formal log to the checkpoint
+boundary according to D-024 before resuming. The reconciliation tool is dry-run
+by default and never changes a checkpoint:
+
+```bash
+conda run --no-capture-output -n env-tsr \
+  python tools/reconcile_training_log.py \
+  --output-dir outputs/ffs_omega_tsr_x2/stage_b \
+  --json-out /tmp/stage_b_log_reconciliation.json
+
+# Only after the old trainer is confirmed stopped and the dry-run is reviewed:
+conda run --no-capture-output -n env-tsr \
+  python tools/reconcile_training_log.py \
+  --output-dir outputs/ffs_omega_tsr_x2/stage_b \
+  --apply --confirm-training-stopped \
+  --backup /absolute/archive/path/stage_b_interrupted_train.jsonl
+```
+
+The apply path verifies checkpoint/log stability, preserves the complete
+original log by SHA-256, then atomically writes only records through the saved
+checkpoint step. Do not append directly to an unreconciled log. Resume with
+exactly the original manifests, cache roots, output directory, overrides, and
+batch schedule; omit only `--init-from`:
+
+```bash
+conda run --no-capture-output -n env-tsr python train.py \
+  --config configs/temporal_x2.yaml \
+  --manifest "$CACHE_ROOT/manifests/train_video_isolated.jsonl" \
+  --observation-cache-root "$CACHE_ROOT/m1_formal_train/observation" \
+  --teacher-cache-root "$CACHE_ROOT/m1_formal_train/teacher" \
+  --derived-cache-root "$CACHE_ROOT/m2_formal_train/derived" \
+  --output-dir outputs/ffs_omega_tsr_x2/stage_b \
+  --resume outputs/ffs_omega_tsr_x2/stage_b/latest.pt \
+  --device cuda
+```
+
+The saved initialization lineage, optimizer/scheduler/RNG states,
+deterministic sampler epoch, and micro-batch cursor are restored exactly. The
+`micro_batch_size=1, grad_accumulation=8` OOM fallback may be selected only
+before starting a new run. Changing the batch schedule changes the resolved
+config and requires a new output directory/lineage; it cannot resume an
+existing 2×4 checkpoint.
+
+Evaluate the completed Stage-B checkpoint on the entire canonical validation
+set. Do not pass `--limit`; intermediate checkpoints are trend diagnostics and
+do not own the final go/no-go:
+
+```bash
+conda run --no-capture-output -n env-tsr python eval.py \
+  --config configs/temporal_x2.yaml \
+  --checkpoint outputs/ffs_omega_tsr_x2/stage_b/final.pt \
+  --spatial-checkpoint outputs/ffs_omega_tsr_x2/stage_a/final.pt \
+  --manifest "$CACHE_ROOT/manifests/val_video_isolated.jsonl" \
+  --observation-cache-root "$CACHE_ROOT/m1_formal_val/observation" \
+  --teacher-cache-root "$CACHE_ROOT/m1_formal_val/teacher" \
+  --derived-cache-root "$CACHE_ROOT/m2_formal_val/derived" \
+  --output outputs/ffs_omega_tsr_x2/stage_b_eval \
+  --device cuda --batch-size 1 --num-workers 4 \
+  --visualization-samples 4
+```
+
+The evaluator distinguishes coverage from final eligibility. An intermediate
+checkpoint can have `coverage_eligible=true` on all 238 windows while
+`final_training_checkpoint=false` and `final_acceptance_eligible=false`.
+
+## 13. Audit the stored-pixel epipolar geometry
+
+Stage C samples the saved rectified right image, so bind the correspondence
+row contract to a pixel-level audit rather than silently applying inconsistent
+metadata intrinsics:
+
+```bash
+conda run --no-capture-output -n env-ffs \
+  python tools/audit_epipolar_rectification.py \
+  --train-manifest "$CACHE_ROOT/manifests/train_video_isolated.jsonl" \
+  --validation-manifest "$CACHE_ROOT/manifests/val_video_isolated.jsonl" \
+  --json-out reports/m6/epipolar_rectification_audit.json \
+  --samples-per-sequence 32 --seed 42
+```
+
+The first-round receipt must publish
+`audited_same_row_rectified_pixels_v1` and bind both manifest hashes. Training
+and evaluation fail closed if this receipt changes or is missing.
+
+## 14. Train and evaluate Stage C (local HR epipolar refinement)
+
+Use a committed, fixed worktree for the whole run. The producer records a
+51-file runtime bundle and refuses to publish completion if its Git/source
+identity changes mid-run. Formal Stage C is 5,000 optimizer steps, random
+384×768 HR crops, AdamW, the 2×4 batch schedule, and native BF16 on the RTX
+5090. It also refuses to start an unbounded formal run unless the Stage-B base
+is exactly 15,000/15,000 steps:
+
+```bash
+conda run --no-capture-output -n env-tsr python train_epipolar.py \
+  --config configs/epipolar_x2.yaml \
+  --init-from outputs/ffs_omega_tsr_x2/stage_b/final.pt \
+  --manifest "$CACHE_ROOT/manifests/train_video_isolated.jsonl" \
+  --observation-cache-root "$CACHE_ROOT/m1_formal_train/observation" \
+  --teacher-cache-root "$CACHE_ROOT/m1_formal_train/teacher" \
+  --derived-cache-root "$CACHE_ROOT/m2_formal_train/derived" \
+  --rectification-audit reports/m6/epipolar_rectification_audit.json \
+  --output outputs/ffs_omega_tsr_x2/stage_c \
+  --device cuda
+```
+
+`latest.pt` is written atomically every 500 steps after the corresponding log
+is durable. Only a complete run publishes `final.pt` and `run_summary.json`.
+Resume from the same source commit and numerical environment; immutable
+manifest/cache/base/output paths are recovered from the checkpoint:
+
+```bash
+conda run --no-capture-output -n env-tsr python train_epipolar.py \
+  --config configs/epipolar_x2.yaml \
+  --resume outputs/ffs_omega_tsr_x2/stage_c/latest.pt \
+  --device cuda
+```
+
+Before resume, stop the old process and use
+`tools/reconcile_training_log.py` to archive/reconcile any log rows ahead of
+`latest.pt`. The Stage-C loader independently validates and normalizes the log
+tail again, then restores refiner/AdamW/scheduler/RNG/data-cursor state exactly.
+
+Smoke boundaries are strict:
+
+- `--allow-cpu-smoke` permits only CPU `--dry-run` or one optimizer step and is
+  never formal-training eligible.
+- CUDA `--dry-run` proves the runtime path but performs no optimizer update.
+- a bounded `--run-steps` segment writes only `latest.pt` unless it actually
+  reaches the configured 5,000-step boundary; incomplete/base-ineligible
+  checkpoints remain acceptance-ineligible.
+
+Run the strict evaluator without `--limit` for the canonical held-out result:
+
+```bash
+conda run --no-capture-output -n env-tsr python eval_epipolar.py \
+  --config configs/epipolar_x2.yaml \
+  --checkpoint outputs/ffs_omega_tsr_x2/stage_c/final.pt \
+  --base-checkpoint outputs/ffs_omega_tsr_x2/stage_b/final.pt \
+  --manifest "$CACHE_ROOT/manifests/val_video_isolated.jsonl" \
+  --observation-cache-root "$CACHE_ROOT/m1_formal_val/observation" \
+  --teacher-cache-root "$CACHE_ROOT/m1_formal_val/teacher" \
+  --derived-cache-root "$CACHE_ROOT/m2_formal_val/derived" \
+  --rectification-audit reports/m6/epipolar_rectification_audit.json \
+  --output outputs/ffs_omega_tsr_x2/stage_c_eval \
+  --device cuda --batch-size 1 --num-workers 4 \
+  --visualization-samples 4
+```
+
+Formal evaluation requires exactly 244 manifest records, 240 derived
+endpoints, 238 T=3 windows, the canonical crop/geometry receipt, a completed
+15,000-step base, a completed 5,000-step refiner, and matching RTX 5090
+CUDA-BF16 training/evaluation receipts. `--limit` is always smoke-only.
+
+## M0 environment/backbone tool status and exit codes
 
 | Status | Exit | Meaning |
 |---|---:|---|
@@ -332,5 +501,8 @@ batch remains eight.
 | `BLOCKED` | 3 | A repository, package, checkpoint, authorization, or real input is missing. |
 | `NOT_RUN` | 3 | There is no current receipt. |
 
-Receipts are written even on `BLOCKED` or `FAIL`. Random tensors, dummy models,
-and visually plausible output are never accepted as milestone evidence.
+The M0 environment/backbone tools write receipts even on `BLOCKED` or `FAIL`.
+Training and evaluator entrypoints use exceptions/nonzero exits plus their own
+checkpoint/run-summary contracts; they do not promise this exact status table.
+Random tensors, dummy models, and visually plausible output are never accepted
+as milestone evidence.

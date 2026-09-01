@@ -1,0 +1,763 @@
+{
+  "schema_version": 1,
+  "component": "stage-b-step7500-raw-negative-disparity-diagnostic",
+  "status": "DIAGNOSTIC_COMPLETE",
+  "generated_at": "2026-09-01T10:05:10+08:00",
+  "claim_boundary": {
+    "training_complete": false,
+    "checkpoint_is_intermediate": true,
+    "checkpoint_step": 7500,
+    "configured_training_steps": 15000,
+    "formal_holdout_metrics_source": "outputs/ffs_omega_tsr_x2/stage_b/eval_step7500_fixed/metrics.json",
+    "formal_metrics_are_authoritative_for_output_counts": true,
+    "hook_decomposition_is_explanatory_only": true,
+    "hook_decomposition_acceptance_eligible": false,
+    "paper_accuracy": false,
+    "paper_ground_truth": false,
+    "target_type": "trusted_hr_ffs_teacher_pseudo_gt",
+    "performance_acceptance_claimed": false,
+    "diagnosis": "The dominant new-negative path is the bounded LR residual crossing near-zero source disparity, followed by convex spatial propagation. VGGT gating and the HR residual are not the bulk cause.",
+    "limitations": [
+      "The independent hook analysis was executed as ephemeral Python heredocs and has no persisted script or raw machine-readable stdout receipt.",
+      "No source hash or Git identity is claimed for the ephemeral analysis implementation.",
+      "The hook analysis reproduced 3592681 final-negative pixels, three fewer than the authoritative formal evaluator count of 3592684. The three-pixel difference is confined to values at the near-zero BF16/sign boundary and is kept explicit rather than reconciled by invention.",
+      "The step-5000 checkpoint was a temporary artifact and is no longer available locally; step-5000 comparisons below are bound only to its preserved formal metrics receipt."
+    ]
+  },
+  "artifact_lineage": {
+    "checkpoint": {
+      "path": "/home/haoyi/ffs_omega_tsr/outputs/ffs_omega_tsr_x2/stage_b/step7500.pt",
+      "sha256": "1eee0863bf7e96efb22551d389466d499f219404fad12554fd315d5674fb26a5",
+      "step": 7500,
+      "git_hash": "3e0df0b543f5000d0bf8490740b5f34ad979e3b6",
+      "parameter_count": 1619882
+    },
+    "formal_step7500_metrics": {
+      "json_path": "/home/haoyi/ffs_omega_tsr/outputs/ffs_omega_tsr_x2/stage_b/eval_step7500_fixed/metrics.json",
+      "json_sha256": "7c0b3f524b8253ff36245d46c210d59a2fb3d437f1a59b47d35101878b8fdcc8",
+      "csv_path": "/home/haoyi/ffs_omega_tsr/outputs/ffs_omega_tsr_x2/stage_b/eval_step7500_fixed/metrics.csv",
+      "csv_sha256": "5d20694a862cf69d8f0929471210a29e78546ce132a7c936d08ee74c8b7b6e1c",
+      "records_evaluated": 238,
+      "eval_py_sha256_recorded_by_metrics": "d3cbc5083c2e6933383886f99a71e882fd8781982982da27644b8c65dc699a08",
+      "evaluation_module_sha256_recorded_by_metrics": "9ce1551ba73585eb800b5f3749a44250a26a063f1b2eaea8c45f1b794504fa18",
+      "evaluator_git_hash_recorded_by_metrics": "ea377a5ebc3b703199068562f0ff09c25a21280d"
+    },
+    "formal_step5000_metrics": {
+      "json_path": "/home/haoyi/ffs_omega_tsr/outputs/ffs_omega_tsr_x2/stage_b/eval_step5000_fixed/metrics.json",
+      "json_sha256": "b3924a323927399815fef7fcc73b38f88b1db01fa320c4fc901e64a2cfc31633",
+      "csv_path": "/home/haoyi/ffs_omega_tsr/outputs/ffs_omega_tsr_x2/stage_b/eval_step5000_fixed/metrics.csv",
+      "csv_sha256": "b633b9ba390f81e64c783f70b213da367bf4c87153c815b2f521bc65990646b5",
+      "records_evaluated": 238,
+      "checkpoint_path_recorded_by_metrics": "/tmp/ffs_omega_tsr_stage_b_step5000.pt",
+      "checkpoint_sha256_recorded_by_metrics": "aacbe154f161c0697f3cb924e7e68c6507b13cbba3ffecc3061165c657c7f9a5",
+      "checkpoint_currently_available": false,
+      "eval_py_sha256_recorded_by_metrics": "d3cbc5083c2e6933383886f99a71e882fd8781982982da27644b8c65dc699a08",
+      "evaluation_module_sha256_recorded_by_metrics": "f9fa88519ce03888685625e9003ac2274808659f9182cb379aa9a0c4be585f64",
+      "evaluator_git_hash_recorded_by_metrics": "4cf896630171ad876a9b5c2eb49ea9dab67fdd28"
+    },
+    "validation_manifest": {
+      "path": "/home/haoyi/ffs_omega_cache/manifests/val_video_isolated.jsonl",
+      "sha256": "014bd75de8ffbf74530c64eac76394a30bfc62d65b2da02397de2fb5c984760c",
+      "records": 244,
+      "derived_endpoints": 240,
+      "evaluable_t3_windows": 238,
+      "sequence": "uvc_20260706_183939_677_2560x800_60fps",
+      "video_disjoint_from_training": true
+    },
+    "validation_caches": {
+      "ffs_observation": {
+        "root": "/home/haoyi/ffs_omega_cache/m1_formal_val/observation",
+        "run_receipt_sha256": "75ef8f9323eb32c3d0236c1b4c1fd1f7f612173a20fc582e94e5c6b89162710c",
+        "cache_manifest_sha256": "c1edde9178119e4fc29a2e07ef6040a8960b1f96cbbba0ef1e9a9e5d9a7fa51d",
+        "checkpoint_sha256": "98b5a9acf39fbfa795025de8cea95ce123daa40f6b6234d719167751024cf692",
+        "config_sha256": "93ccfa329b30ba924ce9a96f262c73e4607fa51f010b96db9623af0b2edadaf5"
+      },
+      "ffs_teacher": {
+        "root": "/home/haoyi/ffs_omega_cache/m1_formal_val/teacher",
+        "run_receipt_sha256": "0e9531852959a29003632a2ff05186dcb2aac223d488da5f218365138a9a77f6",
+        "cache_manifest_sha256": "e06a68d3a6a082fca1cd8d5758865ff2956cdd77524e9e5a30e62d3af651e271",
+        "checkpoint_sha256": "af0658f289ec840b292645f8d5538978f06e8cabaa1fd31e84acc91af268e990",
+        "config_sha256": "9d402130df586ce1b57d16d65b2fcf43c73e28992160fdf4a2e8f4b50b95672e"
+      },
+      "raw_vggt": {
+        "root": "/home/haoyi/ffs_omega_cache/m2_formal_val/vggt",
+        "run_receipt_sha256": "6309d056760c1f36c32fb0695c88664f3d057b2d155e90f5c9960965edc67bd2",
+        "cache_manifest_sha256": "12e6d39c765d377699595a560c3f85f1d29e04cb53243198e350539900a3a0d3",
+        "checkpoint_sha256": "c02da418b18bb01d0392598d3f6147366bcde1bb70fd08a5e3bf7925b0667934",
+        "config_sha256": "1ac151ba851c4626ab2fd8a22405a5e44399a905432da3e0123d7e106d111f88",
+        "selected_windows": 240
+      },
+      "derived_geometry": {
+        "root": "/home/haoyi/ffs_omega_cache/m2_formal_val/derived",
+        "run_receipt_sha256": "1e05c4e081620b9f634e9b3020779c6e4fdb7e21bf1df55365c3d4cde3d50620",
+        "cache_manifest_sha256": "f9e34fa730e43013aa7b1e19b57b132bc929f9b6ffe72c4d7796cd67fa1cd594",
+        "selected_records": 240,
+        "extrinsics_convention": "camera-from-world"
+      }
+    },
+    "checkpoint_source_contract": {
+      "git_hash": "3e0df0b543f5000d0bf8490740b5f34ad979e3b6",
+      "files_verified_equal_to_checkpoint_git_tree": true,
+      "files": {
+        "src/models/ffs_omega_tsr.py": "88130d40a41d27c771d2d868409e9b74241fd7d55ede7e270dd7fc0913dc09ad",
+        "src/models/source_gating.py": "7e7a01c9451fd2eba13f085be33a3ba849a0474aebb6f6212dba53714eed3653",
+        "src/models/convex_upsampler.py": "53f1b06446c43aff346ab14a5dbdd70cfda7de87bbebbb73a53d7e4127a161ff",
+        "src/losses/disparity.py": "a7820f28332e956629ecc11bad9c9cd3b51dd855cdfa1ef596121cc95bc1237b",
+        "src/losses/measurement.py": "06031cd84a5caf821d688f1ae7cfbe7b1cf8af081ab1662aa4cd11de85d3c29d",
+        "src/losses/uncertainty.py": "1463d307d4b84114b8e2614a54387079e9e820d4ebb4e4c0ca62e324dafaa9b8",
+        "train.py": "11fb51e0d24393907689e02426a8ac0344d6b5bcf8762ffadb7bc84bfc0f787e"
+      }
+    }
+  },
+  "analysis_execution": {
+    "method": "ephemeral_python_heredoc_primary_vggt_on_unroll_with_forward_hooks",
+    "script_persisted": false,
+    "script_sha256": null,
+    "raw_stdout_receipt_persisted": false,
+    "analysis_source_git_hash": null,
+    "analysis_source_hash_claimed": false,
+    "reason_source_identity_unavailable": "The diagnostic was intentionally run read-only as ephemeral heredocs while the repository was advancing concurrently. Only the stable checkpoint source-contract files above were independently compared with the checkpoint Git tree.",
+    "model_path": "train.build_model",
+    "causal_unroll": "three primary VGGT-on steps matching eval._build_eval_transport and train._temporal_step_batch",
+    "hooks": [
+      "model.disparity_residual_head output before 8*tanh",
+      "model.convex_upsampler output",
+      "model.hr_output_head output"
+    ],
+    "device": "cuda:0",
+    "device_name": "NVIDIA GeForce RTX 5090",
+    "device_capability": [
+      12,
+      0
+    ],
+    "torch_version": "2.10.0+cu128",
+    "cuda_version": "12.8",
+    "native_bf16_supported": true,
+    "autocast_dtype": "torch.bfloat16",
+    "inference_mode": true,
+    "batch_size": 1,
+    "num_workers": 4,
+    "crop_mode": "fixed",
+    "crop_hr_hw": [
+      384,
+      768
+    ],
+    "windows_processed": 238,
+    "future_frames": false,
+    "decomposition_run_elapsed_seconds": 76.04309415817261,
+    "magnitude_histogram_was_a_separate_full_238_window_run": true
+  },
+  "denominators": {
+    "hr_pixels": 70189056,
+    "lr_pixels": 17547264,
+    "windows": 238,
+    "hr_pixels_per_window": 294912,
+    "lr_pixels_per_window": 73728
+  },
+  "formal_metric_comparison": {
+    "bilinear_reference": {
+      "negative_count": 1671251,
+      "negative_rate": 0.023810706330058065
+    },
+    "t1_reference": {
+      "negative_count": 2063588,
+      "negative_rate": 0.029400423906541785
+    },
+    "step5000": {
+      "T3_history_only": {
+        "negative_count": 1277307,
+        "negative_rate": 0.01819809344636292
+      },
+      "T3_VGGT_mask_off": {
+        "negative_count": 1300959,
+        "negative_rate": 0.018535069056919644
+      },
+      "T3_VGGT": {
+        "negative_count": 1021467,
+        "negative_rate": 0.014553080753785889,
+        "epe_hr_px": 0.1620392670673445,
+        "low_confidence_epe_hr_px": 0.20550347768953978,
+        "trusted_region_epe_hr_px": 0.11276436670616768,
+        "invalid_region_completeness": 0.8904173963252602
+      }
+    },
+    "step7500": {
+      "T3_history_only": {
+        "negative_count": 3953082,
+        "negative_rate": 0.0563204896216299
+      },
+      "T3_VGGT_mask_off": {
+        "negative_count": 3852546,
+        "negative_rate": 0.054888129568233544
+      },
+      "T3_VGGT": {
+        "negative_count": 3592684,
+        "negative_rate": 0.051185814495068864,
+        "epe_hr_px": 0.15965524059088024,
+        "low_confidence_epe_hr_px": 0.20256203705518921,
+        "trusted_region_epe_hr_px": 0.11105296859120357,
+        "invalid_region_completeness": 0.3329224064719927
+      },
+      "T3_VGGT_clamp0": {
+        "negative_count": 0,
+        "negative_rate": 0.0,
+        "zero_count": 3592684,
+        "zero_rate": 0.051185814495068864,
+        "invalid_rate": 0.051185814495068864,
+        "epe_hr_px": 0.15749664093796376,
+        "low_confidence_epe_hr_px": 0.1989949470124299,
+        "trusted_region_epe_hr_px": 0.11029750288476914,
+        "invalid_region_completeness": 0.3329224064719927
+      }
+    },
+    "step7500_vs_step5000_T3_VGGT": {
+      "negative_count_change": 2571217,
+      "negative_rate_change_fraction": 0.036632733741282975,
+      "negative_rate_change_percentage_points": 3.6632733741282975,
+      "negative_count_ratio": 3.517180682293212,
+      "VGGT_reduces_step7500_negative_rate_vs_history_only": true,
+      "VGGT_negative_rate_reduction_vs_history_only_fraction": 0.005134675126561038
+    }
+  },
+  "model_output_contract": {
+    "source_validity": "A source is valid only for finite disparity greater than zero plus its explicit mask.",
+    "all_invalid_fallback": "Masked source softmax selects source zero, FFS, when every source is invalid.",
+    "finite_negative_sanitization": "The model nan_to_num sanitization preserves finite negative source disparities; it does not clamp them to zero before all-invalid fallback or the FFS anchor.",
+    "source_mix": "A convex source-weighted sum; it can be negative only through the all-invalid FFS fallback under the current validity contract.",
+    "lr_residual": "8.0 * tanh(disparity_residual_head), expressed in HR pixels on the LR grid.",
+    "convex_upsampling": "Positive normalized 3x3 weights preserve units but do not enforce non-negative values when the refined LR neighborhood is negative.",
+    "hr_residual": "The first HR output-head channel is added without a tanh bound.",
+    "ffs_anchor": "d_final = d_ffs_bilinear + clamp(1-conf_ffs+0.1,0.1,1.0)*(d_raw-d_ffs_bilinear).",
+    "loss_gap": "Disparity, measurement, NLL, and temporal losses operate on trusted/positive-target or geometry-safe masks; gate regularization constrains source ownership but no objective explicitly penalizes negative output."
+  },
+  "hook_stage_decomposition": {
+    "count_owner": "ephemeral_hook_analysis",
+    "lr_grid": {
+      "source_mix_negative": {
+        "count": 309734,
+        "rate_over_lr_pixels": 0.017651412778653126
+      },
+      "all_sources_invalid": {
+        "count": 309736,
+        "rate_over_lr_pixels": 0.01765152675653595
+      },
+      "all_sources_invalid_and_refined_negative": {
+        "count": 304786,
+        "rate_over_lr_pixels": 0.017369431496556956,
+        "rate_within_all_sources_invalid": 0.9840186481390604
+      },
+      "post_lr_residual_negative": {
+        "count": 1770626,
+        "rate_over_lr_pixels": 0.1009061013728408
+      },
+      "lr_residual_introduced_negative": {
+        "count": 1465842,
+        "rate_over_lr_pixels": 0.08353678385416667,
+        "share_of_post_lr_residual_negative": 0.8278665285610852
+      },
+      "lr_residual_recovered_negative_mix": {
+        "count": 4950,
+        "rate_over_lr_pixels": 0.00028209525997899157
+      }
+    },
+    "hr_grid": {
+      "post_convex_negative": {
+        "count": 7203666,
+        "rate_over_hr_pixels": 0.1026323249026173
+      },
+      "post_hr_residual_raw_negative": {
+        "count": 6105689,
+        "rate_over_hr_pixels": 0.08698918817201359
+      },
+      "convex_negative_surviving_hr_residual": {
+        "count": 6047423,
+        "rate_over_hr_pixels": 0.08615905875696633
+      },
+      "hr_residual_introduced_raw_negative": {
+        "count": 58266,
+        "rate_over_hr_pixels": 0.0008301294150472689,
+        "share_of_raw_negative": 0.009542903348008717
+      },
+      "hr_residual_recovered_convex_negative": {
+        "count": 1156243,
+        "rate_over_hr_pixels": 0.016473266145650967,
+        "share_of_convex_negative": 0.1605075804458452
+      },
+      "anchor_recovered_raw_negative": {
+        "count": 2517298,
+        "rate_over_hr_pixels": 0.03586453705831291,
+        "share_of_raw_negative": 0.41228729468533365
+      },
+      "final_negative_diagnostic": {
+        "count": 3592681,
+        "rate_over_hr_pixels": 0.0511857717533628
+      },
+      "final_negative_with_nonnegative_bilinear": {
+        "count": 2485485,
+        "rate_over_hr_pixels": 0.035411289760044644,
+        "share_of_final_negative": 0.691819006474552
+      },
+      "final_negative_inherited_from_negative_bilinear": {
+        "count": 1107196,
+        "rate_over_hr_pixels": 0.01577448199331816,
+        "share_of_final_negative": 0.308180993525448
+      },
+      "negative_bilinear_recovered_by_model": {
+        "count": 564055,
+        "rate_over_hr_pixels": 0.008036224336739905,
+        "share_of_negative_bilinear": 0.33750465968307575
+      }
+    },
+    "negative_pixel_value_statistics": {
+      "final_hr_px": {
+        "count": 3592681,
+        "mean": -0.04742405388441852,
+        "min": -20.727249145507812,
+        "max": -1.1175870895385742e-08
+      },
+      "bilinear_ffs_hr_px": {
+        "count": 3592681,
+        "mean": 0.13593531642620493,
+        "min": -2.8807373046875,
+        "max": 185.125
+      },
+      "raw_hr_px": {
+        "count": 3592681,
+        "mean": -0.15496719734786157,
+        "min": -27.02004623413086,
+        "max": 0.26407358050346375
+      },
+      "convex_hr_px": {
+        "count": 3592681,
+        "mean": -0.18825558655135285,
+        "min": -7.33065938949585,
+        "max": 36.72747802734375
+      },
+      "hr_residual_hr_px": {
+        "count": 3592681,
+        "mean": 0.033288391141193766,
+        "min": -38.25,
+        "max": 0.8828125
+      },
+      "anchor_gate": {
+        "count": 3592681,
+        "mean": 0.44604203980939455,
+        "min": 0.10363159328699112,
+        "max": 1.0
+      },
+      "ffs_confidence": {
+        "count": 3592681,
+        "mean": 0.6312458760360967,
+        "min": 0.0,
+        "max": 0.996368408203125
+      }
+    }
+  },
+  "stratified_final_negative_diagnostic": {
+    "count_owner": "ephemeral_hook_analysis",
+    "fields": "Each entry gives domain pixels, final-negative pixels, negative rate within the domain, and share of all diagnostic final-negative pixels.",
+    "by_bilinear_disparity_hr_px": {
+      "less_than_0": {
+        "pixels": 1671251,
+        "negative": 1107196,
+        "rate": 0.6624953403169243,
+        "negative_share": 0.308180993525448
+      },
+      "0_to_0.25": {
+        "pixels": 5877538,
+        "negative": 2289089,
+        "rate": 0.389463921798549,
+        "negative_share": 0.6371534238636829
+      },
+      "0.25_to_1": {
+        "pixels": 4367540,
+        "negative": 98366,
+        "rate": 0.022522060473401502,
+        "negative_share": 0.02737955304130815
+      },
+      "1_to_4": {
+        "pixels": 11893202,
+        "negative": 75998,
+        "rate": 0.006390036930340542,
+        "negative_share": 0.021153561922141153
+      },
+      "at_least_4": {
+        "pixels": 46379525,
+        "negative": 22032,
+        "rate": 0.00047503720661218503,
+        "negative_share": 0.006132467647419852
+      }
+    },
+    "by_ffs_validity": {
+      "invalid": {
+        "pixels": 1760520,
+        "negative": 1142424,
+        "rate": 0.6489128212119146,
+        "negative_share": 0.3179864841882705
+      },
+      "valid": {
+        "pixels": 68428536,
+        "negative": 2450257,
+        "rate": 0.03580753210911892,
+        "negative_share": 0.6820135158117294
+      },
+      "trusted": {
+        "pixels": 22278804,
+        "negative": 2213336,
+        "rate": 0.09934716423736212,
+        "negative_share": 0.6160680561396906
+      },
+      "untrusted": {
+        "pixels": 47910252,
+        "negative": 1379345,
+        "rate": 0.028790184614349346,
+        "negative_share": 0.3839319438603093
+      }
+    },
+    "by_ffs_confidence": {
+      "0_to_0.1": {
+        "pixels": 3883616,
+        "negative": 854450,
+        "rate": 0.22001402816344356,
+        "negative_share": 0.23783074534031828
+      },
+      "0.1_to_0.5": {
+        "pixels": 3443297,
+        "negative": 411515,
+        "rate": 0.11951190966100222,
+        "negative_share": 0.11454259367864834
+      },
+      "0.5_to_0.8": {
+        "pixels": 41359049,
+        "negative": 403270,
+        "rate": 0.009750465974205548,
+        "negative_share": 0.11224765015318644
+      },
+      "0.8_to_1.0": {
+        "pixels": 21503094,
+        "negative": 1923446,
+        "rate": 0.08944973221062978,
+        "negative_share": 0.535379010827847
+      }
+    },
+    "by_temporal_geometry": {
+      "pose_valid": {
+        "pixels": 52199424,
+        "negative": 1421262,
+        "rate": 0.02722754182115113,
+        "negative_share": 0.39559927530443145
+      },
+      "pose_rejected": {
+        "pixels": 17989632,
+        "negative": 2171419,
+        "rate": 0.12070391434355078,
+        "negative_share": 0.6044007246955686
+      },
+      "history_valid": {
+        "pixels": 42049471,
+        "negative": 479149,
+        "rate": 0.011394887702630075,
+        "negative_share": 0.1333680891790838
+      },
+      "history_invalid": {
+        "pixels": 28139585,
+        "negative": 3113532,
+        "rate": 0.11064598145281816,
+        "negative_share": 0.8666319108209162
+      }
+    },
+    "by_valid_source_count_nearest_hr": {
+      "0": {
+        "pixels": 1238944,
+        "negative": 887599,
+        "rate": 0.7164157540615234,
+        "negative_share": 0.24705755952170538
+      },
+      "1": {
+        "pixels": 17050040,
+        "negative": 1431383,
+        "rate": 0.08395188515686766,
+        "negative_share": 0.3984163915471482
+      },
+      "2": {
+        "pixels": 10093536,
+        "negative": 904950,
+        "rate": 0.08965638999058408,
+        "negative_share": 0.2518871004689812
+      },
+      "3": {
+        "pixels": 41806536,
+        "negative": 368749,
+        "rate": 0.00882036722678961,
+        "negative_share": 0.10263894846216516
+      }
+    },
+    "by_dominant_source_nearest_hr": {
+      "ffs": {
+        "pixels": 66325516,
+        "negative": 3331328,
+        "rate": 0.050226944333158295,
+        "negative_share": 0.9272540478823474
+      },
+      "vggt": {
+        "pixels": 756292,
+        "negative": 151231,
+        "rate": 0.19996377060712,
+        "negative_share": 0.04209419093985801
+      },
+      "history": {
+        "pixels": 3107248,
+        "negative": 110122,
+        "rate": 0.03544036394906361,
+        "negative_share": 0.030651761177794522
+      }
+    },
+    "by_teacher_domain": {
+      "trusted": {
+        "pixels": 31189933,
+        "negative": 2016066,
+        "rate": 0.06463835622859465,
+        "negative_share": 0.5611592011648125
+      },
+      "untrusted": {
+        "pixels": 38999123,
+        "negative": 1576615,
+        "rate": 0.040426934728763006,
+        "negative_share": 0.43884079883518745
+      }
+    },
+    "by_spatial_location": {
+      "border_32px": {
+        "pixels": 16572416,
+        "negative": 753355,
+        "rate": 0.04545836889443277,
+        "negative_share": 0.2096915924347305
+      },
+      "interior": {
+        "pixels": 53616640,
+        "negative": 2839326,
+        "rate": 0.05295605990975936,
+        "negative_share": 0.7903084075652695
+      }
+    }
+  },
+  "negative_magnitude_histogram": {
+    "count_owner": "separate_ephemeral_full_238_window_primary_vggt_on_run",
+    "diagnostic_negative_count": 3592681,
+    "bins_hr_px": {
+      "less_than_-10": {
+        "count": 165,
+        "global_rate": 2.3507938331582634e-06,
+        "negative_share": 4.59267048758295e-05,
+        "new_vs_nonnegative_bilinear": 154,
+        "inherited_from_negative_bilinear": 11,
+        "teacher_trusted": 20
+      },
+      "-10_to_-4": {
+        "count": 2281,
+        "global_rate": 3.249794383899393e-05,
+        "negative_share": 0.0006349019019501036,
+        "new_vs_nonnegative_bilinear": 1892,
+        "inherited_from_negative_bilinear": 389,
+        "teacher_trusted": 337
+      },
+      "-4_to_-1": {
+        "count": 22157,
+        "global_rate": 0.0003156759937047736,
+        "negative_share": 0.0061672606056591165,
+        "new_vs_nonnegative_bilinear": 15348,
+        "inherited_from_negative_bilinear": 6809,
+        "teacher_trusted": 4216
+      },
+      "-1_to_-0.25": {
+        "count": 117752,
+        "global_rate": 0.0016776404572245564,
+        "negative_share": 0.03277552334871924,
+        "new_vs_nonnegative_bilinear": 81407,
+        "inherited_from_negative_bilinear": 36345,
+        "teacher_trusted": 55444
+      },
+      "-0.25_to_-0.1": {
+        "count": 143226,
+        "global_rate": 0.0020405745305934874,
+        "negative_share": 0.03986604989421549,
+        "new_vs_nonnegative_bilinear": 77208,
+        "inherited_from_negative_bilinear": 66018,
+        "teacher_trusted": 79696
+      },
+      "-0.1_to_-0.01": {
+        "count": 1049781,
+        "global_rate": 0.014956476975555848,
+        "negative_share": 0.29219989194698887,
+        "new_vs_nonnegative_bilinear": 506648,
+        "inherited_from_negative_bilinear": 543133,
+        "teacher_trusted": 588045
+      },
+      "-0.01_to_0": {
+        "count": 2257319,
+        "global_rate": 0.032160555058611984,
+        "negative_share": 0.6283104455975913,
+        "new_vs_nonnegative_bilinear": 1802828,
+        "inherited_from_negative_bilinear": 454491,
+        "teacher_trusted": 1288308
+      }
+    },
+    "summary": {
+      "absolute_magnitude_below_0.1_count": 3307100,
+      "absolute_magnitude_below_0.1_negative_share": 0.9205103375445802,
+      "absolute_magnitude_below_0.01_count": 2257319,
+      "absolute_magnitude_below_0.01_negative_share": 0.6283104455975913,
+      "less_than_-0.1_count": 285581,
+      "less_than_-0.1_global_rate": 0.004068739719194969,
+      "less_than_-1_count": 24603,
+      "less_than_-1_global_rate": 0.00035052473137692577
+    }
+  },
+  "worst_frames_diagnostic": [
+    {
+      "frame_id": 1254,
+      "negative_count": 136844,
+      "negative_rate": 0.4640163845486111,
+      "new_vs_nonnegative_bilinear": 130486,
+      "negative_bilinear_count": 12285,
+      "pose_valid": true,
+      "static_prior_valid": true
+    },
+    {
+      "frame_id": 2766,
+      "negative_count": 95338,
+      "negative_rate": 0.3232760959201389,
+      "new_vs_nonnegative_bilinear": 83102,
+      "negative_bilinear_count": 30272,
+      "pose_valid": true,
+      "static_prior_valid": true
+    },
+    {
+      "frame_id": 1038,
+      "negative_count": 85929,
+      "negative_rate": 0.2913716634114583,
+      "new_vs_nonnegative_bilinear": 46251,
+      "negative_bilinear_count": 42901,
+      "pose_valid": false,
+      "static_prior_valid": false
+    },
+    {
+      "frame_id": 2838,
+      "negative_count": 80975,
+      "negative_rate": 0.2745734320746528,
+      "new_vs_nonnegative_bilinear": 71123,
+      "negative_bilinear_count": 22445,
+      "pose_valid": true,
+      "static_prior_valid": true
+    },
+    {
+      "frame_id": 1014,
+      "negative_count": 78016,
+      "negative_rate": 0.2645399305555556,
+      "new_vs_nonnegative_bilinear": 47755,
+      "negative_bilinear_count": 35905,
+      "pose_valid": false,
+      "static_prior_valid": false
+    },
+    {
+      "frame_id": 2802,
+      "negative_count": 77818,
+      "negative_rate": 0.2638685438368056,
+      "new_vs_nonnegative_bilinear": 71919,
+      "negative_bilinear_count": 13173,
+      "pose_valid": true,
+      "static_prior_valid": true
+    },
+    {
+      "frame_id": 2778,
+      "negative_count": 74633,
+      "negative_rate": 0.2530687120225694,
+      "new_vs_nonnegative_bilinear": 67469,
+      "negative_bilinear_count": 15401,
+      "pose_valid": true,
+      "static_prior_valid": true
+    },
+    {
+      "frame_id": 2790,
+      "negative_count": 74504,
+      "negative_rate": 0.2526312934027778,
+      "new_vs_nonnegative_bilinear": 66747,
+      "negative_bilinear_count": 14626,
+      "pose_valid": true,
+      "static_prior_valid": true
+    },
+    {
+      "frame_id": 2754,
+      "negative_count": 73728,
+      "negative_rate": 0.25,
+      "new_vs_nonnegative_bilinear": 63160,
+      "negative_bilinear_count": 21366,
+      "pose_valid": true,
+      "static_prior_valid": true
+    },
+    {
+      "frame_id": 1182,
+      "negative_count": 67516,
+      "negative_rate": 0.2289360894097222,
+      "new_vs_nonnegative_bilinear": 61294,
+      "negative_bilinear_count": 9486,
+      "pose_valid": false,
+      "static_prior_valid": false
+    }
+  ],
+  "visualization_evidence": {
+    "root_step5000": "/home/haoyi/ffs_omega_tsr/outputs/ffs_omega_tsr_x2/stage_b/eval_step5000_fixed/visualizations",
+    "root_step7500": "/home/haoyi/ffs_omega_tsr/outputs/ffs_omega_tsr_x2/stage_b/eval_step7500_fixed/visualizations",
+    "selected_frame_ids": [
+      1254,
+      1266,
+      1494,
+      1506
+    ],
+    "selection_classes": [
+      "valid_geometry_and_history",
+      "pose_rejected_fail_closed",
+      "valid_geometry_and_history",
+      "pose_rejected_fail_closed"
+    ],
+    "qualitative_observation": "Frame 1254 is a sky and distant-building near-zero-disparity scene and is also the worst diagnostic frame. Source-weight visualizations do not show a bulk gate transition commensurate with the raw-negative increase.",
+    "limitation": "Existing normalized disparity color maps do not encode a dedicated negative mask or the internal LR-residual/convex/HR-residual stages, so visualizations alone are not accepted as the quantitative diagnosis."
+  },
+  "deployment_interpretation": {
+    "finite_negative_to_zero_postprocess": true,
+    "epsilon_fill": false,
+    "zero_remains_invalid": true,
+    "pointcloud_valid_mask_required": "isfinite(disparity_hr_px) and disparity_hr_px > 0",
+    "negative_depth_prevented_when_contract_followed": true,
+    "step7500_clamp0_negative_rate": 0.0,
+    "step7500_clamp0_invalid_rate": 0.051185814495068864,
+    "step7500_clamp0_completeness_unchanged": true,
+    "clamp0_passes_original_sub_0_5_percent_invalid_health_gate": false,
+    "interpretation": "Clamp0 is a safe fail-closed point-cloud deployment diagnostic and improves pseudo-GT EPE, but it converts the regression into explicit zero holes rather than restoring completeness."
+  },
+  "monitoring_and_followup": {
+    "active_formal_training_must_not_be_mutated": true,
+    "required_future_checkpoints": [
+      10000,
+      12500,
+      15000
+    ],
+    "monitor": [
+      "raw and clamp0 negative, zero, and invalid rates",
+      "bilinear disparity bands less than 0, 0 to 0.25, 0.25 to 1, and at least 1 HR pixel",
+      "FFS valid and trusted strata",
+      "pose, static-prior, history, and valid-source-count strata",
+      "source mix, post-LR-residual, post-convex, post-HR-residual, and post-anchor negative rates",
+      "negative magnitude tails below -0.1, -1, and -4 HR pixels",
+      "TEPE, low-confidence EPE, invalid-region completeness, and trusted-region degradation together"
+    ],
+    "minimal_followup_if_final_fails": [
+      "Keep finite-negative-to-zero plus d>0 masking as the deployment safety baseline.",
+      "In a separate fine-tune or ablation, zero invalid source values before all-invalid FFS fallback and before the FFS anchor.",
+      "Constrain or smoothly penalize negative d_mix plus LR residual; this is the dominant learned source of new negatives.",
+      "Bound or penalize the HR residual negative tail only as a secondary repair.",
+      "Do not disable VGGT or change source-gate ownership as the primary response; formal branch comparisons show VGGT reduces rather than increases the step-7500 negative rate.",
+      "Do not add epsilon disparity to holes or claim clamp0 restores completeness."
+    ]
+  }
+}

@@ -263,3 +263,14 @@
 - Consequence: steps 7,001–7,144 were recomputed and matched all recorded LR, gradient and loss values exactly; only per-process elapsed time resets. The formal log remains one continuous optimizer-step sequence.
 - Revisit trigger: the trainer gains a journaled log/checkpoint transaction or a tested automatic log-reconciliation command.
 - Evidence: `reports/m4/stage_b_resume_step7000.json`.
+
+## D-025 — Preserve the formal Stage-B trajectory despite the intermediate sign regression
+
+- Date: 2026-09-01
+- Status: accepted
+- Context: step 7,500 improves TEPE and pseudo-GT EPE but raw VGGT-on negative disparity rises to 5.1186%. A 238-window decomposition attributes the bulk to the ±8 HR-pixel LR residual crossing near-zero disparity and convex propagation, not to VGGT gating or the HR residual.
+- Decision: do not change loss, architecture, optimizer, or source gates inside the active 15,000-step run. Preserve `clamp_min(0)` plus an explicit finite-and-positive point-cloud mask as the safe deployment baseline, and monitor raw/clamped sign health at 10k, 12.5k, and 15k. If the final raw gate still fails, create a separate fine-tune/ablation lineage that first addresses all-invalid source sanitization and the LR residual lower bound/negative penalty.
+- Rationale: modifying the active run would destroy the declared trajectory, while disabling VGGT is contradicted by branch-matched evidence. Epsilon filling or softplus would manufacture positive depth and inflate completeness.
+- Consequence: the clamp row has zero negative outputs but retains 5.1186% honest zero/invalid pixels at step 7,500; it is a safety layer, not a hole-recovery claim. Any corrective fine-tune is reported separately from the formal Stage-B run.
+- Revisit trigger: the final 15,000-step sign-stratified audit or an independently controlled positivity ablation.
+- Evidence: `reports/m4/stage_b_negative_diagnostic_step7500.json`, `reports/m4/stage_b_eval_step7500.json`.
