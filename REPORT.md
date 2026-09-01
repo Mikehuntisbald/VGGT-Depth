@@ -388,6 +388,19 @@ masks. A one-window smoke produced finite paired metrics but is explicitly
 same validation cache; its -4.14% number is not an acceptance result. Evidence:
 `reports/m4/stage_b_eval_smoke.json`.
 
+A separate read-only audit then traversed every formal Stage-B training input:
+2,787 observation records, 2,787 teacher records, 2,779 raw VGGT windows and
+2,779 derived-geometry records. Every cache used `weights_only=True`, all
+5,574 current source images matched their recorded SHA-256, and raw/derived
+receipts, manifests and per-record links closed exactly. The two train
+sequences contain 1,166 and 1,621 frames and are disjoint from the 244-frame
+`183939` validation sequence. Requiring all three student times to have
+derived geometry leaves exactly 2,775 causal T=3 training endpoints (1,160 +
+1,615), with no future index/timestamp access or sequence crossing. The input
+audit receipt SHA-256 is
+`4326f0b002d136dddc847a3d71c8bd8c1c32cbeab2eb24b6cbe7d669547006d8`;
+evidence: `reports/m4/stage_b_input_audit.json`.
+
 The first formal intermediate checkpoint at step 2,500 was then evaluated on
 all 238 held-out causal windows with the refreshed raw-to-derived receipt.
 Paired HR temporal disparity error fell from 0.369828 px for independently run
