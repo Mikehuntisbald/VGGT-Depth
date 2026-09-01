@@ -164,6 +164,121 @@ def test_t3_failure_metrics_are_per_sample_and_keep_metric_receipts() -> None:
     assert metrics["strict_temporal_error_px"] == MetricResult(10.0, 10.0, 1, True)
 
 
+def test_t3_failure_metrics_use_teacher_residual_name_and_bias_cancellation() -> None:
+    target = torch.tensor([[[[10.0, 20.0]]]])
+    prediction = target + 4.0
+    warped_target = torch.tensor([[[[9.0, 18.0]]]])
+    warped_prediction = warped_target + 4.0
+    valid = torch.ones_like(target, dtype=torch.bool)
+    metrics = eval_cli._t3_failure_sample_metrics(
+        prediction_hr_px=prediction,
+        target_hr_px=target,
+        target_trusted_mask=valid,
+        ffs_confidence_hr=torch.zeros_like(target),
+        ffs_valid_mask_hr=valid,
+        ffs_trusted_mask_hr=valid,
+        history_hr_px=warped_prediction,
+        strict_temporal_safe_mask=valid,
+        warped_reference_history_hr_px=warped_target,
+        warped_reference_valid_mask=valid,
+        low_confidence_threshold=0.8,
+        boundary_gradient_threshold_px=1.0,
+        boundary_radius_px=0,
+    )
+    assert "strict_temporal_error_px" not in metrics
+    assert metrics["strict_temporal_residual_error_px"] == MetricResult(
+        0.0, 0.0, 2, True
+    )
+
+
+def test_temporal_metric_contract_separates_v2_primary_from_legacy() -> None:
+    v2 = eval_cli._temporal_metric_contract(temporal_metric_v2=True)
+    legacy = eval_cli._temporal_metric_contract(temporal_metric_v2=False)
+    assert v2["primary"] is True
+    assert v2["paired_field"] == "temporal_residual_error_paired_px"
+    assert v2["legacy_fields_emitted"] is False
+    assert legacy["primary"] is False
+    assert legacy["paired_field"] == "temporal_disparity_error_paired_px"
+    assert "not teacher/GT" in legacy["warning"]
+
+
+def test_v2_metric_uses_teacher_correspondence_carried_prediction() -> None:
+    transport = _fake_transport(99.0)
+    valid = torch.ones((1, 1, 4, 4), dtype=torch.bool)
+    reference = train.ReferenceTemporalWarp(
+        disparity_hr_px=torch.full((1, 1, 4, 4), 10.0),
+        prediction_disparity_hr_px=torch.full((1, 1, 4, 4), 14.0),
+        valid_mask_hr=valid,
+        visibility_mask_hr=valid,
+        collision_mask_hr=torch.zeros_like(valid),
+    )
+    result = eval_cli._temporal_residual_metric_for_transport(
+        torch.full((1, 1, 4, 4), 15.0),
+        transport,
+        current_reference_hr_px=torch.full((1, 1, 4, 4), 11.0),
+        current_reference_valid_hr=valid,
+        reference_transport=reference,
+    )
+    # Prediction and teacher residuals are both +1. If the unrelated method
+    # transport value 99 were used, this would be a large non-zero error.
+    assert result == MetricResult(0.0, 0.0, 16, True)
+
+
+def test_explicit_validity_completion_metrics_use_global_confusion_counts() -> None:
+    target = torch.tensor([[[[4.0, 5.0, 0.0, 7.0]]]])
+    teacher_valid = torch.tensor([[[[True, True, False, True]]]])
+    ffs_valid = torch.tensor([[[[True, False, False, False]]]])
+    output_valid = torch.tensor([[[[True, False, True, True]]]])
+    completion = torch.tensor([[[[False, False, True, True]]]])
+    disparity = torch.ones_like(target)
+    output = ModelOutput(
+        disparity_hr_px=disparity,
+        disparity_raw_hr_px=disparity,
+        source_weights=torch.zeros((1, 3, 1, 2)),
+        log_variance=torch.zeros_like(disparity),
+        uncertainty=torch.ones_like(disparity),
+        hidden_state=(torch.ones((1, 1, 1, 2)),),
+        anchor_gate=torch.ones_like(disparity),
+        source_valid_mask=torch.ones((1, 3, 1, 2), dtype=torch.bool),
+        valid_probability=torch.tensor([[[[0.9, 0.4, 0.6, 0.8]]]]),
+        completion_probability=torch.tensor([[[[0.0, 0.4, 0.6, 0.8]]]]),
+        output_valid_mask=output_valid,
+        completion_mask=completion,
+    )
+
+    metrics = eval_cli._explicit_validity_completion_metrics(
+        output,
+        target_disparity_hr_px=target,
+        teacher_valid_mask_hr=teacher_valid,
+        ffs_valid_mask_hr=ffs_valid,
+    )
+
+    assert metrics["explicit_valid_precision"] == MetricResult(
+        2.0 / 3.0, 2.0, 3, True
+    )
+    assert metrics["explicit_valid_recall"] == MetricResult(
+        2.0 / 3.0, 2.0, 3, True
+    )
+    assert metrics["explicit_valid_f1"] == MetricResult(2.0 / 3.0, 4.0, 6, True)
+    assert metrics["ffs_hole_completion_precision"] == MetricResult(
+        0.5, 1.0, 2, True
+    )
+    assert metrics["ffs_hole_completion_recall"] == MetricResult(
+        0.5, 1.0, 2, True
+    )
+    assert metrics["ffs_hole_completion_f1"] == MetricResult(0.5, 2.0, 4, True)
+    assert metrics["explicit_valid_brier"].count == 4
+    assert metrics["ffs_hole_completion_brier"].count == 3
+
+    unavailable = eval_cli._explicit_validity_completion_metrics(
+        None,
+        target_disparity_hr_px=target,
+        teacher_valid_mask_hr=teacher_valid,
+        ffs_valid_mask_hr=ffs_valid,
+    )
+    assert all(not metric.valid and metric.count == 0 for metric in unavailable.values())
+
+
 def test_failure_collector_uses_stable_ties_writes_selection_and_bounds_cpu(
     tmp_path: Path,
 ) -> None:
@@ -1205,6 +1320,86 @@ def _fake_transport(value: float) -> train.TemporalTransport:
     )
 
 
+def _fake_v2_transport(value: float) -> train.TemporalTransport:
+    legacy = _fake_transport(value)
+    topk = torch.full((1, 2, 2, 2), value)
+    return train.TemporalTransport(
+        disparity_history_hr_px=legacy.disparity_history_hr_px,
+        confidence_history=legacy.confidence_history,
+        visibility_mask=legacy.visibility_mask,
+        valid_history=legacy.valid_history,
+        collision_mask=legacy.collision_mask,
+        photometric_residual=legacy.photometric_residual,
+        fractional_offset_px=legacy.fractional_offset_px,
+        static_mask=legacy.static_mask,
+        geometry_consistent_mask=legacy.geometry_consistent_mask,
+        disparity_history_loss_hr_px=legacy.disparity_history_loss_hr_px,
+        confidence_history_hr=legacy.confidence_history_hr,
+        visibility_mask_hr=legacy.visibility_mask_hr,
+        valid_history_hr=legacy.valid_history_hr,
+        collision_mask_hr=legacy.collision_mask_hr,
+        photometric_residual_hr=legacy.photometric_residual_hr,
+        static_mask_hr=legacy.static_mask_hr,
+        geometry_consistent_mask_hr=legacy.geometry_consistent_mask_hr,
+        topk_disparity_history_hr_px=topk,
+        topk_confidence_history=torch.ones_like(topk),
+        topk_fractional_offset_px=torch.zeros((1, 2, 2, 2, 2)),
+        topk_temporal_age_frames=torch.ones_like(topk),
+        topk_z_aware_weights=torch.full_like(topk, 0.5),
+        topk_valid_mask=torch.ones_like(topk, dtype=torch.bool),
+        warped_hidden_state=(
+            torch.full((1, 1, 2, 2), value),
+            torch.full((1, 1, 2, 2), value),
+        ),
+    )
+
+
+def _v2_temporal_config() -> OmegaConf:
+    payload = _temporal_checkpoint_config()
+    payload["temporal_history_v2"] = {
+        "enabled": True,
+        "protocol_version": "topk_z_aware_hidden_warp_v2",
+        "top_k": 2,
+        "memory_frames": 2,
+        "splat_footprint": "bilinear",
+        "depth_temperature_m": 0.25,
+        "age_temperature_frames": 3.0,
+        "source_collision_penalty": 0.5,
+        "collision_depth_gap_m": 0.05,
+        "collision_relative_depth_gap": 0.05,
+        "candidate_feature_channels": 32,
+    }
+    payload["temporal_residual_v2"] = {
+        "enabled": True,
+        "protocol_version": "teacher_gt_temporal_residual_v2",
+        "reference": "teacher",
+    }
+    return OmegaConf.create(payload)
+
+
+def _v2_unroll_batch() -> dict[str, torch.Tensor]:
+    scalar_lr = torch.ones((1, 3, 1, 2, 2))
+    scalar_hr = torch.ones((1, 3, 1, 4, 4))
+    return {
+        "rgb_hr_sequence": torch.zeros((1, 3, 3, 4, 4)),
+        "disparity_ffs_hr_px_sequence": scalar_lr.clone(),
+        "confidence_ffs_sequence": scalar_lr.clone(),
+        "valid_ffs_sequence": torch.ones_like(scalar_lr, dtype=torch.bool),
+        "vggt_disparity_hr_px_sequence": scalar_lr.clone() * 7,
+        "disparity_vggt_hr_px_sequence": scalar_lr.clone() * 7,
+        "confidence_vggt_sequence": scalar_lr.clone(),
+        "valid_vggt_sequence": torch.ones_like(scalar_lr, dtype=torch.bool),
+        "static_prior_valid_sequence": torch.ones((1, 3), dtype=torch.bool),
+        "temporal_pose_valid_sequence": torch.ones((1, 3), dtype=torch.bool),
+        "teacher_disparity_hr_px_sequence": scalar_hr.clone() * 10,
+        "teacher_confidence_sequence": scalar_hr.clone(),
+        "teacher_valid_mask_sequence": torch.ones_like(scalar_hr, dtype=torch.bool),
+        "teacher_trusted_mask_sequence": torch.ones_like(
+            scalar_hr, dtype=torch.bool
+        ),
+    }
+
+
 class _TemporalSpyModel(nn.Module):
     def __init__(self) -> None:
         super().__init__()
@@ -1220,6 +1415,8 @@ class _TemporalSpyModel(nn.Module):
         vggt = kwargs["disparity_vggt_hr_px"]
         valid_vggt = kwargs["valid_vggt"]
         history = kwargs.get("disparity_history_hr_px")
+        topk_history = kwargs.get("history_topk_disparity_hr_px")
+        hidden_state = kwargs.get("hidden_state")
         assert isinstance(vggt, torch.Tensor)
         assert isinstance(valid_vggt, torch.Tensor)
         self.calls.append(
@@ -1230,6 +1427,12 @@ class _TemporalSpyModel(nn.Module):
                     None
                     if not isinstance(history, torch.Tensor)
                     else history.data_ptr()
+                ),
+                "topk_history": isinstance(topk_history, torch.Tensor),
+                "hidden_mean": (
+                    None
+                    if not isinstance(hidden_state, tuple)
+                    else float(hidden_state[0].mean())
                 ),
             }
         )
@@ -1284,7 +1487,136 @@ def test_temporal_unroll_has_mask_only_and_true_no_vggt_branches(
         if time_index > 0:
             assert no_vggt["history_ptr"] != on["history_ptr"]
     assert result.shared_transport.disparity_history_hr_px[0, 0, 0, 0] == 2.0
+    assert result.source_mask_off_transport is result.shared_transport
     assert result.no_vggt_transport.disparity_history_hr_px[0, 0, 0, 0] == 12.0
+    assert result.reference_transport is None
+
+
+def test_temporal_v2_unroll_uses_branch_memory_warped_hidden_and_topk(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    memory_lengths: list[int] = []
+    values = iter((1.0, 2.0, 3.0, 4.0, 5.0, 6.0))
+
+    def fake_topk(**kwargs: object) -> train.TemporalTransport:
+        memory = kwargs["memory"]
+        assert isinstance(memory, list)
+        memory_lengths.append(len(memory))
+        return _fake_v2_transport(next(values))
+
+    reference_calls: list[int] = []
+
+    def fake_reference(**kwargs: object) -> train.ReferenceTemporalWarp:
+        time_index = kwargs["time_index"]
+        assert isinstance(time_index, int)
+        reference_calls.append(time_index)
+        disparity = torch.full((1, 1, 4, 4), 10.0)
+        prediction = kwargs["previous_prediction_disparity_hr_px"]
+        assert isinstance(prediction, torch.Tensor)
+        valid = torch.ones_like(disparity, dtype=torch.bool)
+        return train.ReferenceTemporalWarp(
+            disparity_hr_px=disparity,
+            prediction_disparity_hr_px=prediction,
+            valid_mask_hr=valid,
+            visibility_mask_hr=valid,
+            collision_mask_hr=torch.zeros_like(valid),
+        )
+
+    monkeypatch.setattr(eval_cli, "_build_eval_topk_transport", fake_topk)
+    monkeypatch.setattr(
+        eval_cli, "_build_eval_reference_transport", fake_reference
+    )
+    model = _TemporalSpyModel()
+    result = eval_cli._run_temporal_endpoint_ablation(
+        model,
+        _v2_unroll_batch(),
+        config=_v2_temporal_config(),
+    )
+
+    assert memory_lengths == [1, 1, 1, 2, 2, 2]
+    assert reference_calls == [1, 1, 1, 2, 2, 2]
+    assert len(model.calls) == 9
+    assert all(not call["topk_history"] for call in model.calls[:3])
+    assert [call["hidden_mean"] for call in model.calls[3:6]] == [1.0, 2.0, 3.0]
+    assert [call["hidden_mean"] for call in model.calls[6:9]] == [4.0, 5.0, 6.0]
+    assert all(call["topk_history"] for call in model.calls[3:])
+    assert len({model.calls[index]["history_ptr"] for index in (6, 7, 8)}) == 3
+    assert result.shared_transport.disparity_history_hr_px[0, 0, 0, 0] == 4.0
+    assert result.source_mask_off_transport.disparity_history_hr_px[
+        0, 0, 0, 0
+    ] == 5.0
+    assert result.no_vggt_transport.disparity_history_hr_px[0, 0, 0, 0] == 6.0
+    assert result.reference_transport is not None
+
+
+class _SpatialV2SpyModel(nn.Module):
+    def forward(
+        self,
+        rgb_hr: torch.Tensor,
+        disparity_ffs_hr_px: torch.Tensor,
+        confidence_ffs: torch.Tensor,
+        **_: object,
+    ) -> ModelOutput:
+        disparity = torch.nn.functional.interpolate(
+            disparity_ffs_hr_px, scale_factor=2, mode="nearest"
+        )
+        return ModelOutput(
+            disparity_hr_px=disparity,
+            disparity_raw_hr_px=disparity,
+            source_weights=torch.zeros((1, 3, 2, 2)),
+            log_variance=torch.zeros_like(disparity),
+            uncertainty=torch.ones_like(disparity),
+            hidden_state=(
+                torch.ones((1, 1, 2, 2)),
+                torch.ones((1, 1, 2, 2)),
+            ),
+            anchor_gate=torch.ones_like(disparity),
+            source_valid_mask=torch.ones((1, 3, 2, 2), dtype=torch.bool),
+        )
+
+
+def test_spatial_endpoint_v2_returns_adjacent_teacher_warp(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    memory_lengths: list[int] = []
+    reference_times: list[int] = []
+
+    def fake_topk(**kwargs: object) -> train.TemporalTransport:
+        memory = kwargs["memory"]
+        assert isinstance(memory, list)
+        memory_lengths.append(len(memory))
+        return _fake_v2_transport(float(len(memory)))
+
+    def fake_reference(**kwargs: object) -> train.ReferenceTemporalWarp:
+        time_index = kwargs["time_index"]
+        assert isinstance(time_index, int)
+        reference_times.append(time_index)
+        disparity = torch.full((1, 1, 4, 4), float(time_index + 10))
+        prediction = kwargs["previous_prediction_disparity_hr_px"]
+        assert isinstance(prediction, torch.Tensor)
+        valid = torch.ones_like(disparity, dtype=torch.bool)
+        return train.ReferenceTemporalWarp(
+            disparity_hr_px=disparity,
+            prediction_disparity_hr_px=prediction,
+            valid_mask_hr=valid,
+            visibility_mask_hr=valid,
+            collision_mask_hr=torch.zeros_like(valid),
+        )
+
+    monkeypatch.setattr(eval_cli, "_build_eval_topk_transport", fake_topk)
+    monkeypatch.setattr(
+        eval_cli, "_build_eval_reference_transport", fake_reference
+    )
+    result = eval_cli._run_spatial_endpoint(
+        _SpatialV2SpyModel(),
+        _v2_unroll_batch(),
+        config=_v2_temporal_config(),
+    )
+
+    assert memory_lengths == [1, 2]
+    assert reference_times == [1, 2]
+    assert result.reference_transport is not None
+    assert result.reference_transport.disparity_hr_px.unique().item() == 12.0
 
 
 def _write_cache_receipt(

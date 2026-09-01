@@ -57,6 +57,7 @@ from evaluation import (  # noqa: E402
     comparison_from_aggregates,
     compute_sample_metrics,
     hr_temporal_metric,
+    hr_temporal_residual_metric,
     hr_temporal_safe_mask,
     load_model_for_evaluation,
     physical_disparity_clamp_min_zero,
@@ -68,15 +69,26 @@ from evaluation import (  # noqa: E402
 from models.ffs_omega_tsr import ModelOutput, count_trainable_parameters  # noqa: E402
 from metrics.disparity import MetricResult  # noqa: E402
 from metrics.pointcloud import export_colored_point_cloud_ply  # noqa: E402
-from metrics.temporal import temporal_disparity_error  # noqa: E402
+from metrics.temporal import (  # noqa: E402
+    temporal_disparity_error,
+    temporal_residual_error,
+)
 from train import (  # noqa: E402
     DEFAULT_CONFIG,
+    ReferenceTemporalWarp,
+    TemporalMemoryEntry,
     TemporalTransport,
     _reset_hidden_where_pose_invalid,
     _temporal_step_batch,
     build_model,
+    build_reference_temporal_warp,
+    build_topk_temporal_transport,
     build_temporal_transport,
     load_receipt_identity,
+    physical_output_v2_from_config,
+    temporal_history_v2_from_config,
+    temporal_residual_v2_from_config,
+    validate_v2_temporal_calibration,
 )
 from utils.checkpoint import repository_git_hash  # noqa: E402
 from utils.seed import seed_everything  # noqa: E402
@@ -337,6 +349,12 @@ def _fixed_display_range(value: Any, name: str) -> tuple[float, float]:
 def validate_evaluation_config(config: DictConfig) -> str:
     """Validate x2 deterministic evaluation and return ``spatial``/``temporal``."""
 
+    history_v2 = temporal_history_v2_from_config(config)
+    residual_v2 = temporal_residual_v2_from_config(config)
+    if history_v2.enabled != residual_v2.enabled:
+        raise ValueError(
+            "temporal_history_v2 and temporal_residual_v2 must be enabled together"
+        )
     sequence_length = int(config.data.sequence_length)
     if sequence_length == 1:
         stage = "spatial"
@@ -352,8 +370,12 @@ def validate_evaluation_config(config: DictConfig) -> str:
             raise ValueError("Stage-B evaluation requires history and VGGT pose")
         if bool(config.model.epipolar_refinement):
             raise ValueError("Stage-B evaluation must not claim Stage-C epipolar output")
+        if history_v2.enabled and history_v2.top_k < 2:
+            raise ValueError("temporal_history_v2 evaluation requires top_k >= 2")
     else:
         raise ValueError("evaluation supports only T=1 spatial or causal T=3")
+    if stage != "temporal" and (history_v2.enabled or residual_v2.enabled):
+        raise ValueError("temporal v2 evaluation requires causal T=3")
     if int(config.data.scale) != 2 or int(config.model.convex_scale) != 2:
         raise ValueError("first-round evaluation is fixed to x2")
     if list(config.model.rgb_channels) != [32, 64, 96]:
@@ -467,7 +489,11 @@ class TemporalEndpointPredictions:
     source_mask_off: ModelOutput
     no_vggt: ModelOutput
     shared_transport: TemporalTransport
+    source_mask_off_transport: TemporalTransport
     no_vggt_transport: TemporalTransport
+    reference_transport: ReferenceTemporalWarp | None
+    source_mask_off_reference_transport: ReferenceTemporalWarp | None
+    no_vggt_reference_transport: ReferenceTemporalWarp | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -476,6 +502,7 @@ class SpatialEndpointPrediction:
 
     output: ModelOutput
     transport: TemporalTransport
+    reference_transport: ReferenceTemporalWarp | None
 
 
 # These names deliberately describe operations rather than implementation
@@ -795,18 +822,281 @@ def _build_eval_transport(
     )
 
 
+def _build_eval_topk_transport(
+    *,
+    memory: list[TemporalMemoryEntry],
+    current_rgb_hr: Tensor,
+    current_ffs_disparity_hr_px: Tensor,
+    current_ffs_confidence: Tensor,
+    batch: dict[str, Any],
+    time_index: int,
+    config: DictConfig,
+) -> TemporalTransport:
+    """Build the exact opt-in V2 transport for one evaluation branch."""
+
+    contract = temporal_history_v2_from_config(config)
+    if not contract.enabled:
+        raise ValueError("top-K evaluation transport requires temporal_history_v2")
+    return build_topk_temporal_transport(
+        memory=memory,
+        current_time_index=time_index,
+        current_rgb_hr=current_rgb_hr,
+        current_ffs_disparity_hr_px=current_ffs_disparity_hr_px,
+        current_ffs_confidence=current_ffs_confidence,
+        intrinsics_current_hr=batch["K_hr_sequence"][:, time_index],
+        baseline_current_m=batch["baseline_m_sequence"][:, time_index],
+        temporal_extrinsics_camera_from_world=batch[
+            "vggt_extrinsics_camera_from_world_metric_sequence"
+        ][:, time_index],
+        temporal_pose_valid=batch["temporal_pose_valid_sequence"][:, time_index],
+        contract=contract,
+        scale=int(config.data.scale),
+        photometric_temperature=float(config.train.photometric_temperature),
+        disparity_temperature_hr_px=float(
+            config.train.disparity_temperature_hr_px
+        ),
+        reject_conflict_hr_px=float(config.train.history_conflict_hr_px),
+        photometric_threshold=float(config.train.temporal_photometric_threshold),
+        geometry_threshold_hr_px=float(
+            config.train.temporal_geometry_threshold_hr_px
+        ),
+    )
+
+
+def _build_eval_reference_transport(
+    *,
+    batch: dict[str, Any],
+    time_index: int,
+    config: DictConfig,
+    previous_prediction_disparity_hr_px: Tensor,
+) -> ReferenceTemporalWarp:
+    """Warp the trusted previous teacher into the current camera for V2 TEPE."""
+
+    contract = temporal_history_v2_from_config(config)
+    residual_contract = temporal_residual_v2_from_config(config)
+    if not contract.enabled or not residual_contract.enabled:
+        raise ValueError("reference warp requires both temporal V2 contracts")
+    if time_index <= 0:
+        raise ValueError("reference warp requires an immediate previous frame")
+    disparity = batch.get("teacher_disparity_hr_px_sequence")
+    confidence = batch.get("teacher_confidence_sequence")
+    valid = batch.get("teacher_valid_mask_sequence")
+    trusted = batch.get("teacher_trusted_mask_sequence")
+    if not all(
+        isinstance(value, Tensor)
+        for value in (disparity, confidence, valid, trusted)
+    ):
+        raise ValueError(
+            "teacher temporal-residual evaluation requires disparity, confidence, "
+            "valid, and trusted sequences"
+        )
+    return build_reference_temporal_warp(
+        previous_reference_disparity_hr_px=disparity[:, time_index - 1],
+        previous_reference_confidence=confidence[:, time_index - 1],
+        previous_reference_valid_mask=(
+            valid[:, time_index - 1] & trusted[:, time_index - 1]
+        ),
+        previous_prediction_disparity_hr_px=(
+            previous_prediction_disparity_hr_px
+        ),
+        intrinsics_current_hr=batch["K_hr_sequence"][:, time_index],
+        baseline_current_m=batch["baseline_m_sequence"][:, time_index],
+        temporal_extrinsics_camera_from_world=batch[
+            "vggt_extrinsics_camera_from_world_metric_sequence"
+        ][:, time_index],
+        temporal_pose_valid=batch["temporal_pose_valid_sequence"][:, time_index],
+        contract=contract,
+    )
+
+
 def _history_model_kwargs(
-    transport: TemporalTransport | None, *, rgb_dtype: torch.dtype
+    transport: TemporalTransport | None,
+    *,
+    rgb_dtype: torch.dtype,
+    temporal_v2: bool = False,
 ) -> dict[str, Tensor]:
     if transport is None:
         return {}
-    return {
+    result = {
         "disparity_history_hr_px": transport.disparity_history_hr_px,
         "confidence_history": transport.confidence_history,
         "history_visibility": transport.visibility_mask.to(dtype=rgb_dtype),
         "photometric_residual": transport.photometric_residual,
         "fractional_offset_px": transport.fractional_offset_px,
         "valid_history": transport.valid_history,
+    }
+    if not temporal_v2:
+        return result
+    topk_values = {
+        "history_topk_disparity_hr_px": transport.topk_disparity_history_hr_px,
+        "history_topk_confidence": transport.topk_confidence_history,
+        "history_topk_fractional_offset_px": (
+            transport.topk_fractional_offset_px
+        ),
+        "history_topk_age_frames": transport.topk_temporal_age_frames,
+        "history_topk_weights": transport.topk_z_aware_weights,
+        "history_topk_valid_mask": transport.topk_valid_mask,
+    }
+    missing = sorted(name for name, value in topk_values.items() if value is None)
+    if missing:
+        raise RuntimeError(f"V2 transport is missing model inputs: {missing}")
+    result.update(
+        {name: value for name, value in topk_values.items() if value is not None}
+    )
+    return result
+
+
+def _temporal_residual_metric_for_transport(
+    prediction_hr_px: Tensor,
+    transport: TemporalTransport,
+    *,
+    current_reference_hr_px: Tensor,
+    current_reference_valid_hr: Tensor,
+    reference_transport: ReferenceTemporalWarp,
+    paired_domain_mask_hr: Tensor | None = None,
+) -> MetricResult:
+    """Evaluate one branch with the V2 teacher/GT residual definition."""
+
+    warped_previous_prediction_hr_px = (
+        reference_transport.prediction_disparity_hr_px
+    )
+    if warped_previous_prediction_hr_px is None:
+        raise ValueError(
+            "teacher-correspondence reference warp has no carried prediction"
+        )
+    return hr_temporal_residual_metric(
+        prediction_hr_px,
+        warped_previous_prediction_hr_px,
+        current_reference_hr_px,
+        reference_transport.disparity_hr_px,
+        visibility_mask_hr=transport.visibility_mask_hr,
+        static_mask_hr=transport.static_mask_hr,
+        collision_mask_hr=transport.collision_mask_hr,
+        geometry_consistent_mask_hr=transport.geometry_consistent_mask_hr,
+        valid_prediction_history_hr=transport.valid_history_hr,
+        current_reference_valid_mask_hr=current_reference_valid_hr,
+        warped_previous_reference_valid_mask_hr=(
+            reference_transport.valid_mask_hr
+        ),
+        paired_domain_mask_hr=paired_domain_mask_hr,
+    )
+
+
+def _binary_ratio_result(numerator: int, denominator: int) -> MetricResult:
+    if denominator <= 0:
+        return MetricResult.invalid()
+    return MetricResult(
+        value=float(numerator) / denominator,
+        numerator=float(numerator),
+        count=denominator,
+        valid=True,
+    )
+
+
+def _strict_brier_result(
+    probability: Tensor, target: Tensor, domain: Tensor
+) -> MetricResult:
+    count = int(domain.sum().item())
+    if count == 0:
+        return MetricResult.invalid()
+    selected = (probability.float() - target.float()).square()[domain]
+    if not bool(torch.isfinite(selected).all().item()):
+        return MetricResult.invalid(count=count)
+    numerator = float(selected.to(dtype=torch.float64).sum().item())
+    return MetricResult(numerator / count, numerator, count, True)
+
+
+def _explicit_validity_completion_metrics(
+    output: ModelOutput | None,
+    *,
+    target_disparity_hr_px: Tensor,
+    teacher_valid_mask_hr: Tensor,
+    ffs_valid_mask_hr: Tensor,
+) -> dict[str, MetricResult]:
+    """Score opt-in physical-validity heads with aggregation-safe counts."""
+
+    names = (
+        "explicit_valid_precision",
+        "explicit_valid_recall",
+        "explicit_valid_f1",
+        "explicit_valid_brier",
+        "ffs_hole_completion_precision",
+        "ffs_hole_completion_recall",
+        "ffs_hole_completion_f1",
+        "ffs_hole_completion_brier",
+    )
+    if output is None or any(
+        value is None
+        for value in (
+            output.valid_probability,
+            output.completion_probability,
+            output.output_valid_mask,
+            output.completion_mask,
+        )
+    ):
+        return {name: MetricResult.invalid() for name in names}
+
+    reference_shape = target_disparity_hr_px.shape
+    fields = {
+        "teacher_valid_mask_hr": teacher_valid_mask_hr,
+        "ffs_valid_mask_hr": ffs_valid_mask_hr,
+        "valid_probability": output.valid_probability,
+        "completion_probability": output.completion_probability,
+        "output_valid_mask": output.output_valid_mask,
+        "completion_mask": output.completion_mask,
+    }
+    for name, value in fields.items():
+        if not isinstance(value, Tensor) or value.shape != reference_shape:
+            raise ValueError(f"{name} must have shape {tuple(reference_shape)}")
+
+    teacher_positive = (
+        teacher_valid_mask_hr.to(dtype=torch.bool)
+        & torch.isfinite(target_disparity_hr_px)
+        & (target_disparity_hr_px > 0)
+    )
+    predicted_valid = output.output_valid_mask.to(dtype=torch.bool)
+    true_positive = int((predicted_valid & teacher_positive).sum().item())
+    predicted_count = int(predicted_valid.sum().item())
+    teacher_count = int(teacher_positive.sum().item())
+    valid_f1_denominator = predicted_count + teacher_count
+
+    ffs_hole = ~ffs_valid_mask_hr.to(dtype=torch.bool)
+    predicted_completion = output.completion_mask.to(dtype=torch.bool) & ffs_hole
+    target_completion = teacher_positive & ffs_hole
+    completion_true_positive = int(
+        (predicted_completion & target_completion).sum().item()
+    )
+    predicted_completion_count = int(predicted_completion.sum().item())
+    target_completion_count = int(target_completion.sum().item())
+    completion_f1_denominator = (
+        predicted_completion_count + target_completion_count
+    )
+    full_domain = torch.ones_like(teacher_positive)
+    return {
+        "explicit_valid_precision": _binary_ratio_result(
+            true_positive, predicted_count
+        ),
+        "explicit_valid_recall": _binary_ratio_result(true_positive, teacher_count),
+        "explicit_valid_f1": _binary_ratio_result(
+            2 * true_positive, valid_f1_denominator
+        ),
+        "explicit_valid_brier": _strict_brier_result(
+            output.valid_probability, teacher_positive, full_domain
+        ),
+        "ffs_hole_completion_precision": _binary_ratio_result(
+            completion_true_positive, predicted_completion_count
+        ),
+        "ffs_hole_completion_recall": _binary_ratio_result(
+            completion_true_positive, target_completion_count
+        ),
+        "ffs_hole_completion_f1": _binary_ratio_result(
+            2 * completion_true_positive, completion_f1_denominator
+        ),
+        "ffs_hole_completion_brier": _strict_brier_result(
+            output.completion_probability,
+            target_completion,
+            ffs_hole,
+        ),
     }
 
 
@@ -821,7 +1111,10 @@ def _run_spatial_endpoint(
     previous_output: ModelOutput | None = None
     previous_rgb_hr: Tensor | None = None
     final_transport: TemporalTransport | None = None
+    final_reference_transport: ReferenceTemporalWarp | None = None
+    memory: list[TemporalMemoryEntry] = []
     output: ModelOutput | None = None
+    temporal_v2 = temporal_history_v2_from_config(config).enabled
     for time_index in range(3):
         step = _temporal_step_batch(batch, time_index)
         output = model(
@@ -833,20 +1126,54 @@ def _run_spatial_endpoint(
         )
         if time_index > 0:
             assert previous_output is not None and previous_rgb_hr is not None
-            final_transport = _build_eval_transport(
-                previous_output=previous_output,
-                previous_rgb_hr=previous_rgb_hr,
-                current_rgb_hr=step["rgb_hr"],
-                current_ffs_disparity_hr_px=step["disparity_ffs_hr_px"],
-                current_ffs_confidence=step["confidence_ffs"],
-                batch=batch,
-                time_index=time_index,
-                config=config,
+            if temporal_v2:
+                final_transport = _build_eval_topk_transport(
+                    memory=memory,
+                    current_rgb_hr=step["rgb_hr"],
+                    current_ffs_disparity_hr_px=step["disparity_ffs_hr_px"],
+                    current_ffs_confidence=step["confidence_ffs"],
+                    batch=batch,
+                    time_index=time_index,
+                    config=config,
+                )
+                final_reference_transport = _build_eval_reference_transport(
+                    batch=batch,
+                    time_index=time_index,
+                    config=config,
+                    previous_prediction_disparity_hr_px=(
+                        previous_output.disparity_hr_px
+                    ),
+                )
+            else:
+                final_transport = _build_eval_transport(
+                    previous_output=previous_output,
+                    previous_rgb_hr=previous_rgb_hr,
+                    current_rgb_hr=step["rgb_hr"],
+                    current_ffs_disparity_hr_px=step["disparity_ffs_hr_px"],
+                    current_ffs_confidence=step["confidence_ffs"],
+                    batch=batch,
+                    time_index=time_index,
+                    config=config,
+                )
+        if temporal_v2:
+            memory.append(
+                TemporalMemoryEntry(
+                    output=output,
+                    rgb_hr=step["rgb_hr"],
+                    time_index=time_index,
+                )
             )
+            memory = memory[-temporal_history_v2_from_config(config).memory_frames :]
         previous_output = output
         previous_rgb_hr = step["rgb_hr"]
     assert output is not None and final_transport is not None
-    return SpatialEndpointPrediction(output=output, transport=final_transport)
+    if temporal_v2 and final_reference_transport is None:
+        raise RuntimeError("V2 spatial endpoint did not produce a reference warp")
+    return SpatialEndpointPrediction(
+        output=output,
+        transport=final_transport,
+        reference_transport=final_reference_transport,
+    )
 
 
 def _run_temporal_endpoint_ablation(
@@ -857,71 +1184,142 @@ def _run_temporal_endpoint_ablation(
 ) -> TemporalEndpointPredictions:
     """Unroll T=3 and isolate the VGGT source-mask intervention.
 
-    The source-mask diagnostic receives exactly the same z-buffer history and
-    poses as the primary branch and changes only ``valid_vggt`` to all-false.
-    Because VGGT channels still enter the geometry encoder, a third branch
-    supplies zero VGGT disparity/confidence and independently propagates its
-    own history. That third row is the actual no-VGGT prior ablation.
+    Legacy evaluation preserves the historical shared-history source-mask
+    intervention exactly.  Under temporal V2, every branch propagates its own
+    causal top-K memory and warped hidden state; the source-mask branch still
+    changes only ``valid_vggt`` at each model call.  The no-VGGT branch also
+    zeros the VGGT geometry channels.
     """
 
     hidden_on: tuple[Tensor, ...] | None = None
     hidden_mask_off: tuple[Tensor, ...] | None = None
     hidden_no_vggt: tuple[Tensor, ...] | None = None
     previous_on: ModelOutput | None = None
+    previous_mask_off: ModelOutput | None = None
     previous_no_vggt: ModelOutput | None = None
     previous_rgb_hr: Tensor | None = None
     transport: TemporalTransport | None = None
+    mask_off_transport: TemporalTransport | None = None
     no_vggt_transport: TemporalTransport | None = None
+    reference_transport: ReferenceTemporalWarp | None = None
+    mask_off_reference_transport: ReferenceTemporalWarp | None = None
+    no_vggt_reference_transport: ReferenceTemporalWarp | None = None
+    memory_on: list[TemporalMemoryEntry] = []
+    memory_mask_off: list[TemporalMemoryEntry] = []
+    memory_no_vggt: list[TemporalMemoryEntry] = []
     output_on: ModelOutput | None = None
     output_mask_off: ModelOutput | None = None
     output_no_vggt: ModelOutput | None = None
+    history_contract = temporal_history_v2_from_config(config)
+    residual_contract = temporal_residual_v2_from_config(config)
+    temporal_v2 = history_contract.enabled and residual_contract.enabled
     for time_index in range(3):
         step = _temporal_step_batch(batch, time_index)
         pose_valid = batch["temporal_pose_valid_sequence"][:, time_index]
         if time_index > 0:
             assert previous_on is not None and previous_rgb_hr is not None
-            assert previous_no_vggt is not None
-            hidden_on = _reset_hidden_where_pose_invalid(hidden_on, pose_valid)
-            hidden_mask_off = _reset_hidden_where_pose_invalid(
-                hidden_mask_off, pose_valid
-            )
-            hidden_no_vggt = _reset_hidden_where_pose_invalid(
-                hidden_no_vggt, pose_valid
-            )
-            transport = _build_eval_transport(
-                previous_output=previous_on,
-                previous_rgb_hr=previous_rgb_hr,
-                current_rgb_hr=step["rgb_hr"],
-                current_ffs_disparity_hr_px=step["disparity_ffs_hr_px"],
-                current_ffs_confidence=step["confidence_ffs"],
-                batch=batch,
-                time_index=time_index,
-                config=config,
-            )
-            no_vggt_transport = _build_eval_transport(
-                previous_output=previous_no_vggt,
-                previous_rgb_hr=previous_rgb_hr,
-                current_rgb_hr=step["rgb_hr"],
-                current_ffs_disparity_hr_px=step["disparity_ffs_hr_px"],
-                current_ffs_confidence=step["confidence_ffs"],
-                batch=batch,
-                time_index=time_index,
-                config=config,
-            )
+            assert previous_mask_off is not None and previous_no_vggt is not None
+            if temporal_v2:
+                transport = _build_eval_topk_transport(
+                    memory=memory_on,
+                    current_rgb_hr=step["rgb_hr"],
+                    current_ffs_disparity_hr_px=step["disparity_ffs_hr_px"],
+                    current_ffs_confidence=step["confidence_ffs"],
+                    batch=batch,
+                    time_index=time_index,
+                    config=config,
+                )
+                mask_off_transport = _build_eval_topk_transport(
+                    memory=memory_mask_off,
+                    current_rgb_hr=step["rgb_hr"],
+                    current_ffs_disparity_hr_px=step["disparity_ffs_hr_px"],
+                    current_ffs_confidence=step["confidence_ffs"],
+                    batch=batch,
+                    time_index=time_index,
+                    config=config,
+                )
+                no_vggt_transport = _build_eval_topk_transport(
+                    memory=memory_no_vggt,
+                    current_rgb_hr=step["rgb_hr"],
+                    current_ffs_disparity_hr_px=step["disparity_ffs_hr_px"],
+                    current_ffs_confidence=step["confidence_ffs"],
+                    batch=batch,
+                    time_index=time_index,
+                    config=config,
+                )
+                hidden_on = transport.warped_hidden_state
+                hidden_mask_off = mask_off_transport.warped_hidden_state
+                hidden_no_vggt = no_vggt_transport.warped_hidden_state
+                reference_transport = _build_eval_reference_transport(
+                    batch=batch,
+                    time_index=time_index,
+                    config=config,
+                    previous_prediction_disparity_hr_px=(
+                        previous_on.disparity_hr_px
+                    ),
+                )
+                mask_off_reference_transport = _build_eval_reference_transport(
+                    batch=batch,
+                    time_index=time_index,
+                    config=config,
+                    previous_prediction_disparity_hr_px=(
+                        previous_mask_off.disparity_hr_px
+                    ),
+                )
+                no_vggt_reference_transport = _build_eval_reference_transport(
+                    batch=batch,
+                    time_index=time_index,
+                    config=config,
+                    previous_prediction_disparity_hr_px=(
+                        previous_no_vggt.disparity_hr_px
+                    ),
+                )
+            else:
+                hidden_on = _reset_hidden_where_pose_invalid(hidden_on, pose_valid)
+                hidden_mask_off = _reset_hidden_where_pose_invalid(
+                    hidden_mask_off, pose_valid
+                )
+                hidden_no_vggt = _reset_hidden_where_pose_invalid(
+                    hidden_no_vggt, pose_valid
+                )
+                transport = _build_eval_transport(
+                    previous_output=previous_on,
+                    previous_rgb_hr=previous_rgb_hr,
+                    current_rgb_hr=step["rgb_hr"],
+                    current_ffs_disparity_hr_px=step["disparity_ffs_hr_px"],
+                    current_ffs_confidence=step["confidence_ffs"],
+                    batch=batch,
+                    time_index=time_index,
+                    config=config,
+                )
+                # Historical source-mask intervention shares the primary
+                # branch transport exactly.
+                mask_off_transport = transport
+                no_vggt_transport = _build_eval_transport(
+                    previous_output=previous_no_vggt,
+                    previous_rgb_hr=previous_rgb_hr,
+                    current_rgb_hr=step["rgb_hr"],
+                    current_ffs_disparity_hr_px=step["disparity_ffs_hr_px"],
+                    current_ffs_confidence=step["confidence_ffs"],
+                    batch=batch,
+                    time_index=time_index,
+                    config=config,
+                )
         static_prior = batch["static_prior_valid_sequence"][:, time_index]
         valid_vggt = batch["valid_vggt_sequence"][:, time_index] & static_prior.reshape(
             -1, 1, 1, 1
         )
         history_kwargs = _history_model_kwargs(
-            transport, rgb_dtype=step["rgb_hr"].dtype
+            transport,
+            rgb_dtype=step["rgb_hr"].dtype,
+            temporal_v2=temporal_v2,
         )
-        common_kwargs: dict[str, Any] = {
+        geometry_kwargs: dict[str, Any] = {
             "disparity_vggt_hr_px": batch["disparity_vggt_hr_px_sequence"][
                 :, time_index
             ],
             "confidence_vggt": batch["confidence_vggt_sequence"][:, time_index],
             "valid_ffs": step["valid_ffs"],
-            **history_kwargs,
         }
         output_on = model(
             step["rgb_hr"],
@@ -929,7 +1327,13 @@ def _run_temporal_endpoint_ablation(
             step["confidence_ffs"],
             valid_vggt=valid_vggt,
             hidden_state=hidden_on,
-            **common_kwargs,
+            **geometry_kwargs,
+            **history_kwargs,
+        )
+        mask_off_history_kwargs = _history_model_kwargs(
+            mask_off_transport,
+            rgb_dtype=step["rgb_hr"].dtype,
+            temporal_v2=temporal_v2,
         )
         output_mask_off = model(
             step["rgb_hr"],
@@ -937,10 +1341,13 @@ def _run_temporal_endpoint_ablation(
             step["confidence_ffs"],
             valid_vggt=torch.zeros_like(valid_vggt),
             hidden_state=hidden_mask_off,
-            **common_kwargs,
+            **geometry_kwargs,
+            **mask_off_history_kwargs,
         )
         no_vggt_history_kwargs = _history_model_kwargs(
-            no_vggt_transport, rgb_dtype=step["rgb_hr"].dtype
+            no_vggt_transport,
+            rgb_dtype=step["rgb_hr"].dtype,
+            temporal_v2=temporal_v2,
         )
         zero_vggt = torch.zeros_like(
             batch["disparity_vggt_hr_px_sequence"][:, time_index]
@@ -959,7 +1366,23 @@ def _run_temporal_endpoint_ablation(
         hidden_on = output_on.hidden_state
         hidden_mask_off = output_mask_off.hidden_state
         hidden_no_vggt = output_no_vggt.hidden_state
+        if temporal_v2:
+            entries = (
+                (memory_on, output_on),
+                (memory_mask_off, output_mask_off),
+                (memory_no_vggt, output_no_vggt),
+            )
+            for branch_memory, branch_output in entries:
+                branch_memory.append(
+                    TemporalMemoryEntry(
+                        output=branch_output,
+                        rgb_hr=step["rgb_hr"],
+                        time_index=time_index,
+                    )
+                )
+                del branch_memory[: -history_contract.memory_frames]
         previous_on = output_on
+        previous_mask_off = output_mask_off
         previous_no_vggt = output_no_vggt
         previous_rgb_hr = step["rgb_hr"]
     assert (
@@ -967,14 +1390,28 @@ def _run_temporal_endpoint_ablation(
         and output_mask_off is not None
         and output_no_vggt is not None
         and transport is not None
+        and mask_off_transport is not None
         and no_vggt_transport is not None
     )
+    if temporal_v2 and any(
+        value is None
+        for value in (
+            reference_transport,
+            mask_off_reference_transport,
+            no_vggt_reference_transport,
+        )
+    ):
+        raise RuntimeError("V2 temporal endpoint did not produce branch reference warps")
     return TemporalEndpointPredictions(
         vggt_on=output_on,
         source_mask_off=output_mask_off,
         no_vggt=output_no_vggt,
         shared_transport=transport,
+        source_mask_off_transport=mask_off_transport,
         no_vggt_transport=no_vggt_transport,
+        reference_transport=reference_transport,
+        source_mask_off_reference_transport=mask_off_reference_transport,
+        no_vggt_reference_transport=no_vggt_reference_transport,
     )
 
 
@@ -1613,6 +2050,18 @@ FAILURE_SAMPLE_CRITERIA: dict[str, str] = {
     ),
 }
 
+TEMPORAL_RESIDUAL_V2_FAILURE_SAMPLE_CRITERIA: dict[str, str] = {
+    **{
+        name: definition
+        for name, definition in FAILURE_SAMPLE_CRITERIA.items()
+        if name != "strict_temporal_error_px"
+    },
+    "strict_temporal_residual_error_px": (
+        "T3_VGGT teacher temporal-residual error on the common trusted-teacher/"
+        "z-buffer-visible/static/non-collision/geometry-consistent domain"
+    ),
+}
+
 
 @dataclass(slots=True)
 class _FailureSampleCandidate:
@@ -1655,7 +2104,13 @@ def _safe_failure_sample_stem(
 class FailureSampleCollector:
     """Keep only current deterministic top-k T3 failure payloads on CPU."""
 
-    def __init__(self, *, samples_per_criterion: int, cpu_limit_bytes: int) -> None:
+    def __init__(
+        self,
+        *,
+        samples_per_criterion: int,
+        cpu_limit_bytes: int,
+        criteria: Mapping[str, str] | None = None,
+    ) -> None:
         if samples_per_criterion <= 0:
             raise ValueError("samples_per_criterion must be positive")
         if cpu_limit_bytes <= 0:
@@ -1663,8 +2118,16 @@ class FailureSampleCollector:
         self.samples_per_criterion = samples_per_criterion
         self.cpu_limit_bytes = cpu_limit_bytes
         self.cpu_bytes_retained = 0
+        self.criteria = dict(
+            FAILURE_SAMPLE_CRITERIA if criteria is None else criteria
+        )
+        if not self.criteria or any(
+            not isinstance(name, str) or not isinstance(definition, str)
+            for name, definition in self.criteria.items()
+        ):
+            raise ValueError("failure criteria must be a non-empty string mapping")
         self._candidates: dict[str, list[_FailureSampleCandidate]] = {
-            criterion: [] for criterion in FAILURE_SAMPLE_CRITERIA
+            criterion: [] for criterion in self.criteria
         }
 
     @staticmethod
@@ -1764,7 +2227,7 @@ class FailureSampleCollector:
             "cpu_bytes_retained": self.cpu_bytes_retained,
             "criteria": {},
         }
-        for criterion, definition in FAILURE_SAMPLE_CRITERIA.items():
+        for criterion, definition in self.criteria.items():
             criterion_root = root / criterion
             selected: list[dict[str, Any]] = []
             for rank, candidate in enumerate(self._candidates[criterion], start=1):
@@ -1856,6 +2319,8 @@ def _t3_failure_sample_metrics(
     ffs_trusted_mask_hr: Tensor,
     history_hr_px: Tensor,
     strict_temporal_safe_mask: Tensor,
+    warped_reference_history_hr_px: Tensor | None = None,
+    warped_reference_valid_mask: Tensor | None = None,
     low_confidence_threshold: float,
     boundary_gradient_threshold_px: float,
     boundary_radius_px: int,
@@ -1873,15 +2338,32 @@ def _t3_failure_sample_metrics(
         boundary_gradient_threshold_px=boundary_gradient_threshold_px,
         boundary_radius_px=boundary_radius_px,
     )
+    temporal_name = "strict_temporal_error_px"
+    temporal_metric = temporal_disparity_error(
+        prediction_hr_px,
+        history_hr_px,
+        safe_mask=strict_temporal_safe_mask,
+    )
+    if warped_reference_history_hr_px is not None:
+        if warped_reference_valid_mask is None:
+            raise ValueError(
+                "warped_reference_valid_mask is required with a reference warp"
+            )
+        temporal_name = "strict_temporal_residual_error_px"
+        temporal_metric = temporal_residual_error(
+            prediction_hr_px,
+            history_hr_px,
+            target_hr_px,
+            warped_reference_history_hr_px,
+            safe_mask=strict_temporal_safe_mask,
+            current_reference_valid_mask=target_trusted_mask,
+            warped_previous_reference_valid_mask=warped_reference_valid_mask,
+        )
     return {
         "raw_negative_rate": spatial["output_negative_rate"],
         "low_confidence_epe_px": spatial["low_confidence_epe_px"],
         "boundary_epe_px": spatial["boundary_epe_px"],
-        "strict_temporal_error_px": temporal_disparity_error(
-            prediction_hr_px,
-            history_hr_px,
-            safe_mask=strict_temporal_safe_mask,
-        ),
+        temporal_name: temporal_metric,
     }
 
 
@@ -1938,6 +2420,56 @@ def _t3_failure_payload(
     }
 
 
+def _temporal_metric_contract(*, temporal_metric_v2: bool) -> dict[str, Any]:
+    """Return the machine-readable definition of the primary temporal metric."""
+
+    if temporal_metric_v2:
+        return {
+            "protocol_version": "teacher_gt_temporal_residual_v2",
+            "primary": True,
+            "reference": "trusted_hr_ffs_teacher_pseudo_gt",
+            "paper_gt": False,
+            "unit": "HR_pixel_disparity",
+            "formula": (
+                "mean(abs((d_hat_t-W(d_hat_t-1))-(d_star_t-W(d_star_t-1))))"
+            ),
+            "correspondence_contract": (
+                "W(d_hat_t-1) and W(d_star_t-1) use the exact same teacher/GT "
+                "top-K source correspondences and depth-ratio transport"
+            ),
+            "native_field": "temporal_residual_error_native_px",
+            "paired_field": "temporal_residual_error_paired_px",
+            "native_domain": (
+                "method visible AND static AND non-collision AND geometry-consistent "
+                "AND valid prediction history AND current trusted reference AND "
+                "valid non-collision z-buffer reference history"
+            ),
+            "paired_domain": (
+                "intersection of T1 and T3 native safety/reference domains"
+            ),
+            "constant_bias_semantics": (
+                "a time-constant prediction bias cancels; prediction-only flicker "
+                "is penalized"
+            ),
+            "legacy_fields_emitted": False,
+        }
+    return {
+        "protocol_version": "current_vs_warped_history_legacy_v1",
+        "primary": False,
+        "reference": None,
+        "paper_gt": False,
+        "unit": "HR_pixel_disparity",
+        "formula": "mean(abs(d_hat_t-W(d_hat_t-1)))",
+        "native_field": "temporal_disparity_error_native_px",
+        "paired_field": "temporal_disparity_error_paired_px",
+        "warning": (
+            "legacy diagnostic penalizes real temporal disparity change and is not "
+            "teacher/GT temporal-residual TEPE"
+        ),
+        "legacy_fields_emitted": True,
+    }
+
+
 def _write_csv(
     path: Path,
     methods: dict[str, dict[str, Any]],
@@ -1959,6 +2491,7 @@ def _write_csv(
             "trusted_region_degradation_percent",
             "invalid_region_completeness_change_percent",
             "temporal_error_change_vs_t1_percent",
+            "temporal_residual_error_change_vs_t1_percent",
             "vggt_prior_effect_epe_change_percent",
             "vggt_source_mask_ablation_change_percent",
         )
@@ -2008,9 +2541,13 @@ def _write_csv(
                 f"{method_name}_vs_T1_temporal"
             )
             if isinstance(temporal_comparison, dict):
-                row["temporal_error_change_vs_t1_percent"] = temporal_comparison[
-                    "relative_change_percent"
-                ]
+                comparison_field = str(temporal_comparison.get("metric", ""))
+                column = (
+                    "temporal_residual_error_change_vs_t1_percent"
+                    if comparison_field == "temporal_residual_error_paired_px"
+                    else "temporal_error_change_vs_t1_percent"
+                )
+                row[column] = temporal_comparison["relative_change_percent"]
             vggt_comparison = comparisons.get(
                 f"{method_name}_vs_T3_vggt_source_mask"
             )
@@ -2453,6 +2990,8 @@ def run(args: argparse.Namespace) -> int:
     config = resolve_evaluation_config(args.config, args.overrides)
     _update_cli_values(config, args)
     stage = validate_evaluation_config(config)
+    temporal_metric_v2 = temporal_residual_v2_from_config(config).enabled
+    physical_metric_v2 = physical_output_v2_from_config(config).enabled
     stage_label = "T1_SPATIAL_ONLY" if stage == "spatial" else "T3_CAUSAL_STAGE_B"
     seed_everything(int(config.seed), deterministic=True)
     model = build_model(config)
@@ -2703,6 +3242,11 @@ def run(args: argparse.Namespace) -> int:
         failure_sample_collector = FailureSampleCollector(
             samples_per_criterion=int(config.eval.failure_samples_per_criterion),
             cpu_limit_bytes=int(config.eval.failure_samples_cpu_limit_bytes),
+            criteria=(
+                TEMPORAL_RESIDUAL_V2_FAILURE_SAMPLE_CRITERIA
+                if temporal_metric_v2
+                else FAILURE_SAMPLE_CRITERIA
+            ),
         )
     endpoint_pose_valid_count = 0
     endpoint_static_prior_valid_count = 0
@@ -2718,9 +3262,14 @@ def run(args: argparse.Namespace) -> int:
         for batch in loader:
             if stage == "temporal":
                 validate_temporal_batch_causality(batch)
+                if temporal_metric_v2:
+                    validate_v2_temporal_calibration(
+                        batch["K_hr_sequence"], batch["baseline_m_sequence"]
+                    )
             batch = _move_batch(batch, device)
             if stage == "spatial":
                 target = batch["teacher_disparity_hr_px"]
+                target_valid = batch["teacher_valid_mask"]
                 target_trusted = batch["teacher_trusted_mask"]
                 endpoint_rgb = batch["rgb_hr"]
                 endpoint_ffs_disparity = batch["observation_disparity_hr_px"]
@@ -2731,6 +3280,7 @@ def run(args: argparse.Namespace) -> int:
                 endpoint_baseline_m = batch["baseline_m"]
             else:
                 target = batch["teacher_disparity_hr_px_sequence"][:, 2]
+                target_valid = batch["teacher_valid_mask_sequence"][:, 2]
                 target_trusted = batch["teacher_trusted_mask_sequence"][:, 2]
                 endpoint_rgb = batch["rgb_hr_sequence"][:, 2]
                 endpoint_ffs_disparity = batch[
@@ -2751,8 +3301,13 @@ def run(args: argparse.Namespace) -> int:
                 endpoint_static_prior_valid_count += int(
                     batch["static_prior_valid_sequence"][:, 2].sum().item()
                 )
-            if not isinstance(target, Tensor) or not isinstance(target_trusted, Tensor):
-                raise ValueError("evaluation requires teacher disparity and trusted mask")
+            if not all(
+                isinstance(value, Tensor)
+                for value in (target, target_valid, target_trusted)
+            ):
+                raise ValueError(
+                    "evaluation requires teacher disparity, valid, and trusted masks"
+                )
             output_size = tuple(int(value) for value in target.shape[-2:])
             baseline, confidence_hr, valid_hr, trusted_hr = upsample_ffs_inputs_to_hr(
                 endpoint_ffs_disparity,
@@ -2780,6 +3335,9 @@ def run(args: argparse.Namespace) -> int:
                         "bilinear": baseline.float(),
                         "T1": model_output.disparity_hr_px.float(),
                     }
+                    model_outputs_by_method: dict[str, ModelOutput] = {
+                        "T1": model_output
+                    }
                     temporal_results: dict[str, MetricResult] = {}
                     temporal_visualization: TemporalEndpointPredictions | None = None
                 else:
@@ -2801,8 +3359,19 @@ def run(args: argparse.Namespace) -> int:
                             temporal_visualization.source_mask_off.disparity_hr_px.float()
                         ),
                     }
+                    model_outputs_by_method = {
+                        "T1": spatial_endpoint.output,
+                        "T3": temporal_visualization.no_vggt,
+                        "T3_VGGT": temporal_visualization.vggt_on,
+                        "T3_VGGT_mask_off": (
+                            temporal_visualization.source_mask_off
+                        ),
+                    }
                     t1_transport = spatial_endpoint.transport
                     t3_transport = temporal_visualization.shared_transport
+                    mask_off_transport = (
+                        temporal_visualization.source_mask_off_transport
+                    )
                     no_vggt_transport = temporal_visualization.no_vggt_transport
                     t1_safe = hr_temporal_safe_mask(
                         raw_predictions["T1"],
@@ -2834,62 +3403,170 @@ def run(args: argparse.Namespace) -> int:
                         ),
                         valid_history_hr=no_vggt_transport.valid_history_hr,
                     )
+                    mask_off_safe = hr_temporal_safe_mask(
+                        raw_predictions["T3_VGGT_mask_off"],
+                        visibility_mask_hr=mask_off_transport.visibility_mask_hr,
+                        static_mask_hr=mask_off_transport.static_mask_hr,
+                        collision_mask_hr=mask_off_transport.collision_mask_hr,
+                        geometry_consistent_mask_hr=(
+                            mask_off_transport.geometry_consistent_mask_hr
+                        ),
+                        valid_history_hr=mask_off_transport.valid_history_hr,
+                    )
                     paired_t1_no_vggt = t1_safe & no_vggt_safe
-                    temporal_results = {
-                        "bilinear": MetricResult.invalid(),
-                        "T1": hr_temporal_metric(
-                            raw_predictions["T1"],
-                            t1_transport.disparity_history_loss_hr_px,
-                            visibility_mask_hr=t1_transport.visibility_mask_hr,
-                            static_mask_hr=t1_transport.static_mask_hr,
-                            collision_mask_hr=t1_transport.collision_mask_hr,
-                            geometry_consistent_mask_hr=(
-                                t1_transport.geometry_consistent_mask_hr
+                    if temporal_metric_v2:
+                        t1_reference = spatial_endpoint.reference_transport
+                        t3_reference = temporal_visualization.reference_transport
+                        mask_off_reference = (
+                            temporal_visualization.source_mask_off_reference_transport
+                        )
+                        no_vggt_reference = (
+                            temporal_visualization.no_vggt_reference_transport
+                        )
+                        if any(
+                            value is None
+                            for value in (
+                                t1_reference,
+                                t3_reference,
+                                mask_off_reference,
+                                no_vggt_reference,
+                            )
+                        ):
+                            raise RuntimeError(
+                                "V2 evaluation did not return teacher reference warps"
+                            )
+                        assert (
+                            t1_reference is not None
+                            and t3_reference is not None
+                            and mask_off_reference is not None
+                            and no_vggt_reference is not None
+                        )
+                        current_reference_valid = (
+                            target_valid.to(dtype=torch.bool)
+                            & target_trusted.to(dtype=torch.bool)
+                            & torch.isfinite(target)
+                            & (target > 0)
+                        )
+                        paired_reference_domain = (
+                            paired_t1_no_vggt
+                            & t1_reference.valid_mask_hr
+                            & no_vggt_reference.valid_mask_hr
+                        )
+                        temporal_results = {
+                            "bilinear": MetricResult.invalid(),
+                            "T1": _temporal_residual_metric_for_transport(
+                                raw_predictions["T1"],
+                                t1_transport,
+                                current_reference_hr_px=target.float(),
+                                current_reference_valid_hr=current_reference_valid,
+                                reference_transport=t1_reference,
                             ),
-                            valid_history_hr=t1_transport.valid_history_hr,
-                        ),
-                        "T3": hr_temporal_metric(
-                            raw_predictions["T3"],
-                            no_vggt_transport.disparity_history_loss_hr_px,
-                            visibility_mask_hr=no_vggt_transport.visibility_mask_hr,
-                            static_mask_hr=no_vggt_transport.static_mask_hr,
-                            collision_mask_hr=no_vggt_transport.collision_mask_hr,
-                            geometry_consistent_mask_hr=(
-                                no_vggt_transport.geometry_consistent_mask_hr
+                            "T3": _temporal_residual_metric_for_transport(
+                                raw_predictions["T3"],
+                                no_vggt_transport,
+                                current_reference_hr_px=target.float(),
+                                current_reference_valid_hr=current_reference_valid,
+                                reference_transport=no_vggt_reference,
                             ),
-                            valid_history_hr=no_vggt_transport.valid_history_hr,
-                        ),
-                        "T3_VGGT": hr_temporal_metric(
-                            raw_predictions["T3_VGGT"],
-                            t3_transport.disparity_history_loss_hr_px,
-                            visibility_mask_hr=t3_transport.visibility_mask_hr,
-                            static_mask_hr=t3_transport.static_mask_hr,
-                            collision_mask_hr=t3_transport.collision_mask_hr,
-                            geometry_consistent_mask_hr=(
-                                t3_transport.geometry_consistent_mask_hr
+                            "T3_VGGT": _temporal_residual_metric_for_transport(
+                                raw_predictions["T3_VGGT"],
+                                t3_transport,
+                                current_reference_hr_px=target.float(),
+                                current_reference_valid_hr=current_reference_valid,
+                                reference_transport=t3_reference,
                             ),
-                            valid_history_hr=t3_transport.valid_history_hr,
-                        ),
-                        "T3_VGGT_mask_off": temporal_disparity_error(
-                            raw_predictions["T3_VGGT_mask_off"],
-                            t3_transport.disparity_history_loss_hr_px,
-                            safe_mask=t3_safe,
-                        ),
-                    }
-                    paired_temporal_results = {
-                        "T1": temporal_disparity_error(
-                            raw_predictions["T1"],
-                            t1_transport.disparity_history_loss_hr_px,
-                            safe_mask=paired_t1_no_vggt,
-                        ),
-                        "T3": temporal_disparity_error(
-                            raw_predictions["T3"],
-                            no_vggt_transport.disparity_history_loss_hr_px,
-                            safe_mask=paired_t1_no_vggt,
-                        ),
-                        "T3_VGGT": MetricResult.invalid(),
-                        "T3_VGGT_mask_off": MetricResult.invalid(),
-                    }
+                            "T3_VGGT_mask_off": (
+                                _temporal_residual_metric_for_transport(
+                                    raw_predictions["T3_VGGT_mask_off"],
+                                    mask_off_transport,
+                                    current_reference_hr_px=target.float(),
+                                    current_reference_valid_hr=(
+                                        current_reference_valid
+                                    ),
+                                    reference_transport=mask_off_reference,
+                                )
+                            ),
+                        }
+                        paired_temporal_results = {
+                            "T1": _temporal_residual_metric_for_transport(
+                                raw_predictions["T1"],
+                                t1_transport,
+                                current_reference_hr_px=target.float(),
+                                current_reference_valid_hr=current_reference_valid,
+                                reference_transport=t1_reference,
+                                paired_domain_mask_hr=paired_reference_domain,
+                            ),
+                            "T3": _temporal_residual_metric_for_transport(
+                                raw_predictions["T3"],
+                                no_vggt_transport,
+                                current_reference_hr_px=target.float(),
+                                current_reference_valid_hr=current_reference_valid,
+                                reference_transport=no_vggt_reference,
+                                paired_domain_mask_hr=paired_reference_domain,
+                            ),
+                            "T3_VGGT": MetricResult.invalid(),
+                            "T3_VGGT_mask_off": MetricResult.invalid(),
+                        }
+                    else:
+                        temporal_results = {
+                            "bilinear": MetricResult.invalid(),
+                            "T1": hr_temporal_metric(
+                                raw_predictions["T1"],
+                                t1_transport.disparity_history_loss_hr_px,
+                                visibility_mask_hr=t1_transport.visibility_mask_hr,
+                                static_mask_hr=t1_transport.static_mask_hr,
+                                collision_mask_hr=t1_transport.collision_mask_hr,
+                                geometry_consistent_mask_hr=(
+                                    t1_transport.geometry_consistent_mask_hr
+                                ),
+                                valid_history_hr=t1_transport.valid_history_hr,
+                            ),
+                            "T3": hr_temporal_metric(
+                                raw_predictions["T3"],
+                                no_vggt_transport.disparity_history_loss_hr_px,
+                                visibility_mask_hr=(
+                                    no_vggt_transport.visibility_mask_hr
+                                ),
+                                static_mask_hr=no_vggt_transport.static_mask_hr,
+                                collision_mask_hr=(
+                                    no_vggt_transport.collision_mask_hr
+                                ),
+                                geometry_consistent_mask_hr=(
+                                    no_vggt_transport.geometry_consistent_mask_hr
+                                ),
+                                valid_history_hr=no_vggt_transport.valid_history_hr,
+                            ),
+                            "T3_VGGT": hr_temporal_metric(
+                                raw_predictions["T3_VGGT"],
+                                t3_transport.disparity_history_loss_hr_px,
+                                visibility_mask_hr=t3_transport.visibility_mask_hr,
+                                static_mask_hr=t3_transport.static_mask_hr,
+                                collision_mask_hr=t3_transport.collision_mask_hr,
+                                geometry_consistent_mask_hr=(
+                                    t3_transport.geometry_consistent_mask_hr
+                                ),
+                                valid_history_hr=t3_transport.valid_history_hr,
+                            ),
+                            "T3_VGGT_mask_off": temporal_disparity_error(
+                                raw_predictions["T3_VGGT_mask_off"],
+                                mask_off_transport.disparity_history_loss_hr_px,
+                                safe_mask=mask_off_safe,
+                            ),
+                        }
+                        paired_temporal_results = {
+                            "T1": temporal_disparity_error(
+                                raw_predictions["T1"],
+                                t1_transport.disparity_history_loss_hr_px,
+                                safe_mask=paired_t1_no_vggt,
+                            ),
+                            "T3": temporal_disparity_error(
+                                raw_predictions["T3"],
+                                no_vggt_transport.disparity_history_loss_hr_px,
+                                safe_mask=paired_t1_no_vggt,
+                            ),
+                            "T3_VGGT": MetricResult.invalid(),
+                            "T3_VGGT_mask_off": MetricResult.invalid(),
+                        }
             if stage == "temporal":
                 assert temporal_visualization is not None
                 assert t3_vggt_sign_health is not None
@@ -2929,15 +3606,39 @@ def run(args: argparse.Namespace) -> int:
                     ),
                     boundary_radius_px=int(config.eval.boundary_radius_px),
                 )
+                if physical_metric_v2:
+                    explicit_output = (
+                        None
+                        if method_name.endswith("_clamp0")
+                        else model_outputs_by_method.get(method_name)
+                    )
+                    sample_metrics.update(
+                        _explicit_validity_completion_metrics(
+                            explicit_output,
+                            target_disparity_hr_px=target.float(),
+                            teacher_valid_mask_hr=target_valid,
+                            ffs_valid_mask_hr=valid_hr,
+                        )
+                    )
                 if stage == "temporal":
                     base_method_name = method_name.removesuffix("_clamp0")
                     is_postprocessed = method_name.endswith("_clamp0")
-                    sample_metrics["temporal_disparity_error_native_px"] = (
+                    native_temporal_field = (
+                        "temporal_residual_error_native_px"
+                        if temporal_metric_v2
+                        else "temporal_disparity_error_native_px"
+                    )
+                    paired_temporal_field = (
+                        "temporal_residual_error_paired_px"
+                        if temporal_metric_v2
+                        else "temporal_disparity_error_paired_px"
+                    )
+                    sample_metrics[native_temporal_field] = (
                         MetricResult.invalid()
                         if is_postprocessed
                         else temporal_results[base_method_name]
                     )
-                    sample_metrics["temporal_disparity_error_paired_px"] = (
+                    sample_metrics[paired_temporal_field] = (
                         MetricResult.invalid()
                         if is_postprocessed or base_method_name == "bilinear"
                         else paired_temporal_results[base_method_name]
@@ -2958,11 +3659,27 @@ def run(args: argparse.Namespace) -> int:
                         ffs_valid_mask_hr=valid_hr[item_index : item_index + 1],
                         ffs_trusted_mask_hr=trusted_hr[item_index : item_index + 1],
                         history_hr_px=(
-                            temporal_visualization.shared_transport.disparity_history_loss_hr_px[
+                            (
+                                temporal_visualization.reference_transport.prediction_disparity_hr_px
+                                if temporal_metric_v2
+                                else temporal_visualization.shared_transport.disparity_history_loss_hr_px
+                            )[item_index : item_index + 1]
+                        ),
+                        strict_temporal_safe_mask=t3_safe[item_index : item_index + 1],
+                        warped_reference_history_hr_px=(
+                            None
+                            if not temporal_metric_v2
+                            else temporal_visualization.reference_transport.disparity_hr_px[
                                 item_index : item_index + 1
                             ]
                         ),
-                        strict_temporal_safe_mask=t3_safe[item_index : item_index + 1],
+                        warped_reference_valid_mask=(
+                            None
+                            if not temporal_metric_v2
+                            else temporal_visualization.reference_transport.valid_mask_hr[
+                                item_index : item_index + 1
+                            ]
+                        ),
                         low_confidence_threshold=float(config.eval.low_confidence_threshold),
                         boundary_gradient_threshold_px=float(
                             config.eval.boundary_gradient_threshold_px
@@ -3260,12 +3977,17 @@ def run(args: argparse.Namespace) -> int:
         comparison["reference_method"] = reference_name
         comparisons[f"{method_name}_vs_bilinear"] = comparison
     if stage == "temporal":
+        paired_temporal_metric_name = (
+            "temporal_residual_error_paired_px"
+            if temporal_metric_v2
+            else "temporal_disparity_error_paired_px"
+        )
         for method_name in ("T3",):
             comparisons[f"{method_name}_vs_T1_temporal"] = (
                 aggregate_metric_change(
                     aggregate_methods["T1"],
                     aggregate_methods[method_name],
-                    "temporal_disparity_error_paired_px",
+                    paired_temporal_metric_name,
                 )
             )
         comparisons["T3_VGGT_vs_T3_prior_effect"] = (
@@ -3297,11 +4019,39 @@ def run(args: argparse.Namespace) -> int:
                 "they are engineering validation only."
             ),
         },
+        "temporal_metric_contract": (
+            None
+            if stage != "temporal"
+            else _temporal_metric_contract(
+                temporal_metric_v2=temporal_metric_v2
+            )
+        ),
+        "explicit_validity_completion_contract": (
+            None
+            if not physical_metric_v2
+            else {
+                "protocol_version": "explicit_valid_completion_nonnegative_v2",
+                "reference": "HR FFS teacher pseudo-validity",
+                "paper_gt": False,
+                "valid_metrics": ["precision", "recall", "f1", "brier"],
+                "completion_domain": "current FFS invalid/hole pixels",
+                "completion_metrics": ["precision", "recall", "f1", "brier"],
+                "aggregation": (
+                    "global confusion counts and global squared-error numerator/"
+                    "pixel count"
+                ),
+                "methods_without_explicit_heads": "invalid metric receipt",
+                "postprocessed_clamp0_rows": "invalid metric receipt",
+            }
+        ),
         "claims": {
             "paper_accuracy": False,
             "paper_gt": False,
             "epipolar_refinement": False,
             "temporal_future_frames": False,
+            "teacher_temporal_residual_metric": (
+                stage == "temporal" and temporal_metric_v2
+            ),
             "formal_holdout": (
                 None
                 if stage == "spatial"
@@ -3400,8 +4150,16 @@ def run(args: argparse.Namespace) -> int:
                 "future_frames": False,
                 "vggt_context_pairs": 5,
                 "temporal_metric_domain": (
-                    "HR z-buffer visible AND static AND non-collision AND "
-                    "geometry-consistent AND valid-history"
+                    (
+                        "HR z-buffer visible AND static AND non-collision AND "
+                        "geometry-consistent AND valid prediction-history AND "
+                        "current/warped trusted teacher"
+                    )
+                    if temporal_metric_v2
+                    else (
+                        "HR z-buffer visible AND static AND non-collision AND "
+                        "geometry-consistent AND valid-history"
+                    )
                 ),
                 "t3_vs_t1_temporal_comparison_domain": (
                     "intersection of T1 and T3 strict HR safe masks"
