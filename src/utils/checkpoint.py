@@ -20,6 +20,23 @@ from data.cache_dataset import sha256_file
 
 CHECKPOINT_SCHEMA_VERSION = 1
 
+# These fields were introduced only to select the opt-in architecture-v3
+# lineage.  Historical v1/v2 checkpoints predate them.  Resume comparison may
+# therefore treat an absent field as its exact legacy-safe value, but must not
+# normalize any enabled/non-default v3 value (or any unrelated config field).
+_LEGACY_SAFE_CALIBRATION_V3 = {
+    "enabled": False,
+    "protocol_version": "disabled",
+    "use_rays": False,
+    "use_stereo_pose": False,
+    "use_temporal_pose": False,
+}
+_LEGACY_SAFE_DATA_V3_DEFAULTS = {
+    "calibration_sidecar_path": None,
+    "derived_contract": "legacy_v1",
+    "calibration_sidecar_lineage": None,
+}
+
 
 class CheckpointMismatchError(RuntimeError):
     """Raised when a checkpoint cannot safely resume the current run."""
@@ -49,6 +66,34 @@ def config_fingerprint(config: Mapping[str, Any]) -> str:
 
     return json.dumps(
         _plain_config(config),
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=True,
+        allow_nan=False,
+    )
+
+
+def _resume_compatibility_fingerprint(config: Mapping[str, Any]) -> str:
+    """Fingerprint with only the declared v3-disabled legacy aliases filled.
+
+    This deliberately is not the public/config provenance fingerprint.  It is
+    used only when resuming checkpoints written before v3 added optional config
+    keys.  Existing keys are never overwritten or partially repaired, so a
+    malformed or enabled v3 treatment remains an exact mismatch.
+    """
+
+    compatible = _plain_config(config)
+    if "calibration_conditioning_v3" not in compatible:
+        compatible["calibration_conditioning_v3"] = dict(
+            _LEGACY_SAFE_CALIBRATION_V3
+        )
+    data = compatible.get("data")
+    if isinstance(data, dict):
+        for name, value in _LEGACY_SAFE_DATA_V3_DEFAULTS.items():
+            if name not in data:
+                data[name] = value
+    return json.dumps(
+        compatible,
         sort_keys=True,
         separators=(",", ":"),
         ensure_ascii=True,
@@ -210,7 +255,9 @@ def load_training_checkpoint(
         )
     if not isinstance(payload["config"], Mapping):
         raise CheckpointMismatchError("checkpoint config is not a mapping")
-    if config_fingerprint(payload["config"]) != config_fingerprint(expected_config):
+    if _resume_compatibility_fingerprint(
+        payload["config"]
+    ) != _resume_compatibility_fingerprint(expected_config):
         raise CheckpointMismatchError(
             "resolved training config differs from the checkpoint config"
         )
@@ -243,6 +290,8 @@ def load_model_initialization_checkpoint(
     model: nn.Module,
     expected_parameter_count: int,
     required_sequence_length: int = 1,
+    required_seed: int | None = None,
+    required_calibration_conditioning_v3: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Load only model weights from a validated prior-stage checkpoint.
 
@@ -271,6 +320,43 @@ def load_model_initialization_checkpoint(
         raise CheckpointMismatchError(
             "initialization checkpoint is not from the required spatial T=1 stage"
         )
+    source_seed = config.get("seed")
+    source_calibration: dict[str, Any] | None = None
+    if required_calibration_conditioning_v3 is not None:
+        required_treatment = _plain_config(
+            {"calibration_conditioning_v3": required_calibration_conditioning_v3}
+        )["calibration_conditioning_v3"]
+        actual_treatment = config.get("calibration_conditioning_v3")
+        if not isinstance(actual_treatment, Mapping) or dict(
+            actual_treatment
+        ) != required_treatment:
+            raise CheckpointMismatchError(
+                "initialization checkpoint is not the required calibration-v3 "
+                "Stage-A treatment"
+            )
+        train_config = config.get("train")
+        if not isinstance(train_config, Mapping) or str(
+            train_config.get("stage", "")
+        ).lower() != "spatial":
+            raise CheckpointMismatchError(
+                "calibration-v3 initialization checkpoint is not Stage A spatial"
+            )
+        if data_config.get("derived_contract") != "calibrated_stereo_v2":
+            raise CheckpointMismatchError(
+                "calibration-v3 initialization checkpoint has the wrong derived contract"
+            )
+        source_calibration = dict(actual_treatment)
+    if required_seed is not None:
+        if (
+            isinstance(required_seed, bool)
+            or not isinstance(required_seed, int)
+            or required_seed < 0
+        ):
+            raise ValueError("required_seed must be a non-negative integer")
+        if source_seed != required_seed:
+            raise CheckpointMismatchError(
+                "initialization checkpoint seed differs from the temporal run"
+            )
     try:
         model.load_state_dict(payload["model"], strict=True)
     except (KeyError, RuntimeError, ValueError) as exc:
@@ -286,6 +372,8 @@ def load_model_initialization_checkpoint(
         "completed_step": completed_step,
         "git_hash": str(payload.get("git_hash", "unknown")),
         "source_sequence_length": required_sequence_length,
+        "source_seed": source_seed,
+        "calibration_conditioning_v3": source_calibration,
     }
 
 
