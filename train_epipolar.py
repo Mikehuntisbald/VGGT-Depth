@@ -8,8 +8,10 @@ import copy
 import hashlib
 import json
 import math
+import os
 import subprocess
 import sys
+import tempfile
 import time
 from collections.abc import Iterator, Mapping, Sequence
 from pathlib import Path
@@ -60,9 +62,12 @@ from train import (  # noqa: E402
     load_receipt_identity,
 )
 from utils.checkpoint import (  # noqa: E402
+    CheckpointMismatchError,
     atomic_torch_save,
     capture_rng_state,
+    config_fingerprint,
     repository_git_hash,
+    restore_rng_state,
 )
 from utils.seed import seed_data_worker, seed_everything  # noqa: E402
 
@@ -106,13 +111,28 @@ STAGE_C_RUNTIME_GIT_SCOPES = (
     "src",
 )
 
+STAGE_C_CHECKPOINT_SCHEMA_VERSION = 1
+STAGE_C_COMPONENT = "ffs-omega-tsr-epipolar-stage-c"
+STAGE_C_MODEL_COMPONENT = "hr_epipolar_refiner"
+FORMAL_STAGE_B_STEPS = 15_000
+FORMAL_STAGE_C_STEPS = 5_000
+
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Train Stage-C HR epipolar refinement with a frozen T3 base."
     )
     parser.add_argument("--config", type=Path, required=True)
-    parser.add_argument("--init-from", type=Path, required=True, help="Stage-B checkpoint")
+    parser.add_argument(
+        "--init-from",
+        type=Path,
+        help="Stage-B checkpoint (required for a new run)",
+    )
+    parser.add_argument(
+        "--resume",
+        type=Path,
+        help="resume exactly from a Stage-C latest checkpoint",
+    )
     parser.add_argument("--manifest", type=Path)
     parser.add_argument("--observation-cache-root", type=Path)
     parser.add_argument("--teacher-cache-root", type=Path)
@@ -190,6 +210,8 @@ def validate_epipolar_config(config: DictConfig) -> None:
         raise ValueError("torch.compile remains disabled for initial Stage C")
     if str(config.train.precision).lower() != "bf16":
         raise ValueError("formal Stage C requires train.precision=bf16")
+    if str(config.train.optimizer).lower() != "adamw":
+        raise ValueError("Stage-C optimizer must be AdamW")
     offsets = [float(value) for value in config.model.epipolar_offsets_hr_px]
     if (
         not offsets
@@ -208,6 +230,9 @@ def validate_epipolar_config(config: DictConfig) -> None:
         raise ValueError("Stage-C correction limit must be exactly +/-2 HR pixels")
     _positive_int(config.train.steps_epipolar, "train.steps_epipolar")
     _nonnegative_int(config.train.warmup_steps, "train.warmup_steps")
+    _positive_int(config.train.checkpoint_interval, "train.checkpoint_interval")
+    _positive_int(config.train.log_interval, "train.log_interval")
+    _nonnegative_int(config.train.num_workers, "train.num_workers")
     micro_batch = _positive_int(
         config.train.micro_batch_size, "train.micro_batch_size"
     )
@@ -228,6 +253,19 @@ def validate_epipolar_config(config: DictConfig) -> None:
         value = float(config.train[name])
         if not math.isfinite(value) or value <= 0:
             raise ValueError(f"train.{name} must be finite and positive")
+    weight_decay = float(config.train.weight_decay)
+    if not math.isfinite(weight_decay) or weight_decay < 0:
+        raise ValueError("train.weight_decay must be finite and non-negative")
+    crop = list(config.data.hr_crop)
+    if len(crop) != 2 or any(
+        isinstance(value, bool) or not isinstance(value, int) or value <= 0
+        for value in crop
+    ):
+        raise ValueError("data.hr_crop must contain two positive integers")
+    if any(value % int(config.data.scale) for value in crop):
+        raise ValueError("data.hr_crop must be divisible by the spatial scale")
+    if str(config.data.crop_mode) not in {"random", "fixed"}:
+        raise ValueError("data.crop_mode must be random or fixed")
 
 
 def _required_path(config: DictConfig, dotted_name: str, *, directory: bool) -> Path:
@@ -509,6 +547,448 @@ def _validate_execution_mode(
         raise RuntimeError(
             f"formal Stage C requires native CUDA bf16 on {training_runtime.get('device_name')}"
         )
+
+
+def _resume_config_paths(path: str | Path) -> dict[str, str]:
+    """Read only the immutable path bindings needed to reconstruct a resume."""
+
+    checkpoint_path = Path(path).expanduser().resolve()
+    payload = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
+    if not isinstance(payload, Mapping) or payload.get("component") != STAGE_C_COMPONENT:
+        raise CheckpointMismatchError("resume file is not a Stage-C checkpoint")
+    config = payload.get("config")
+    data = config.get("data") if isinstance(config, Mapping) else None
+    train = config.get("train") if isinstance(config, Mapping) else None
+    base = payload.get("base_checkpoint")
+    if not all(isinstance(value, Mapping) for value in (data, train, base)):
+        raise CheckpointMismatchError("resume checkpoint path bindings are malformed")
+    bindings: dict[str, object] = {
+        "data.manifest_path": data.get("manifest_path"),
+        "data.observation_cache_root": data.get("observation_cache_root"),
+        "data.teacher_cache_root": data.get("teacher_cache_root"),
+        "data.derived_geometry_cache_root": data.get(
+            "derived_geometry_cache_root"
+        ),
+        "data.epipolar_rectification_audit_path": data.get(
+            "epipolar_rectification_audit_path"
+        ),
+        "train.initialization_checkpoint": base.get("path"),
+    }
+    if any(not isinstance(value, str) or not value for value in bindings.values()):
+        raise CheckpointMismatchError(
+            "resume checkpoint lacks an immutable training path binding"
+        )
+    output_value = train.get("epipolar_output_dir")
+    if output_value is not None:
+        if not isinstance(output_value, str) or not output_value:
+            raise CheckpointMismatchError(
+                "resume checkpoint output directory binding is malformed"
+            )
+        bindings["train.epipolar_output_dir"] = output_value
+    return {name: str(value) for name, value in bindings.items()}
+
+
+def _validate_base_completion(
+    base_metadata: Mapping[str, Any],
+    *,
+    expected_steps: int,
+    required: bool,
+) -> dict[str, Any]:
+    """Require a completed canonical Stage-B base for an unbounded CUDA run."""
+
+    expected_steps = _positive_int(expected_steps, "expected Stage-B steps")
+    training_config = base_metadata.get("training_config")
+    train = (
+        training_config.get("train")
+        if isinstance(training_config, Mapping)
+        else None
+    )
+    actual_step = base_metadata.get("step")
+    if isinstance(actual_step, bool) or not isinstance(actual_step, int):
+        raise ValueError("Stage-B checkpoint step is malformed")
+    configured_steps = train.get("steps") if isinstance(train, Mapping) else None
+    declared_steps = (
+        train.get("steps_temporal") if isinstance(train, Mapping) else None
+    )
+    complete = (
+        actual_step == expected_steps
+        and configured_steps == expected_steps
+        and declared_steps == expected_steps
+        and expected_steps == FORMAL_STAGE_B_STEPS
+    )
+    receipt = {
+        "actual_step": actual_step,
+        "configured_steps": configured_steps,
+        "declared_temporal_steps": declared_steps,
+        "required_steps": expected_steps,
+        "canonical_required_steps": FORMAL_STAGE_B_STEPS,
+        "complete": complete,
+        "required_for_this_run": bool(required),
+    }
+    if required and not complete:
+        raise ValueError(
+            "formal Stage C requires a completed canonical Stage-B base: "
+            f"{receipt}"
+        )
+    return receipt
+
+
+def _data_cursor(
+    *,
+    completed_steps: int,
+    accumulation: int,
+    batches_per_epoch: int,
+) -> dict[str, Any]:
+    completed_steps = _nonnegative_int(completed_steps, "completed_steps")
+    accumulation = _positive_int(accumulation, "accumulation")
+    batches_per_epoch = _positive_int(batches_per_epoch, "batches_per_epoch")
+    completed_micro_steps = completed_steps * accumulation
+    epoch, batch_offset = divmod(completed_micro_steps, batches_per_epoch)
+    return {
+        "completed_micro_steps": completed_micro_steps,
+        "batches_per_epoch": batches_per_epoch,
+        "epoch": epoch,
+        "batch_offset_in_epoch": batch_offset,
+        "grad_accumulation": accumulation,
+        "drop_last": True,
+    }
+
+
+def _validate_finite_training_state(
+    refiner: nn.Module, optimizer: torch.optim.Optimizer
+) -> None:
+    for name, value in list(refiner.named_parameters()) + list(
+        refiner.named_buffers()
+    ):
+        if value.is_floating_point() and not bool(torch.isfinite(value).all().item()):
+            raise FloatingPointError(f"non-finite Stage-C refiner state: {name}")
+    for parameter, state in optimizer.state.items():
+        del parameter
+        for name, value in state.items():
+            if isinstance(value, Tensor) and value.is_floating_point() and not bool(
+                torch.isfinite(value).all().item()
+            ):
+                raise FloatingPointError(
+                    f"non-finite Stage-C optimizer state: {name}"
+                )
+
+
+def _stage_c_checkpoint_payload(
+    *,
+    stage: FrozenTemporalEpipolarStage,
+    optimizer: torch.optim.Optimizer,
+    scheduler: torch.optim.lr_scheduler.LRScheduler,
+    completed_steps: int,
+    config: DictConfig,
+    git_hash: str,
+    runtime_source_bundle: Mapping[str, Any],
+    training_runtime: Mapping[str, Any],
+    base_checkpoint: Mapping[str, Any],
+    base_lineage: Mapping[str, Any],
+    raw_lineage: Mapping[str, Any],
+    base_completion: Mapping[str, Any],
+    rectification_audit: Mapping[str, Any],
+    latest_loss: Mapping[str, Any],
+    elapsed_seconds: float,
+    batches_per_epoch: int,
+) -> dict[str, Any]:
+    """Build one full-state, optimizer-boundary Stage-C checkpoint."""
+
+    completed_steps = _nonnegative_int(completed_steps, "completed_steps")
+    if not math.isfinite(elapsed_seconds) or elapsed_seconds < 0:
+        raise ValueError("elapsed_seconds must be finite and non-negative")
+    parameter_count = stage.trainable_parameter_count
+    if parameter_count <= 0:
+        raise ValueError("Stage-C refiner parameter count must be positive")
+    _validate_finite_training_state(stage.refiner, optimizer)
+    configured_steps = int(config.train.steps_epipolar)
+    execution_complete = completed_steps == configured_steps
+    canonical_schedule = configured_steps == FORMAL_STAGE_C_STEPS
+    completion = {
+        "actual_step": completed_steps,
+        "configured_steps": configured_steps,
+        "execution_complete": execution_complete,
+        "canonical_schedule": canonical_schedule,
+        "base_complete": bool(base_completion.get("complete", False)),
+        "cuda_bf16_eligible": bool(
+            training_runtime.get("formal_cuda_bf16_eligible", False)
+        ),
+    }
+    completion["formal_training_complete"] = bool(
+        execution_complete
+        and canonical_schedule
+        and completion["base_complete"]
+        and completion["cuda_bf16_eligible"]
+    )
+    return {
+        "schema_version": STAGE_C_CHECKPOINT_SCHEMA_VERSION,
+        "component": STAGE_C_COMPONENT,
+        "model": stage.refiner.state_dict(),
+        "model_component": STAGE_C_MODEL_COMPONENT,
+        "optimizer": optimizer.state_dict(),
+        "scheduler": scheduler.state_dict(),
+        "scaler": {},
+        "step": completed_steps,
+        "config": _resolved_dict(config),
+        "git_hash": git_hash,
+        "rng_states": capture_rng_state(),
+        "data_cursor": _data_cursor(
+            completed_steps=completed_steps,
+            accumulation=int(config.train.grad_accumulation),
+            batches_per_epoch=batches_per_epoch,
+        ),
+        "base_checkpoint": dict(base_checkpoint),
+        "base_lineage": dict(base_lineage),
+        "raw_lineage": dict(raw_lineage),
+        "base_completion": dict(base_completion),
+        "geometry_contract": EPIPOLAR_GEOMETRY_CONTRACT,
+        "rectification_audit": dict(rectification_audit),
+        "runtime_source_bundle": dict(runtime_source_bundle),
+        "training_runtime": dict(training_runtime),
+        "supervision": PSEUDO_GT_SUPERVISION,
+        "parameter_count": parameter_count,
+        "trainable_refiner_parameter_count": parameter_count,
+        "loss": dict(latest_loss),
+        "elapsed_seconds": float(elapsed_seconds),
+        "completion": completion,
+    }
+
+
+def _load_stage_c_training_checkpoint(
+    path: str | Path,
+    *,
+    stage: FrozenTemporalEpipolarStage,
+    optimizer: torch.optim.Optimizer,
+    scheduler: torch.optim.lr_scheduler.LRScheduler,
+    expected_config: Mapping[str, Any],
+    expected_git_hash: str,
+    expected_runtime_source_bundle: Mapping[str, Any],
+    expected_training_runtime: Mapping[str, Any],
+    expected_base_checkpoint: Mapping[str, Any],
+    batches_per_epoch: int,
+) -> tuple[int, float, dict[str, Any]]:
+    """Validate and restore an exact optimizer-boundary Stage-C checkpoint."""
+
+    checkpoint_path = Path(path).expanduser().resolve()
+    payload = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
+    if not isinstance(payload, Mapping):
+        raise CheckpointMismatchError("Stage-C resume payload is not a mapping")
+    required = {
+        "schema_version",
+        "component",
+        "model_component",
+        "model",
+        "optimizer",
+        "scheduler",
+        "scaler",
+        "step",
+        "config",
+        "git_hash",
+        "rng_states",
+        "data_cursor",
+        "base_checkpoint",
+        "runtime_source_bundle",
+        "training_runtime",
+        "parameter_count",
+        "trainable_refiner_parameter_count",
+        "elapsed_seconds",
+        "loss",
+    }
+    missing = sorted(required.difference(payload))
+    if missing:
+        raise CheckpointMismatchError(
+            f"Stage-C resume fields are missing: {missing}"
+        )
+    if payload["schema_version"] != STAGE_C_CHECKPOINT_SCHEMA_VERSION or (
+        payload["component"] != STAGE_C_COMPONENT
+        or payload["model_component"] != STAGE_C_MODEL_COMPONENT
+    ):
+        raise CheckpointMismatchError("Stage-C resume component/schema mismatch")
+    parameter_count = stage.trainable_parameter_count
+    if payload["parameter_count"] != parameter_count or payload[
+        "trainable_refiner_parameter_count"
+    ] != parameter_count:
+        raise CheckpointMismatchError("Stage-C resume parameter count mismatch")
+    saved_config = payload["config"]
+    if not isinstance(saved_config, Mapping) or config_fingerprint(
+        saved_config
+    ) != config_fingerprint(expected_config):
+        raise CheckpointMismatchError(
+            "resolved Stage-C config differs from the resume checkpoint"
+        )
+    if payload["git_hash"] != expected_git_hash or payload[
+        "runtime_source_bundle"
+    ] != dict(expected_runtime_source_bundle):
+        raise CheckpointMismatchError("Stage-C runtime source differs on resume")
+    if payload["training_runtime"] != dict(expected_training_runtime):
+        raise CheckpointMismatchError("Stage-C CUDA/BF16 runtime differs on resume")
+    saved_base = payload["base_checkpoint"]
+    if not isinstance(saved_base, Mapping) or dict(saved_base) != dict(
+        expected_base_checkpoint
+    ):
+        raise CheckpointMismatchError("Stage-C frozen base differs on resume")
+    if payload["scaler"] != {}:
+        raise CheckpointMismatchError("Stage-C BF16 resume scaler must be empty")
+    step = payload["step"]
+    if isinstance(step, bool) or not isinstance(step, int) or step < 0:
+        raise CheckpointMismatchError("Stage-C resume step is malformed")
+    expected_cursor = _data_cursor(
+        completed_steps=step,
+        accumulation=int(expected_config["train"]["grad_accumulation"]),
+        batches_per_epoch=batches_per_epoch,
+    )
+    if payload["data_cursor"] != expected_cursor:
+        raise CheckpointMismatchError("Stage-C resume data cursor is inconsistent")
+    try:
+        stage.refiner.load_state_dict(payload["model"], strict=True)
+        optimizer.load_state_dict(payload["optimizer"])
+        scheduler.load_state_dict(payload["scheduler"])
+    except (KeyError, RuntimeError, ValueError) as exc:
+        raise CheckpointMismatchError(
+            f"Stage-C resume training state is incompatible: {exc}"
+        ) from exc
+    if scheduler.last_epoch != step or getattr(scheduler, "_step_count", None) != (
+        step + 1
+    ):
+        raise CheckpointMismatchError("Stage-C scheduler step differs on resume")
+    trainable_parameters = list(stage.refiner.parameters())
+    if len(optimizer.state) != len(trainable_parameters) or any(
+        parameter not in optimizer.state for parameter in trainable_parameters
+    ):
+        raise CheckpointMismatchError(
+            "Stage-C optimizer state does not cover the complete refiner"
+        )
+    for state in optimizer.state.values():
+        optimizer_step = state.get("step")
+        if isinstance(optimizer_step, Tensor):
+            if optimizer_step.numel() != 1:
+                raise CheckpointMismatchError("Stage-C AdamW step is not scalar")
+            optimizer_step = float(optimizer_step.item())
+        if (
+            isinstance(optimizer_step, bool)
+            or not isinstance(optimizer_step, (int, float))
+            or not math.isfinite(float(optimizer_step))
+            or float(optimizer_step) != float(step)
+        ):
+            raise CheckpointMismatchError(
+                "Stage-C optimizer progress differs on resume"
+            )
+    elapsed_seconds = payload["elapsed_seconds"]
+    if (
+        isinstance(elapsed_seconds, bool)
+        or not isinstance(elapsed_seconds, (int, float))
+        or not math.isfinite(float(elapsed_seconds))
+        or float(elapsed_seconds) < 0
+    ):
+        raise CheckpointMismatchError("Stage-C elapsed time is malformed")
+    loss = payload["loss"]
+    if not isinstance(loss, Mapping):
+        raise CheckpointMismatchError("Stage-C resume loss summary is malformed")
+    rng_states = payload["rng_states"]
+    if not isinstance(rng_states, Mapping):
+        raise CheckpointMismatchError("Stage-C resume RNG state is malformed")
+    _validate_finite_training_state(stage.refiner, optimizer)
+    restore_rng_state(rng_states)
+    return step, float(elapsed_seconds), dict(loss)
+
+
+def _write_json_atomic(path: str | Path, value: Mapping[str, Any]) -> None:
+    destination = Path(path)
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    descriptor, temporary_name = tempfile.mkstemp(
+        prefix=f".{destination.name}.", suffix=".tmp", dir=destination.parent
+    )
+    temporary = Path(temporary_name)
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+            json.dump(dict(value), handle, indent=2, sort_keys=True, allow_nan=False)
+            handle.write("\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, destination)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def _append_jsonl(handle: Any, record: Mapping[str, Any]) -> None:
+    handle.write(json.dumps(dict(record), sort_keys=True, allow_nan=False) + "\n")
+    handle.flush()
+
+
+def _reconcile_training_log(
+    path: str | Path, *, completed_step: int, log_interval: int
+) -> int:
+    """Validate a resume log and atomically discard rows ahead of checkpoint."""
+
+    destination = Path(path)
+    completed_step = _nonnegative_int(completed_step, "completed_step")
+    log_interval = _positive_int(log_interval, "log_interval")
+    if not destination.is_file():
+        if completed_step == 0:
+            return 0
+        raise CheckpointMismatchError(
+            "Stage-C resume checkpoint has no matching train.jsonl"
+        )
+    try:
+        raw_text = destination.read_text(encoding="utf-8")
+    except OSError as exc:
+        raise CheckpointMismatchError(f"cannot read Stage-C train.jsonl: {exc}") from exc
+    lines = raw_text.splitlines()
+    terminal_newline = not raw_text or raw_text.endswith("\n")
+    nonempty = [line for line in lines if line.strip()]
+    rows: list[Mapping[str, Any]] = []
+    torn_tail = False
+    for line_index, line in enumerate(nonempty):
+        try:
+            row = json.loads(line)
+        except json.JSONDecodeError as exc:
+            if line_index == len(nonempty) - 1:
+                torn_tail = True
+                break
+            raise CheckpointMismatchError(
+                f"cannot parse Stage-C train.jsonl line {line_index + 1}: {exc}"
+            ) from exc
+        if not isinstance(row, Mapping):
+            raise CheckpointMismatchError("Stage-C train.jsonl row is not an object")
+        rows.append(row)
+    expected_steps = list(
+        range(log_interval, log_interval * (len(rows) + 1), log_interval)
+    )
+    actual_steps = [row.get("step") for row in rows]
+    if actual_steps != expected_steps:
+        raise CheckpointMismatchError(
+            "Stage-C train.jsonl steps are not a strict monotonic interval sequence"
+        )
+    retained = [row for row in rows if int(row["step"]) <= completed_step]
+    expected_retained = completed_step // log_interval
+    if len(retained) != expected_retained:
+        raise CheckpointMismatchError(
+            "Stage-C train.jsonl does not cover the resume checkpoint"
+        )
+    # A crash can occur after a valid JSON object is written but before its
+    # delimiter.  Rewriting that otherwise-valid row is necessary: opening the
+    # log in append mode would concatenate the next object onto the same line.
+    if torn_tail or not terminal_newline or len(retained) != len(rows):
+        _write_jsonl_atomic(destination, retained)
+    return len(retained)
+
+
+def _write_jsonl_atomic(path: str | Path, rows: Sequence[Mapping[str, Any]]) -> None:
+    destination = Path(path)
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    descriptor, temporary_name = tempfile.mkstemp(
+        prefix=f".{destination.name}.", suffix=".tmp", dir=destination.parent
+    )
+    temporary = Path(temporary_name)
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+            for row in rows:
+                handle.write(json.dumps(dict(row), sort_keys=True, allow_nan=False) + "\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, destination)
+    finally:
+        temporary.unlink(missing_ok=True)
 
 
 def _move_batch(batch: Mapping[str, Any], device: torch.device) -> dict[str, Any]:
@@ -794,17 +1274,28 @@ def _infinite_batches(
     loader: DataLoader[dict[str, Any]],
     dataset: EpipolarTrainingDataset,
     sampler: DeterministicEpochSampler,
+    *,
+    start_micro_step: int = 0,
 ) -> Iterator[dict[str, Any]]:
-    epoch = 0
+    start_micro_step = _nonnegative_int(start_micro_step, "start_micro_step")
+    batches_per_epoch = len(loader)
+    if batches_per_epoch <= 0:
+        raise RuntimeError("Stage-C DataLoader has no complete micro-batches")
+    epoch, skip_batches = divmod(start_micro_step, batches_per_epoch)
     while True:
         dataset.set_epoch(epoch)
         sampler.set_epoch(epoch)
         yielded = False
-        for batch in loader:
+        for batch_index, batch in enumerate(loader):
+            if batch_index < skip_batches:
+                continue
             yielded = True
             yield batch
         if not yielded:
+            if skip_batches:
+                raise RuntimeError("Stage-C resume batch offset exhausted DataLoader")
             raise RuntimeError("Stage-C DataLoader yielded no batches")
+        skip_batches = 0
         epoch += 1
 
 
@@ -858,7 +1349,9 @@ def run_one_epipolar_optimizer_step(
     loss = _stage_loss(stage, batch, config)
     loss.total.backward()
     torch.nn.utils.clip_grad_norm_(
-        trainable, float(config.train.gradient_clip)
+        trainable,
+        float(config.train.gradient_clip),
+        error_if_nonfinite=True,
     )
     optimizer.step()
     if any(parameter.grad is not None for parameter in stage.base_model.parameters()):
@@ -867,7 +1360,14 @@ def run_one_epipolar_optimizer_step(
 
 
 def run(args: argparse.Namespace) -> int:
+    if args.resume is not None and args.dry_run:
+        raise ValueError("--resume and --dry-run cannot be combined")
     config = resolve_epipolar_config(args.config, args.overrides)
+    resume_bindings = (
+        _resume_config_paths(args.resume) if args.resume is not None else {}
+    )
+    if args.resume is None and args.init_from is None:
+        raise ValueError("a new Stage-C run requires --init-from STAGE_B_CHECKPOINT")
     cli_paths = {
         "data.manifest_path": args.manifest,
         "data.observation_cache_root": args.observation_cache_root,
@@ -878,9 +1378,15 @@ def run(args: argparse.Namespace) -> int:
         "train.initialization_checkpoint": args.init_from,
     }
     for name, value in cli_paths.items():
-        if value is not None:
+        selected: str | Path | None = value
+        if selected is None and name in resume_bindings:
+            selected = resume_bindings[name]
+        if selected is not None:
             OmegaConf.update(
-                config, name, str(value.expanduser().resolve()), merge=False
+                config,
+                name,
+                str(Path(selected).expanduser().resolve()),
+                merge=False,
             )
     runtime_source_bundle = _runtime_source_bundle()
     validate_epipolar_config(config)
@@ -929,10 +1435,13 @@ def run(args: argparse.Namespace) -> int:
         run_steps=args.run_steps,
         training_runtime=training_runtime,
     )
+    base_checkpoint_path = _required_path(
+        config, "train.initialization_checkpoint", directory=False
+    )
     base_model = build_model(config)
     base_parameter_count = base_model.trainable_parameter_count
     base_metadata = load_model_for_evaluation(
-        args.init_from,
+        base_checkpoint_path,
         base_model,
         expected_parameter_count=base_parameter_count,
         require_full_training_state=True,
@@ -946,6 +1455,14 @@ def run(args: argparse.Namespace) -> int:
         evaluation_config=_resolved_dict(config),
     )
     raw_lineage = _validate_base_data_lineage(base_metadata, dataset)
+    formal_training_requested = bool(
+        not args.dry_run and args.run_steps is None and device.type == "cuda"
+    )
+    base_completion = _validate_base_completion(
+        base_metadata,
+        expected_steps=int(config.train.steps_temporal),
+        required=formal_training_requested,
+    )
     offsets = tuple(float(value) for value in config.model.epipolar_offsets_hr_px)
     refiner = HREpipolarRefiner(
         feature_channels=int(config.model.epipolar_feature_channels),
@@ -985,12 +1502,14 @@ def run(args: argparse.Namespace) -> int:
         generator=torch.Generator().manual_seed(int(config.seed)),
         drop_last=True,
     )
-    batches = _infinite_batches(loader, dataset, sampler)
-    first_batch = _move_batch(next(batches), device)
-    stage.train()
-    with torch.autocast(device_type=device.type, dtype=torch.bfloat16, enabled=use_bf16):
-        dry_loss = _stage_loss(stage, first_batch, config)
     if args.dry_run:
+        batches = _infinite_batches(loader, dataset, sampler)
+        first_batch = _move_batch(next(batches), device)
+        stage.eval()
+        with torch.no_grad(), torch.autocast(
+            device_type=device.type, dtype=torch.bfloat16, enabled=use_bf16
+        ):
+            dry_loss = _stage_loss(stage, first_batch, config)
         print(
             json.dumps(
                 {
@@ -1003,6 +1522,7 @@ def run(args: argparse.Namespace) -> int:
                     "base_checkpoint": base_metadata,
                     "base_lineage": base_lineage,
                     "raw_lineage": raw_lineage,
+                    "base_completion": base_completion,
                     "geometry_contract": EPIPOLAR_GEOMETRY_CONTRACT,
                     "rectification_audit": rectification_audit,
                     "runtime_source_bundle": runtime_source_bundle,
@@ -1023,14 +1543,23 @@ def run(args: argparse.Namespace) -> int:
         if output_value is None
         else Path(str(output_value)).expanduser().resolve()
     )
+    latest_path = output_dir / "latest.pt"
     final_path = output_dir / "final.pt"
-    if final_path.exists():
-        raise FileExistsError(f"Stage-C output already exists: {final_path}")
-    run_steps = (
-        int(config.train.steps_epipolar)
-        if args.run_steps is None
-        else _positive_int(args.run_steps, "run_steps")
-    )
+    log_path = output_dir / "train.jsonl"
+    summary_path = output_dir / "run_summary.json"
+    tracked_outputs = (latest_path, final_path, log_path, summary_path)
+    if args.resume is None:
+        existing = [str(path) for path in tracked_outputs if path.exists()]
+        if existing:
+            raise FileExistsError(
+                "Stage-C output already contains run artifacts: " + ", ".join(existing)
+            )
+    elif final_path.exists():
+        raise FileExistsError(
+            f"completed Stage-C output cannot be resumed: {final_path}"
+        )
+    output_dir.mkdir(parents=True, exist_ok=True)
+
     optimizer = torch.optim.AdamW(
         stage.refiner.parameters(),
         lr=float(config.train.learning_rate),
@@ -1047,72 +1576,271 @@ def run(args: argparse.Namespace) -> int:
         ),
     )
     accumulation = int(config.train.grad_accumulation)
-    optimizer.zero_grad(set_to_none=True)
-    completed_steps = 0
-    micro_step = 0
-    latest_loss = dry_loss
-    started = time.perf_counter()
-    while completed_steps < run_steps:
-        batch = first_batch if micro_step == 0 else _move_batch(next(batches), device)
-        with torch.autocast(
-            device_type=device.type, dtype=torch.bfloat16, enabled=use_bf16
-        ):
-            latest_loss = _stage_loss(stage, batch, config)
-            scaled = latest_loss.total / accumulation
-        scaled.backward()
-        micro_step += 1
-        if micro_step % accumulation:
-            continue
-        torch.nn.utils.clip_grad_norm_(
-            stage.refiner.parameters(), float(config.train.gradient_clip)
-        )
-        optimizer.step()
-        scheduler.step()
-        optimizer.zero_grad(set_to_none=True)
-        completed_steps += 1
-    elapsed = time.perf_counter() - started
-    payload = {
-        "schema_version": 1,
-        "component": "ffs-omega-tsr-epipolar-stage-c",
-        "model": stage.refiner.state_dict(),
-        "model_component": "hr_epipolar_refiner",
-        "optimizer": optimizer.state_dict(),
-        "scheduler": scheduler.state_dict(),
-        "scaler": {},
-        "step": completed_steps,
-        "config": _resolved_dict(config),
-        "git_hash": repository_git_hash(PROJECT_ROOT),
-        "rng_states": capture_rng_state(),
-        "base_checkpoint": {
-            "path": base_metadata["path"],
-            "sha256": base_metadata["checkpoint_sha256"],
-            "step": base_metadata["step"],
-        },
-        "base_lineage": base_lineage,
-        "raw_lineage": raw_lineage,
-        "geometry_contract": EPIPOLAR_GEOMETRY_CONTRACT,
-        "rectification_audit": rectification_audit,
-        "runtime_source_bundle": runtime_source_bundle,
-        "training_runtime": training_runtime,
-        "supervision": PSEUDO_GT_SUPERVISION,
-        "parameter_count": stage.trainable_parameter_count,
-        "trainable_refiner_parameter_count": stage.trainable_parameter_count,
-        "loss": latest_loss.detached_scalars(),
-        "elapsed_seconds": elapsed,
+    resolved_config = _resolved_dict(config)
+    repository_hash = str(runtime_source_bundle["git_head"])
+    base_checkpoint = {
+        "path": base_metadata["path"],
+        "sha256": base_metadata["checkpoint_sha256"],
+        "step": base_metadata["step"],
     }
-    atomic_torch_save(payload, final_path)
+    completed_steps = 0
+    previous_elapsed_seconds = 0.0
+    latest_loss_summary: dict[str, Any] = {}
+    if args.resume is not None:
+        completed_steps, previous_elapsed_seconds, latest_loss_summary = (
+            _load_stage_c_training_checkpoint(
+                args.resume,
+                stage=stage,
+                optimizer=optimizer,
+                scheduler=scheduler,
+                expected_config=resolved_config,
+                expected_git_hash=repository_hash,
+                expected_runtime_source_bundle=runtime_source_bundle,
+                expected_training_runtime=training_runtime,
+                expected_base_checkpoint=base_checkpoint,
+                batches_per_epoch=len(loader),
+            )
+        )
+        _reconcile_training_log(
+            log_path,
+            completed_step=completed_steps,
+            log_interval=int(config.train.log_interval),
+        )
+
+    if completed_steps >= configured_steps:
+        raise ValueError(
+            f"Stage-C checkpoint already completed {completed_steps}/{configured_steps} steps"
+        )
+    starting_step = completed_steps
+    if args.run_steps is None:
+        target_step = configured_steps
+    else:
+        requested_segment_steps = _positive_int(args.run_steps, "run_steps")
+        target_step = completed_steps + requested_segment_steps
+        if target_step > configured_steps:
+            raise ValueError(
+                "bounded Stage-C run exceeds the configured schedule: "
+                f"target={target_step}, configured={configured_steps}"
+            )
+
+    batches = _infinite_batches(
+        loader,
+        dataset,
+        sampler,
+        start_micro_step=completed_steps * accumulation,
+    )
+    stage.train()
+    optimizer.zero_grad(set_to_none=True)
+    if device.type == "cuda":
+        torch.cuda.reset_peak_memory_stats(device)
+    started = time.perf_counter()
+    log_mode = "a" if args.resume is not None else "w"
+    with log_path.open(log_mode, encoding="utf-8") as log_handle:
+        while completed_steps < target_step:
+            summed_total: Tensor | None = None
+            summed_disparity: Tensor | None = None
+            summed_regularizer: Tensor | None = None
+            summed_valid_pixels = 0
+            for _ in range(accumulation):
+                batch = _move_batch(next(batches), device)
+                with torch.autocast(
+                    device_type=device.type,
+                    dtype=torch.bfloat16,
+                    enabled=use_bf16,
+                ):
+                    loss = _stage_loss(stage, batch, config)
+                    scaled = loss.total / float(accumulation)
+                scaled.backward()
+                summed_total = (
+                    loss.total.detach()
+                    if summed_total is None
+                    else summed_total + loss.total.detach()
+                )
+                summed_disparity = (
+                    loss.disparity.detach()
+                    if summed_disparity is None
+                    else summed_disparity + loss.disparity.detach()
+                )
+                summed_regularizer = (
+                    loss.correction_regularizer.detach()
+                    if summed_regularizer is None
+                    else summed_regularizer
+                    + loss.correction_regularizer.detach()
+                )
+                summed_valid_pixels += loss.valid_pixel_count
+            gradient_norm = torch.nn.utils.clip_grad_norm_(
+                stage.refiner.parameters(),
+                float(config.train.gradient_clip),
+                error_if_nonfinite=True,
+            )
+            optimizer.step()
+            scheduler.step()
+            optimizer.zero_grad(set_to_none=True)
+            completed_steps += 1
+            assert summed_total is not None
+            assert summed_disparity is not None
+            assert summed_regularizer is not None
+            values = (
+                torch.stack(
+                    (
+                        summed_total / float(accumulation),
+                        summed_disparity / float(accumulation),
+                        summed_regularizer / float(accumulation),
+                        gradient_norm.detach(),
+                    )
+                )
+                .float()
+                .cpu()
+                .tolist()
+            )
+            latest_loss_summary = {
+                "total": float(values[0]),
+                "disparity": float(values[1]),
+                "correction_regularizer": float(values[2]),
+                "valid_pixel_count": summed_valid_pixels,
+            }
+            if completed_steps % int(config.train.log_interval) == 0:
+                record = {
+                    "step": completed_steps,
+                    "stage": "epipolar",
+                    "learning_rate": float(optimizer.param_groups[0]["lr"]),
+                    "gradient_norm": float(values[3]),
+                    "elapsed_seconds": previous_elapsed_seconds
+                    + time.perf_counter()
+                    - started,
+                    "loss": latest_loss_summary,
+                }
+                _append_jsonl(log_handle, record)
+                print(json.dumps(record, sort_keys=True, allow_nan=False), flush=True)
+
+            if completed_steps % int(config.train.checkpoint_interval) == 0:
+                # A durable checkpoint must never get ahead of its audit log.
+                log_handle.flush()
+                os.fsync(log_handle.fileno())
+                payload = _stage_c_checkpoint_payload(
+                    stage=stage,
+                    optimizer=optimizer,
+                    scheduler=scheduler,
+                    completed_steps=completed_steps,
+                    config=config,
+                    git_hash=repository_hash,
+                    runtime_source_bundle=runtime_source_bundle,
+                    training_runtime=training_runtime,
+                    base_checkpoint=base_checkpoint,
+                    base_lineage=base_lineage,
+                    raw_lineage=raw_lineage,
+                    base_completion=base_completion,
+                    rectification_audit=rectification_audit,
+                    latest_loss=latest_loss_summary,
+                    elapsed_seconds=previous_elapsed_seconds
+                    + time.perf_counter()
+                    - started,
+                    batches_per_epoch=len(loader),
+                )
+                atomic_torch_save(payload, latest_path)
+        log_handle.flush()
+        os.fsync(log_handle.fileno())
+
+    segment_elapsed_seconds = time.perf_counter() - started
+    elapsed_seconds = previous_elapsed_seconds + segment_elapsed_seconds
+    end_source_bundle = _runtime_source_bundle()
+    if end_source_bundle != runtime_source_bundle or (
+        repository_git_hash(PROJECT_ROOT) != repository_hash
+    ):
+        raise RuntimeError(
+            "Stage-C runtime source changed during training; refusing completion checkpoint"
+        )
+    payload = _stage_c_checkpoint_payload(
+        stage=stage,
+        optimizer=optimizer,
+        scheduler=scheduler,
+        completed_steps=completed_steps,
+        config=config,
+        git_hash=repository_hash,
+        runtime_source_bundle=runtime_source_bundle,
+        training_runtime=training_runtime,
+        base_checkpoint=base_checkpoint,
+        base_lineage=base_lineage,
+        raw_lineage=raw_lineage,
+        base_completion=base_completion,
+        rectification_audit=rectification_audit,
+        latest_loss=latest_loss_summary,
+        elapsed_seconds=elapsed_seconds,
+        batches_per_epoch=len(loader),
+    )
+    atomic_torch_save(payload, latest_path)
+    execution_complete = completed_steps == configured_steps
+    if execution_complete:
+        atomic_torch_save(payload, final_path)
+        config_sha256 = hashlib.sha256(
+            config_fingerprint(resolved_config).encode("utf-8")
+        ).hexdigest()
+        summary = {
+            "schema_version": 1,
+            "component": "ffs-omega-tsr-epipolar-training-run",
+            "status": "TRAINING_COMPLETE",
+            "stage": "epipolar",
+            "steps": completed_steps,
+            "configured_steps": configured_steps,
+            "run_steps": completed_steps - starting_step,
+            "elapsed_seconds": elapsed_seconds,
+            "segment_elapsed_seconds": segment_elapsed_seconds,
+            "segment_steps_per_second": (
+                (completed_steps - starting_step) / segment_elapsed_seconds
+            ),
+            "git_hash": repository_hash,
+            "config_sha256": config_sha256,
+            "training_runtime": training_runtime,
+            "base_checkpoint": base_checkpoint,
+            "base_completion": base_completion,
+            "runtime_source_bundle_sha256": runtime_source_bundle["bundle_sha256"],
+            "formal_training_complete": payload["completion"][
+                "formal_training_complete"
+            ],
+            "final_checkpoint": {
+                "path": str(final_path),
+                "sha256": sha256_file(final_path),
+            },
+            "latest_checkpoint": {
+                "path": str(latest_path),
+                "sha256": sha256_file(latest_path),
+            },
+            "training_log": {
+                "path": str(log_path),
+                "sha256": sha256_file(log_path),
+            },
+            "peak_cuda_allocated_bytes": (
+                int(torch.cuda.max_memory_allocated(device))
+                if device.type == "cuda"
+                else None
+            ),
+            "peak_cuda_reserved_bytes": (
+                int(torch.cuda.max_memory_reserved(device))
+                if device.type == "cuda"
+                else None
+            ),
+        }
+        _write_json_atomic(summary_path, summary)
+    status = "TRAINING_COMPLETE" if execution_complete else "BOUNDED_RUN_COMPLETE"
     print(
         json.dumps(
             {
-                "status": "TRAINING_COMPLETE",
+                "status": status,
                 "stage": "epipolar",
                 "completed_steps": completed_steps,
+                "configured_steps": configured_steps,
                 "trainable_refiner_parameter_count": stage.trainable_parameter_count,
                 "base_parameters_frozen": True,
                 "supervision": PSEUDO_GT_SUPERVISION,
-                "checkpoint": str(final_path),
-                "checkpoint_sha256": sha256_file(final_path),
-                "loss": latest_loss.detached_scalars(),
+                "checkpoint": str(final_path if execution_complete else latest_path),
+                "checkpoint_sha256": sha256_file(
+                    final_path if execution_complete else latest_path
+                ),
+                "run_summary": str(summary_path) if execution_complete else None,
+                "formal_training_complete": payload["completion"][
+                    "formal_training_complete"
+                ],
+                "loss": latest_loss_summary,
             },
             indent=2,
             sort_keys=True,

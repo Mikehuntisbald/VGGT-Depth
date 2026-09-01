@@ -9,6 +9,7 @@ import pytest
 import torch
 from torch import nn
 from omegaconf import OmegaConf
+from torch.utils.data import DataLoader, Dataset
 
 import train_epipolar
 from data.collate import collate_temporal_training_samples
@@ -299,3 +300,276 @@ def test_cuda_runtime_receipt_binds_actual_device_and_native_bf16() -> None:
     assert runtime["autocast_enabled"] is True
     assert runtime["autocast_dtype"] == "torch.bfloat16"
     assert runtime["formal_cuda_bf16_eligible"] is native_bf16_supported
+
+
+class _EpochIndexDataset(Dataset[tuple[int, int]]):
+    def __init__(self, size: int) -> None:
+        self.size = size
+        self.epoch = 0
+
+    def __len__(self) -> int:
+        return self.size
+
+    def set_epoch(self, epoch: int) -> None:
+        self.epoch = epoch
+
+    def __getitem__(self, index: int) -> tuple[int, int]:
+        return self.epoch, index
+
+
+def test_epipolar_data_cursor_reproduces_exact_next_batches() -> None:
+    dataset = _EpochIndexDataset(10)
+    sampler = train_epipolar.DeterministicEpochSampler(len(dataset), seed=42)
+    loader = DataLoader(dataset, batch_size=2, sampler=sampler, drop_last=True)
+    uninterrupted = train_epipolar._infinite_batches(loader, dataset, sampler)
+    consumed = [next(uninterrupted) for _ in range(7)]
+    del consumed
+    expected = [next(uninterrupted) for _ in range(4)]
+
+    resumed_dataset = _EpochIndexDataset(10)
+    resumed_sampler = train_epipolar.DeterministicEpochSampler(
+        len(resumed_dataset), seed=42
+    )
+    resumed_loader = DataLoader(
+        resumed_dataset,
+        batch_size=2,
+        sampler=resumed_sampler,
+        drop_last=True,
+    )
+    resumed = train_epipolar._infinite_batches(
+        resumed_loader,
+        resumed_dataset,  # type: ignore[arg-type]
+        resumed_sampler,
+        start_micro_step=7,
+    )
+    actual = [next(resumed) for _ in range(4)]
+
+    for expected_batch, actual_batch in zip(expected, actual, strict=True):
+        torch.testing.assert_close(expected_batch[0], actual_batch[0], rtol=0, atol=0)
+        torch.testing.assert_close(expected_batch[1], actual_batch[1], rtol=0, atol=0)
+
+
+def test_resume_checkpoint_restores_model_optimizer_scheduler_rng_and_cursor(
+    tmp_path: Path,
+) -> None:
+    config = _config()
+    first = _tiny_stage(42)
+    first_optimizer = torch.optim.AdamW(
+        first.refiner.parameters(),
+        lr=float(config.train.learning_rate),
+        weight_decay=float(config.train.weight_decay),
+    )
+    first_scheduler = torch.optim.lr_scheduler.LambdaLR(
+        first_optimizer,
+        lr_lambda=lambda update_index: train_epipolar.learning_rate_multiplier(
+            update_index,
+            total_steps=int(config.train.steps_epipolar),
+            warmup_steps=int(config.train.warmup_steps),
+        ),
+    )
+    train_epipolar.run_one_epipolar_optimizer_step(
+        first, _tiny_batch(), config, first_optimizer
+    )
+    first_scheduler.step()
+
+    runtime = train_epipolar._training_runtime(
+        torch.device("cpu"), use_bf16=False
+    )
+    source_bundle = {
+        "git_head": "a" * 40,
+        "bundle_sha256": "b" * 64,
+    }
+    base_checkpoint = {
+        "path": "/tmp/base.pt",
+        "sha256": "c" * 64,
+        "step": 15_000,
+    }
+    payload = train_epipolar._stage_c_checkpoint_payload(
+        stage=first,
+        optimizer=first_optimizer,
+        scheduler=first_scheduler,
+        completed_steps=1,
+        config=config,
+        git_hash="a" * 40,
+        runtime_source_bundle=source_bundle,
+        training_runtime=runtime,
+        base_checkpoint=base_checkpoint,
+        base_lineage={"valid": True},
+        raw_lineage={"valid": True},
+        base_completion={"complete": True},
+        rectification_audit={"status": "PASS"},
+        latest_loss={"total": 1.0},
+        elapsed_seconds=2.0,
+        batches_per_epoch=3,
+    )
+    checkpoint = tmp_path / "latest.pt"
+    train_epipolar.atomic_torch_save(payload, checkpoint)
+    expected_next_rng = torch.rand(8)
+
+    # The uninterrupted arm advances one more update from the saved boundary.
+    train_epipolar.run_one_epipolar_optimizer_step(
+        first, _tiny_batch(), config, first_optimizer
+    )
+    first_scheduler.step()
+
+    # The frozen Stage-B base is external to the Stage-C payload and is bound
+    # by SHA-256, so the resumed arm must reconstruct that identical base.
+    second = _tiny_stage(42)
+    second_optimizer = torch.optim.AdamW(
+        second.refiner.parameters(),
+        lr=float(config.train.learning_rate),
+        weight_decay=float(config.train.weight_decay),
+    )
+    second_scheduler = torch.optim.lr_scheduler.LambdaLR(
+        second_optimizer,
+        lr_lambda=lambda update_index: train_epipolar.learning_rate_multiplier(
+            update_index,
+            total_steps=int(config.train.steps_epipolar),
+            warmup_steps=int(config.train.warmup_steps),
+        ),
+    )
+    step, elapsed, loss = train_epipolar._load_stage_c_training_checkpoint(
+        checkpoint,
+        stage=second,
+        optimizer=second_optimizer,
+        scheduler=second_scheduler,
+        expected_config=train_epipolar._resolved_dict(config),
+        expected_git_hash="a" * 40,
+        expected_runtime_source_bundle=source_bundle,
+        expected_training_runtime=runtime,
+        expected_base_checkpoint=base_checkpoint,
+        batches_per_epoch=3,
+    )
+    assert step == 1
+    assert elapsed == 2.0
+    assert loss == {"total": 1.0}
+    torch.testing.assert_close(torch.rand(8), expected_next_rng, rtol=0, atol=0)
+    train_epipolar.run_one_epipolar_optimizer_step(
+        second, _tiny_batch(), config, second_optimizer
+    )
+    second_scheduler.step()
+
+    for (first_name, first_value), (second_name, second_value) in zip(
+        first.refiner.state_dict().items(),
+        second.refiner.state_dict().items(),
+        strict=True,
+    ):
+        assert first_name == second_name
+        torch.testing.assert_close(first_value, second_value, rtol=0, atol=0)
+    assert first_scheduler.state_dict() == second_scheduler.state_dict()
+    for first_state, second_state in zip(
+        first_optimizer.state.values(), second_optimizer.state.values(), strict=True
+    ):
+        assert first_state.keys() == second_state.keys()
+        for name in first_state:
+            first_value = first_state[name]
+            second_value = second_state[name]
+            if isinstance(first_value, torch.Tensor):
+                torch.testing.assert_close(first_value, second_value, rtol=0, atol=0)
+            else:
+                assert first_value == second_value
+
+
+def test_resume_log_reconciliation_discards_only_post_checkpoint_tail(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "train.jsonl"
+    rows = [
+        {"step": step, "loss": {"total": float(step)}} for step in range(1, 6)
+    ]
+    path.write_text("".join(json.dumps(row) + "\n" for row in rows), encoding="utf-8")
+
+    retained = train_epipolar._reconcile_training_log(
+        path, completed_step=3, log_interval=1
+    )
+
+    assert retained == 3
+    assert [json.loads(line)["step"] for line in path.read_text().splitlines()] == [
+        1,
+        2,
+        3,
+    ]
+
+    path.write_text(
+        "".join(json.dumps(row) + "\n" for row in rows[:3]) + '{"step":',
+        encoding="utf-8",
+    )
+    assert (
+        train_epipolar._reconcile_training_log(
+            path, completed_step=3, log_interval=1
+        )
+        == 3
+    )
+    assert len(path.read_text().splitlines()) == 3
+
+    # A syntactically valid checkpoint row without its newline delimiter must
+    # be normalized before append, or the next JSON object would be glued to it.
+    path.write_text(
+        "".join(json.dumps(row) + "\n" for row in rows[:2])
+        + json.dumps(rows[2]),
+        encoding="utf-8",
+    )
+    assert (
+        train_epipolar._reconcile_training_log(
+            path, completed_step=3, log_interval=1
+        )
+        == 3
+    )
+    assert path.read_bytes().endswith(b"\n")
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(rows[3]) + "\n")
+    assert [json.loads(line)["step"] for line in path.read_text().splitlines()] == [
+        1,
+        2,
+        3,
+        4,
+    ]
+
+    path.write_text(
+        json.dumps({"step": 1}) + "\n" + json.dumps({"step": 3}) + "\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(train_epipolar.CheckpointMismatchError, match="strict"):
+        train_epipolar._reconcile_training_log(
+            path, completed_step=1, log_interval=1
+        )
+
+
+def test_formal_base_completion_gate_is_fail_closed() -> None:
+    complete = {
+        "step": 15_000,
+        "training_config": {
+            "train": {"steps": 15_000, "steps_temporal": 15_000}
+        },
+    }
+    receipt = train_epipolar._validate_base_completion(
+        complete, expected_steps=15_000, required=True
+    )
+    assert receipt["complete"]
+
+    incomplete = copy.deepcopy(complete)
+    incomplete["step"] = 5_000
+    with pytest.raises(ValueError, match="completed canonical Stage-B"):
+        train_epipolar._validate_base_completion(
+            incomplete, expected_steps=15_000, required=True
+        )
+    smoke = train_epipolar._validate_base_completion(
+        incomplete, expected_steps=15_000, required=False
+    )
+    assert not smoke["complete"]
+
+
+def test_epipolar_config_rejects_optimizer_provenance_drift() -> None:
+    config = _config()
+    OmegaConf.update(config, "train.optimizer", "sgd")
+    with pytest.raises(ValueError, match="AdamW"):
+        train_epipolar.validate_epipolar_config(config)
+
+
+def test_checkpoint_boundary_rejects_nonfinite_refiner_state() -> None:
+    stage = _tiny_stage(42)
+    optimizer = torch.optim.AdamW(stage.refiner.parameters(), lr=2e-4)
+    with torch.no_grad():
+        next(stage.refiner.parameters()).reshape(-1)[0] = torch.nan
+    with pytest.raises(FloatingPointError, match="non-finite Stage-C refiner"):
+        train_epipolar._validate_finite_training_state(stage.refiner, optimizer)
