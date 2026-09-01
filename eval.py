@@ -12,6 +12,8 @@ import argparse
 import copy
 import csv
 import json
+import os
+import re
 import sys
 import time
 from contextlib import nullcontext
@@ -23,6 +25,7 @@ import numpy as np
 import torch
 import torch.nn.functional as functional
 from omegaconf import DictConfig, OmegaConf
+from PIL import Image, ImageDraw
 from torch import Tensor
 from torch.utils.data import DataLoader, Subset
 
@@ -93,6 +96,14 @@ EVALUATION_DEFAULTS: dict[str, Any] = {
         "limit": None,
         "start": 0,
         "visualization_samples": 4,
+        # Opt-in only: temporal flicker video is a non-metric visualization.
+        # Keep it disabled so ordinary evaluation has identical behavior and
+        # does not require optional imageio/FFmpeg dependencies.
+        "temporal_flicker_video": False,
+        "temporal_flicker_video_fps": 5,
+        "temporal_flicker_disparity_range_hr_px": [0.0, 384.0],
+        "temporal_flicker_error_range_hr_px": [0.0, 20.0],
+        "temporal_flicker_uncertainty_range": [0.0, 10.0],
         "low_confidence_threshold": 0.8,
         "boundary_gradient_threshold_px": 1.0,
         "boundary_radius_px": 1,
@@ -158,6 +169,20 @@ def build_parser() -> argparse.ArgumentParser:
         "--visualization-samples",
         type=int,
         help="number of leading samples to visualize",
+    )
+    parser.add_argument(
+        "--temporal-flicker-video",
+        action="store_true",
+        default=None,
+        help=(
+            "opt in to non-metric causal T3 temporal flicker MP4 visualizations "
+            "(requires imageio with FFmpeg)"
+        ),
+    )
+    parser.add_argument(
+        "--temporal-flicker-video-fps",
+        type=int,
+        help="frames per second for opt-in temporal flicker MP4s",
     )
     parser.add_argument(
         "--crop-mode",
@@ -249,6 +274,8 @@ def _update_cli_values(config: DictConfig, args: argparse.Namespace) -> None:
         "eval.limit": args.limit,
         "eval.start": args.start,
         "eval.visualization_samples": args.visualization_samples,
+        "eval.temporal_flicker_video": args.temporal_flicker_video,
+        "eval.temporal_flicker_video_fps": args.temporal_flicker_video_fps,
         "eval.crop_mode": args.crop_mode,
         "eval.fixed_crop_origin_hr_xy": args.crop_origin,
     }
@@ -272,6 +299,23 @@ def _nonnegative_int(value: Any, name: str) -> int:
     if isinstance(value, bool) or not isinstance(value, int) or value < 0:
         raise ValueError(f"{name} must be a non-negative integer")
     return value
+
+
+def _fixed_display_range(value: Any, name: str) -> tuple[float, float]:
+    """Validate an explicit, fixed scalar visualization range."""
+
+    if isinstance(value, (str, bytes)):
+        raise ValueError(f"{name} must be [minimum, maximum]")
+    try:
+        values = list(value)
+    except TypeError as exc:
+        raise ValueError(f"{name} must be [minimum, maximum]") from exc
+    if len(values) != 2:
+        raise ValueError(f"{name} must be [minimum, maximum]")
+    minimum, maximum = (float(item) for item in values)
+    if not np.isfinite(minimum) or not np.isfinite(maximum) or maximum <= minimum:
+        raise ValueError(f"{name} must be finite with maximum > minimum")
+    return minimum, maximum
 
 
 def validate_evaluation_config(config: DictConfig) -> str:
@@ -323,6 +367,26 @@ def validate_evaluation_config(config: DictConfig) -> str:
     _positive_int(config.eval.batch_size, "eval.batch_size")
     _nonnegative_int(config.eval.num_workers, "eval.num_workers")
     _nonnegative_int(config.eval.visualization_samples, "eval.visualization_samples")
+    if not isinstance(config.eval.temporal_flicker_video, bool):
+        raise ValueError("eval.temporal_flicker_video must be boolean")
+    if config.eval.temporal_flicker_video and stage != "temporal":
+        raise ValueError("eval.temporal_flicker_video requires causal T=3 evaluation")
+    _positive_int(
+        config.eval.temporal_flicker_video_fps,
+        "eval.temporal_flicker_video_fps",
+    )
+    _fixed_display_range(
+        config.eval.temporal_flicker_disparity_range_hr_px,
+        "eval.temporal_flicker_disparity_range_hr_px",
+    )
+    _fixed_display_range(
+        config.eval.temporal_flicker_error_range_hr_px,
+        "eval.temporal_flicker_error_range_hr_px",
+    )
+    _fixed_display_range(
+        config.eval.temporal_flicker_uncertainty_range,
+        "eval.temporal_flicker_uncertainty_range",
+    )
     if config.eval.limit is not None:
         _positive_int(config.eval.limit, "eval.limit")
     _nonnegative_int(config.eval.start, "eval.start")
@@ -898,6 +962,344 @@ def _rgb_chw_to_uint8(rgb: Tensor) -> np.ndarray:
         .numpy()
     )
     return np.rint(array * 255.0).astype(np.uint8)
+
+
+class _TemporalFlickerVideoUnavailable(RuntimeError):
+    """Raised only for an optional imageio/FFmpeg encoding failure."""
+
+
+def _open_temporal_flicker_video_writer(path: Path, *, fps: int) -> Any:
+    """Open an imageio FFmpeg writer or state why optional encoding is unavailable."""
+
+    try:
+        import imageio.v2 as imageio
+    except ImportError as exc:  # pragma: no cover - depends on optional install
+        raise _TemporalFlickerVideoUnavailable(
+            "imageio with its FFmpeg plugin is not installed"
+        ) from exc
+    try:
+        return imageio.get_writer(
+            str(path),
+            format="FFMPEG",
+            mode="I",
+            fps=fps,
+            codec="libx264",
+            pixelformat="yuv420p",
+            macro_block_size=1,
+        )
+    except Exception as exc:  # pragma: no cover - depends on local encoder state
+        raise _TemporalFlickerVideoUnavailable(
+            f"imageio/FFmpeg could not open MP4 writer: {type(exc).__name__}: {exc}"
+        ) from exc
+
+
+def _temporal_flicker_tile(
+    image_rgb_uint8: np.ndarray,
+    *,
+    label: str,
+    colorbar_range: tuple[float, float] | None = None,
+) -> np.ndarray:
+    """Return one labelled CPU uint8 panel with an optional fixed color bar."""
+
+    if (
+        image_rgb_uint8.dtype != np.uint8
+        or image_rgb_uint8.ndim != 3
+        or image_rgb_uint8.shape[-1] != 3
+    ):
+        raise ValueError("temporal flicker tile must be HxWx3 uint8")
+    height, width = image_rgb_uint8.shape[:2]
+    label_height = 24
+    canvas = Image.new("RGB", (width, height + label_height), color=(0, 0, 0))
+    canvas.paste(Image.fromarray(image_rgb_uint8, mode="RGB"), (0, label_height))
+    draw = ImageDraw.Draw(canvas)
+    draw.text((4, 5), label, fill=(255, 255, 255))
+    if colorbar_range is not None:
+        minimum, maximum = colorbar_range
+        values = np.linspace(minimum, maximum, num=128, dtype=np.float32)[None, :]
+        colorbar = scalar_to_rgb_uint8(
+            values,
+            minimum=minimum,
+            maximum=maximum,
+        )
+        colorbar_width = min(128, max(1, width // 3))
+        colorbar_image = Image.fromarray(colorbar, mode="RGB").resize(
+            (colorbar_width, 8)
+        )
+        canvas.paste(colorbar_image, (width - colorbar_width - 4, 8))
+    return np.asarray(canvas, dtype=np.uint8)
+
+
+def build_temporal_flicker_panel(
+    *,
+    rgb_hr: Tensor,
+    bilinear_disparity_hr_px: Tensor,
+    t3_disparity_hr_px: Tensor,
+    t3_vggt_disparity_hr_px: Tensor,
+    target_disparity_hr_px: Tensor,
+    target_trusted_mask: Tensor,
+    uncertainty_variance: Tensor,
+    disparity_range_hr_px: tuple[float, float],
+    error_range_hr_px: tuple[float, float],
+    uncertainty_range: tuple[float, float],
+) -> np.ndarray:
+    """Build one non-metric six-panel temporal frame on CPU as uint8.
+
+    Inputs may reside on CUDA, but each is detached and converted immediately;
+    no tensor or float frame is retained by the video collector.  Scalar
+    color ranges are supplied explicitly, making every panel comparable over
+    time and across videos.
+    """
+
+    error = (t3_vggt_disparity_hr_px - target_disparity_hr_px).abs()
+    panels = (
+        _temporal_flicker_tile(_rgb_chw_to_uint8(rgb_hr), label="RGB"),
+        _temporal_flicker_tile(
+            scalar_to_rgb_uint8(
+                bilinear_disparity_hr_px,
+                minimum=disparity_range_hr_px[0],
+                maximum=disparity_range_hr_px[1],
+            ),
+            label=(
+                "Bilinear FFS "
+                f"[{disparity_range_hr_px[0]:g},{disparity_range_hr_px[1]:g}] px"
+            ),
+            colorbar_range=disparity_range_hr_px,
+        ),
+        _temporal_flicker_tile(
+            scalar_to_rgb_uint8(
+                t3_disparity_hr_px,
+                minimum=disparity_range_hr_px[0],
+                maximum=disparity_range_hr_px[1],
+            ),
+            label=(
+                "T3 (no VGGT prior) "
+                f"[{disparity_range_hr_px[0]:g},{disparity_range_hr_px[1]:g}] px"
+            ),
+            colorbar_range=disparity_range_hr_px,
+        ),
+        _temporal_flicker_tile(
+            scalar_to_rgb_uint8(
+                t3_vggt_disparity_hr_px,
+                minimum=disparity_range_hr_px[0],
+                maximum=disparity_range_hr_px[1],
+            ),
+            label=(
+                "T3 + VGGT "
+                f"[{disparity_range_hr_px[0]:g},{disparity_range_hr_px[1]:g}] px"
+            ),
+            colorbar_range=disparity_range_hr_px,
+        ),
+        _temporal_flicker_tile(
+            scalar_to_rgb_uint8(
+                error,
+                valid_mask=target_trusted_mask,
+                minimum=error_range_hr_px[0],
+                maximum=error_range_hr_px[1],
+            ),
+            label=(
+                "|T3 + VGGT - pseudo-GT| "
+                f"[{error_range_hr_px[0]:g},{error_range_hr_px[1]:g}] px"
+            ),
+            colorbar_range=error_range_hr_px,
+        ),
+        _temporal_flicker_tile(
+            scalar_to_rgb_uint8(
+                uncertainty_variance,
+                minimum=uncertainty_range[0],
+                maximum=uncertainty_range[1],
+            ),
+            label=(
+                "Uncertainty variance "
+                f"[{uncertainty_range[0]:g},{uncertainty_range[1]:g}]"
+            ),
+            colorbar_range=uncertainty_range,
+        ),
+    )
+    height, width, _ = panels[0].shape
+    if any(panel.shape != (height, width, 3) for panel in panels):
+        raise ValueError("temporal flicker panels must have matching dimensions")
+    frame = np.concatenate(
+        (np.concatenate(panels[:3], axis=1), np.concatenate(panels[3:], axis=1)),
+        axis=0,
+    )
+    # yuv420p encoders require even frame dimensions. Padding is visual-only
+    # and occurs only after all metric/model tensors have been released.
+    pad_height = frame.shape[0] % 2
+    pad_width = frame.shape[1] % 2
+    if pad_height or pad_width:
+        frame = np.pad(
+            frame,
+            ((0, pad_height), (0, pad_width), (0, 0)),
+            mode="constant",
+        )
+    return frame
+
+
+@dataclass(slots=True)
+class _TemporalFlickerSequenceState:
+    writer: Any
+    temporary_path: Path
+    output_path: Path
+    last_frame_id: int
+    last_timestamp: float
+    frame_count: int = 0
+    published: bool = False
+
+
+class TemporalFlickerVideoCollector:
+    """Streaming, opt-in MP4 writer for causal T3 visualization only.
+
+    The collector stores only writer handles and small scalar bookkeeping. Each
+    frame is a transient CPU uint8 array passed immediately to FFmpeg; it never
+    retains model outputs, GPU tensors, or a sequence of float frames.
+    """
+
+    def __init__(
+        self,
+        root: Path,
+        *,
+        enabled: bool,
+        fps: int,
+        disparity_range_hr_px: tuple[float, float],
+        error_range_hr_px: tuple[float, float],
+        uncertainty_range: tuple[float, float],
+    ) -> None:
+        self.root = root
+        self.enabled = enabled
+        self.fps = fps
+        self.disparity_range_hr_px = disparity_range_hr_px
+        self.error_range_hr_px = error_range_hr_px
+        self.uncertainty_range = uncertainty_range
+        self._states: dict[str, _TemporalFlickerSequenceState] = {}
+        self._not_available_reason: str | None = None
+
+    @staticmethod
+    def _file_stem(sequence_id: str) -> str:
+        stem = re.sub(r"[^A-Za-z0-9_.-]+", "_", sequence_id).strip("._")
+        if not stem:
+            raise ValueError("temporal flicker sequence_id has no safe filename stem")
+        return stem
+
+    def _abort(self, reason: str) -> None:
+        if self._not_available_reason is not None:
+            return
+        self._not_available_reason = reason
+        for state in self._states.values():
+            try:
+                state.writer.close()
+            except Exception:
+                pass
+            state.temporary_path.unlink(missing_ok=True)
+            if state.published:
+                state.output_path.unlink(missing_ok=True)
+        self._states.clear()
+
+    def append(
+        self,
+        *,
+        sequence_id: str,
+        frame_id: int,
+        timestamp: float,
+        rgb_hr: Tensor,
+        bilinear_disparity_hr_px: Tensor,
+        t3_disparity_hr_px: Tensor,
+        t3_vggt_disparity_hr_px: Tensor,
+        target_disparity_hr_px: Tensor,
+        target_trusted_mask: Tensor,
+        uncertainty_variance: Tensor,
+    ) -> None:
+        """Encode one immediate CPU uint8 panel; enforce sequence time order."""
+
+        if not self.enabled or self._not_available_reason is not None:
+            return
+        state = self._states.get(sequence_id)
+        if state is not None and (
+            frame_id <= state.last_frame_id or timestamp <= state.last_timestamp
+        ):
+            raise ValueError(
+                "temporal flicker input must be strictly increasing per sequence: "
+                f"{sequence_id!r} frame={frame_id} timestamp={timestamp}"
+            )
+        try:
+            if state is None:
+                self.root.mkdir(parents=True, exist_ok=True)
+                output_path = self.root / f"{self._file_stem(sequence_id)}.mp4"
+                temporary_path = self.root / (
+                    f".{self._file_stem(sequence_id)}.incomplete.mp4"
+                )
+                writer = _open_temporal_flicker_video_writer(
+                    temporary_path,
+                    fps=self.fps,
+                )
+                state = _TemporalFlickerSequenceState(
+                    writer=writer,
+                    temporary_path=temporary_path,
+                    output_path=output_path,
+                    last_frame_id=frame_id,
+                    last_timestamp=timestamp,
+                )
+                self._states[sequence_id] = state
+            frame = build_temporal_flicker_panel(
+                rgb_hr=rgb_hr,
+                bilinear_disparity_hr_px=bilinear_disparity_hr_px,
+                t3_disparity_hr_px=t3_disparity_hr_px,
+                t3_vggt_disparity_hr_px=t3_vggt_disparity_hr_px,
+                target_disparity_hr_px=target_disparity_hr_px,
+                target_trusted_mask=target_trusted_mask,
+                uncertainty_variance=uncertainty_variance,
+                disparity_range_hr_px=self.disparity_range_hr_px,
+                error_range_hr_px=self.error_range_hr_px,
+                uncertainty_range=self.uncertainty_range,
+            )
+            state.writer.append_data(frame)
+            state.last_frame_id = frame_id
+            state.last_timestamp = timestamp
+            state.frame_count += 1
+        except _TemporalFlickerVideoUnavailable as exc:
+            self._abort(str(exc))
+        except Exception as exc:
+            self._abort(f"MP4 encoding failed: {type(exc).__name__}: {exc}")
+
+    def finalize(self) -> dict[str, Any]:
+        """Close/atomically publish MP4s and return explicit non-metric status."""
+
+        common = {
+            "enabled": self.enabled,
+            "metric_participation": "NONE",
+            "disparity_range_hr_px": list(self.disparity_range_hr_px),
+            "error_range_hr_px": list(self.error_range_hr_px),
+            "uncertainty_variance_range": list(self.uncertainty_range),
+            "fps": self.fps,
+        }
+        if not self.enabled:
+            return common | {"status": "DISABLED", "videos": []}
+        if self._not_available_reason is not None:
+            return common | {
+                "status": "NOT_AVAILABLE",
+                "reason": self._not_available_reason,
+                "videos": [],
+            }
+        videos: list[dict[str, Any]] = []
+        try:
+            for sequence_id, state in self._states.items():
+                state.writer.close()
+                os.replace(state.temporary_path, state.output_path)
+                state.published = True
+                videos.append(
+                    {
+                        "sequence_id": sequence_id,
+                        "path": str(state.output_path),
+                        "frame_count": state.frame_count,
+                    }
+                )
+        except Exception as exc:
+            self._abort(f"MP4 finalization failed: {type(exc).__name__}: {exc}")
+            return common | {
+                "status": "NOT_AVAILABLE",
+                "reason": self._not_available_reason,
+                "videos": [],
+            }
+        return common | {"status": "COMPLETE", "videos": videos}
 
 
 def _save_visualization(
@@ -1728,6 +2130,25 @@ def run(args: argparse.Namespace) -> int:
     visualization_limit = min(int(config.eval.visualization_samples), sample_count)
     visualized = 0
     visualization_records: list[dict[str, Any]] = []
+    temporal_flicker_collector: TemporalFlickerVideoCollector | None = None
+    if config.eval.temporal_flicker_video:
+        temporal_flicker_collector = TemporalFlickerVideoCollector(
+            output_dir / "temporal_flicker_videos",
+            enabled=True,
+            fps=int(config.eval.temporal_flicker_video_fps),
+            disparity_range_hr_px=_fixed_display_range(
+                config.eval.temporal_flicker_disparity_range_hr_px,
+                "eval.temporal_flicker_disparity_range_hr_px",
+            ),
+            error_range_hr_px=_fixed_display_range(
+                config.eval.temporal_flicker_error_range_hr_px,
+                "eval.temporal_flicker_error_range_hr_px",
+            ),
+            uncertainty_range=_fixed_display_range(
+                config.eval.temporal_flicker_uncertainty_range,
+                "eval.temporal_flicker_uncertainty_range",
+            ),
+        )
     endpoint_pose_valid_count = 0
     endpoint_static_prior_valid_count = 0
     t3_vggt_sign_health = (
@@ -1968,6 +2389,26 @@ def run(args: argparse.Namespace) -> int:
                     )
                 accumulators[method_name].update(sample_metrics)
 
+            if stage == "temporal" and temporal_flicker_collector is not None:
+                assert temporal_visualization is not None
+                for item_index in range(target.shape[0]):
+                    temporal_flicker_collector.append(
+                        sequence_id=str(batch["sequence_id"][item_index]),
+                        frame_id=int(batch["frame_ids"][item_index, 2].item()),
+                        timestamp=float(batch["timestamps"][item_index, 2].item()),
+                        rgb_hr=endpoint_rgb[item_index],
+                        bilinear_disparity_hr_px=baseline[item_index],
+                        t3_disparity_hr_px=raw_predictions["T3"][item_index],
+                        t3_vggt_disparity_hr_px=(
+                            raw_predictions["T3_VGGT"][item_index]
+                        ),
+                        target_disparity_hr_px=target[item_index],
+                        target_trusted_mask=target_trusted[item_index],
+                        uncertainty_variance=(
+                            temporal_visualization.vggt_on.uncertainty[item_index]
+                        ),
+                    )
+
             batch_size = target.shape[0]
             for item_index in range(batch_size):
                 if visualized >= visualization_limit:
@@ -2104,6 +2545,23 @@ def run(args: argparse.Namespace) -> int:
                 )
                 visualized += 1
 
+    temporal_flicker_report = (
+        temporal_flicker_collector.finalize()
+        if temporal_flicker_collector is not None
+        else None
+    )
+    if temporal_flicker_report is not None:
+        print(
+            json.dumps(
+                {
+                    "temporal_flicker_video": temporal_flicker_report["status"],
+                    "reason": temporal_flicker_report.get("reason"),
+                    "videos": len(temporal_flicker_report["videos"]),
+                },
+                sort_keys=True,
+                allow_nan=False,
+            )
+        )
     elapsed_seconds = time.perf_counter() - started
     full_selection = start_index == 0 and sample_count == len(dataset)
     checkpoint_completion = checkpoint_training_completion(
@@ -2277,6 +2735,11 @@ def run(args: argparse.Namespace) -> int:
         "selection_start": start_index,
         "visualizations_written": visualized,
         "visualization_selection": visualization_records,
+        **(
+            {}
+            if temporal_flicker_report is None
+            else {"temporal_flicker_video": temporal_flicker_report}
+        ),
         "elapsed_seconds": elapsed_seconds,
         "device": str(device),
         "crop_mode": str(config.eval.crop_mode),

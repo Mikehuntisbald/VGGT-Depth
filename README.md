@@ -84,6 +84,19 @@ never invents normals/correspondences or point-to-plane scores, and writes only
 finite pixels with strictly positive disparity. Optional finite confidence,
 minimum-depth, and maximum-depth masks make visualization filtering explicit.
 
+## Opt-in temporal flicker video
+
+For a causal T=3 `eval.py` run only, `--temporal-flicker-video` streams one
+CPU uint8 MP4 panel per source sequence under `temporal_flicker_videos/`. Each
+frame contains RGB, bilinear FFS, T3 without the VGGT prior, T3+VGGT, trusted
+pseudo-GT absolute error, and uncertainty variance. Disparity/error/uncertainty
+scales are fixed by the temporal evaluation config, so color is comparable over
+time; this is a visualization artifact only and never contributes to metrics or
+point-to-plane reporting. The default is disabled. It needs the optional
+`.[video]` extras (imageio plus FFmpeg); if unavailable, an explicitly enabled
+run writes `temporal_flicker_video.status=NOT_AVAILABLE` with the reason in
+`metrics.json` and does not silently write partial MP4s.
+
 ## Start here
 
 Read [`CODEX_TASK.md`](CODEX_TASK.md), then follow [`RUNBOOK.md`](RUNBOOK.md).

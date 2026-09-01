@@ -18,3 +18,11 @@ train:
   init_from_stage: spatial
   compile_model: false
 
+# Non-metric, opt-in evaluation artifact.  The evaluator streams CPU uint8
+# panels to imageio/FFmpeg; missing encoder support is reported as NOT_AVAILABLE.
+eval:
+  temporal_flicker_video: false
+  temporal_flicker_video_fps: 5
+  temporal_flicker_disparity_range_hr_px: [0.0, 384.0]
+  temporal_flicker_error_range_hr_px: [0.0, 20.0]
+  temporal_flicker_uncertainty_range: [0.0, 10.0]

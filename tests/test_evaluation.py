@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 from types import SimpleNamespace
 
+import numpy as np
 import pytest
 import torch
 from torch import nn
@@ -530,6 +531,133 @@ def test_visualization_writes_exact_finite_final_negative_mask(
     assert "element vertex 1" in point_cloud.read_text(encoding="ascii")
 
 
+def _temporal_flicker_inputs() -> dict[str, torch.Tensor]:
+    rgb = torch.tensor(
+        [
+            [[0.0, 0.25, 0.5, 0.75], [1.0, 0.75, 0.5, 0.25]],
+            [[0.0, 0.25, 0.5, 0.75], [1.0, 0.75, 0.5, 0.25]],
+            [[0.0, 0.25, 0.5, 0.75], [1.0, 0.75, 0.5, 0.25]],
+        ]
+    )
+    return {
+        "rgb_hr": rgb,
+        "bilinear_disparity_hr_px": torch.ones((1, 2, 4)) * 4.0,
+        "t3_disparity_hr_px": torch.ones((1, 2, 4)) * 5.0,
+        "t3_vggt_disparity_hr_px": torch.tensor(
+            [[[6.0, 6.0, float("nan"), 6.0], [6.0, 6.0, 6.0, 6.0]]]
+        ),
+        "target_disparity_hr_px": torch.ones((1, 2, 4)) * 5.0,
+        "target_trusted_mask": torch.tensor(
+            [[[True, True, False, True], [True, True, True, True]]]
+        ),
+        "uncertainty_variance": torch.ones((1, 2, 4)) * 0.5,
+    }
+
+
+def test_temporal_flicker_panel_is_cpu_uint8_six_panel_fixed_scale() -> None:
+    panel = eval_cli.build_temporal_flicker_panel(
+        **_temporal_flicker_inputs(),
+        disparity_range_hr_px=(0.0, 8.0),
+        error_range_hr_px=(0.0, 4.0),
+        uncertainty_range=(0.0, 1.0),
+    )
+    # 2 rows x (H + 24px label) and 3 columns x W, with even-size padding.
+    assert panel.shape == (52, 12, 3)
+    assert panel.dtype == np.uint8
+    # The untrusted/non-finite error pixel is fail-closed to black in its tile.
+    assert panel[50, 6].tolist() == [0, 0, 0]
+
+
+def test_temporal_flicker_collector_streams_frames_and_publishes_atomically(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    frames: list[np.ndarray] = []
+
+    class FakeWriter:
+        def __init__(self, path: Path) -> None:
+            self.path = path
+            self.closed = False
+
+        def append_data(self, frame: np.ndarray) -> None:
+            assert frame.dtype == np.uint8
+            frames.append(frame)
+            self.path.write_bytes(b"fake-mp4")
+
+        def close(self) -> None:
+            self.closed = True
+
+    def open_writer(path: Path, *, fps: int) -> FakeWriter:
+        assert fps == 7
+        return FakeWriter(path)
+
+    monkeypatch.setattr(eval_cli, "_open_temporal_flicker_video_writer", open_writer)
+    collector = eval_cli.TemporalFlickerVideoCollector(
+        tmp_path / "videos",
+        enabled=True,
+        fps=7,
+        disparity_range_hr_px=(0.0, 8.0),
+        error_range_hr_px=(0.0, 4.0),
+        uncertainty_range=(0.0, 1.0),
+    )
+    inputs = _temporal_flicker_inputs()
+    collector.append(sequence_id="seq/one", frame_id=4, timestamp=0.8, **inputs)
+    collector.append(sequence_id="seq/one", frame_id=5, timestamp=1.0, **inputs)
+    report = collector.finalize()
+    assert len(frames) == 2
+    assert report["status"] == "COMPLETE"
+    assert report["metric_participation"] == "NONE"
+    assert report["videos"] == [
+        {
+            "sequence_id": "seq/one",
+            "path": str(tmp_path / "videos/seq_one.mp4"),
+            "frame_count": 2,
+        }
+    ]
+    assert (tmp_path / "videos/seq_one.mp4").read_bytes() == b"fake-mp4"
+    assert not (tmp_path / "videos/.seq_one.incomplete.mp4").exists()
+
+
+def test_temporal_flicker_collector_reports_missing_encoder_without_partial_mp4(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def unavailable(path: Path, *, fps: int) -> object:
+        del path, fps
+        raise eval_cli._TemporalFlickerVideoUnavailable("FFmpeg unavailable")
+
+    monkeypatch.setattr(eval_cli, "_open_temporal_flicker_video_writer", unavailable)
+    collector = eval_cli.TemporalFlickerVideoCollector(
+        tmp_path / "videos",
+        enabled=True,
+        fps=5,
+        disparity_range_hr_px=(0.0, 8.0),
+        error_range_hr_px=(0.0, 4.0),
+        uncertainty_range=(0.0, 1.0),
+    )
+    collector.append(sequence_id="seq", frame_id=4, timestamp=0.8, **_temporal_flicker_inputs())
+    report = collector.finalize()
+    assert report["status"] == "NOT_AVAILABLE"
+    assert report["reason"] == "FFmpeg unavailable"
+    assert report["videos"] == []
+    assert list((tmp_path / "videos").glob("*.mp4")) == []
+
+
+def test_temporal_flicker_config_is_opt_in_and_rejects_spatial_evaluation() -> None:
+    temporal = eval_cli.resolve_evaluation_config(
+        Path(__file__).parents[1] / "configs/temporal_x2.yaml"
+    )
+    assert temporal.eval.temporal_flicker_video is False
+    assert eval_cli.validate_evaluation_config(temporal) == "temporal"
+
+    spatial = eval_cli.resolve_evaluation_config(
+        Path(__file__).parents[1] / "configs/mvp_x2.yaml"
+    )
+    OmegaConf.update(spatial, "eval.temporal_flicker_video", True)
+    with pytest.raises(ValueError, match="requires causal T=3"):
+        eval_cli.validate_evaluation_config(spatial)
+
+
 def _formal_coverage_fixture(tmp_path: Path) -> SimpleNamespace:
     records = [
         ManifestRecord(
@@ -960,3 +1088,4 @@ def test_stage_a_cli_writes_bilinear_and_t1_csv_rows(tmp_path: Path) -> None:
     assert report["claims"]["final_acceptance_eligible"] is False
     assert report["claims"]["acceptance_eligible"] is False
     assert report["checkpoint_training_completion"]["actual_step"] == 1
+    assert "temporal_flicker_video" not in report

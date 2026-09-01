@@ -17,6 +17,7 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest>=8"]
+video = ["imageio>=2.34", "imageio-ffmpeg>=0.5"]
 
 [tool.setuptools]
 package-dir = {"" = "src"}
@@ -28,4 +29,3 @@ where = ["src"]
 addopts = "-ra"
 testpaths = ["tests"]
 pythonpath = [".", "src"]
-
