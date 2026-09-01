@@ -1,5 +1,5 @@
 {
-  "schema_version": 3,
+  "schema_version": 4,
   "component": "stage-c-audited-geometry-and-runtime-integration-smoke",
   "status": "INCOMPLETE_BASE_INTEGRATION_PASS",
   "claim_boundary": {
@@ -7,16 +7,16 @@
     "formal_holdout": false,
     "paper_accuracy": false,
     "paper_ground_truth": false,
-    "reason": "The base is the formal train-lineage Stage-B step-7500 checkpoint, not the completed 15000-step checkpoint. The CPU artifact is a bounded fresh-step plus exact-resume integration smoke and is explicitly ineligible for formal training; the CUDA artifact is a no-update BF16 dry-run."
+    "reason": "The latest strict producer uses the formal train-lineage Stage-B step-7000 checkpoint, while earlier integration artifacts use step 7500; neither base is the completed 15000-step checkpoint. CPU fresh/resume, CUDA dry-run, and CUDA one-step artifacts are bounded integration evidence and explicitly ineligible for formal acceptance."
   },
   "source": {
-    "git_hash": "00f802ba454c4aa193d4423bc583bc6916ba2505",
-    "runtime_source_bundle_sha256": "fc41f61e83353c67c9771d8a3112174830d852e56e3d361457050cbbdcd34cc5",
-    "runtime_source_file_count": 51,
+    "git_hash": "91d66c66261092889243bc849aa407b44bccd478",
+    "runtime_source_bundle_sha256": "7583b650570c915701104d9f08dee0b0184f7c6ad2a2dfb6f955380aaca20545",
+    "runtime_source_file_count": 52,
     "runtime_relevant_paths_clean": true,
-    "base_checkpoint": "outputs/ffs_omega_tsr_x2/stage_b/step7500.pt",
-    "base_checkpoint_sha256": "1eee0863bf7e96efb22551d389466d499f219404fad12554fd315d5674fb26a5",
-    "base_checkpoint_step": 7500,
+    "base_checkpoint": "/tmp/ffs_omega_tsr_stage_b_step7000.pt",
+    "base_checkpoint_sha256": "da502de3f0d2b39982e10005a217f49f78bfb8b51ea96e6117069ce6dc2dbd29",
+    "base_checkpoint_step": 7000,
     "base_parameter_count": 1619882,
     "base_parameters_frozen": true,
     "trainable_refiner_parameter_count": 69905
@@ -44,6 +44,9 @@
     "endpoint_right_source_digest_sha256": "ae283814edd4e51f3c05187dd2694a4f6cf7bf7e7df09db3fe4b7f1055fd4384"
   },
   "cpu_resume_contract_smoke": {
+    "source_git_hash": "00f802ba454c4aa193d4423bc583bc6916ba2505",
+    "runtime_source_bundle_sha256": "fc41f61e83353c67c9771d8a3112174830d852e56e3d361457050cbbdcd34cc5",
+    "base_checkpoint_step": 7500,
     "device": "cpu",
     "optimizer_steps": 2,
     "segments": [
@@ -85,6 +88,9 @@
     }
   },
   "cuda_bf16_dry_run": {
+    "source_git_hash": "00f802ba454c4aa193d4423bc583bc6916ba2505",
+    "runtime_source_bundle_sha256": "fc41f61e83353c67c9771d8a3112174830d852e56e3d361457050cbbdcd34cc5",
+    "base_checkpoint_step": 7500,
     "device": "cuda:0",
     "device_name": "NVIDIA GeForce RTX 5090",
     "device_capability": [12, 0],
@@ -112,6 +118,7 @@
     "micro_batch_size": 2,
     "grad_accumulation": 4,
     "effective_batch_size": 8,
+    "base_checkpoint_step": 7500,
     "optimizer_steps": 1,
     "elapsed_seconds": 6.351349699999901,
     "valid_supervision_pixels": 621268,
@@ -126,7 +133,72 @@
     "memory_probe_sha256": "b080c86ccb799fe4537dbf0684621d44d78529c91482f22afb3a4af0b593a409",
     "formal_training_complete": false,
     "base_complete": false,
-    "determinism_warning": "grid_sampler_2d_backward_cuda has no deterministic implementation under the current warn-only deterministic policy; formal reproducibility is state-exact but CUDA bit-exactness is not yet claimed"
+    "historical_determinism_warning": "This pre-fix grid_sample checkpoint emitted a nondeterministic-backward warning and is superseded by the deterministic same-row sampler evidence below."
+  },
+  "deterministic_sampler_validation": {
+    "source_git_hash": "d106eb28dbd907be345404c1f6e44b5d2964375c",
+    "sampler": "same-row FP32 floor/ceil gather with linear interpolation",
+    "formal_row_contract": "row_scale=1,row_offset=0",
+    "grid_sample_compatibility_path_formal": false,
+    "strict_cuda_backward_warning_count": 0,
+    "full_config": {
+      "crop_hr_hw": [384, 768],
+      "micro_batch_size": 2,
+      "grad_accumulation": 4,
+      "independent_runs": 2,
+      "loss_total_both_runs": 0.11345264315605164,
+      "valid_supervision_pixels_both_runs": 621300,
+      "gradient_norm_both_runs": 0.9808165431,
+      "model_optimizer_scheduler_bit_exact": true,
+      "peak_cuda_allocated_gib": 6.41,
+      "peak_cuda_reserved_gib_range": [7.35, 7.72]
+    },
+    "first_checkpoint": "/tmp/ffs_omega_tsr_stage_c_deterministic_cuda_smoke_v1/latest.pt",
+    "first_checkpoint_sha256": "f178ac05f3d9e96ec49720b8119e188103e4f0a73b9cb2923be31377b87a9250",
+    "second_checkpoint": "/tmp/ffs_omega_tsr_stage_c_deterministic_cuda_smoke_v2/latest.pt",
+    "second_checkpoint_sha256": "9896803ccf5bbf81fe74a3758313500997a3c6234871b964f56b8b068f9c1e4b"
+  },
+  "strict_determinism_contract_smoke": {
+    "source_git_hash": "91d66c66261092889243bc849aa407b44bccd478",
+    "runtime_source_bundle_sha256": "7583b650570c915701104d9f08dee0b0184f7c6ad2a2dfb6f955380aaca20545",
+    "runtime_source_file_count": 52,
+    "runtime": {
+      "device": "cuda:0",
+      "device_name": "NVIDIA GeForce RTX 5090",
+      "device_capability": [12, 0],
+      "torch_version": "2.10.0+cu128",
+      "cuda_version": "12.8",
+      "native_bf16": true,
+      "deterministic_algorithms_enabled": true,
+      "deterministic_algorithms_warn_only": false,
+      "cublas_workspace_config": ":4096:8",
+      "cudnn_deterministic": true,
+      "cudnn_benchmark": false,
+      "strict_determinism_eligible": true,
+      "formal_cuda_bf16_eligible": true
+    },
+    "optimizer_steps": 1,
+    "crop_hr_hw": [32, 64],
+    "micro_batch_size": 1,
+    "grad_accumulation": 1,
+    "loss_total": 0.0040902248583734035,
+    "valid_supervision_pixels": 1219,
+    "gradient_norm_pre_clip": 9.23435,
+    "base_checkpoint_step": 7000,
+    "base_complete": false,
+    "formal_training_complete": false,
+    "checkpoint": "/tmp/ffs_omega_tsr_stage_c_strict_contract_step1_91d66c6/latest.pt",
+    "checkpoint_sha256": "8853060f2930f0f3ff02946e41d722a127a390b6ca7004a52b6d5f2f518dd162",
+    "training_log_sha256": "117265086449928fa9e0fe44fe9584d54e2c8cee10c861063f5c818eed90db4b",
+    "strict_limited_evaluation": {
+      "status": "LIMITED_SMOKE_ONLY",
+      "acceptance_eligible": false,
+      "evaluation_runtime_strict_eligible": true,
+      "metrics_json": "/tmp/ffs_omega_tsr_stage_c_strict_contract_eval1_91d66c6/metrics.json",
+      "metrics_json_sha256": "8f11ba7255f50d10a8a2c762b8fce380f93a3741fcba0b5ecea5baa691f3c063",
+      "metrics_csv_sha256": "c467ec6674cf16e1d378d1e998293d6b6d5774c081b83f4bcded44feb227b969"
+    },
+    "test_suite": "270 passed"
   },
   "prior_determinism_check": {
     "git_hash": "f73ea6b91e11d199aa3433de0ab08ffc0972845d",

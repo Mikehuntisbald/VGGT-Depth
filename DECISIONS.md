@@ -261,8 +261,8 @@
 - Decision: archive the interrupted log, truncate the formal log to the checkpointed step, preserve the checkpoint by hash, and resume with the original training commit in a detached worktree. Treat post-checkpoint log records as diagnostic evidence only until their trajectory is recomputed.
 - Rationale: appending directly to an ahead-of-checkpoint or truncated log creates duplicate/corrupt records and falsely implies optimizer state that was never durably saved.
 - Consequence: steps 7,001–7,144 were recomputed and matched all recorded LR, gradient and loss values exactly; only per-process elapsed time resets. The formal log remains one continuous optimizer-step sequence.
-- Revisit trigger: the trainer gains a journaled log/checkpoint transaction or a tested automatic log-reconciliation command.
-- Evidence: `reports/m4/stage_b_resume_step7000.json`.
+- Revisit trigger: Stage-B itself gains a journaled log/checkpoint transaction; the separate tested reconciliation tool now covers stopped-run recovery.
+- Evidence: `reports/m4/stage_b_resume_step7000.json`, `tools/reconcile_training_log.py`, `tests/test_reconcile_training_log.py`.
 
 ## D-025 — Preserve the formal Stage-B trajectory despite the intermediate sign regression
 
@@ -274,3 +274,14 @@
 - Consequence: the clamp row has zero negative outputs but retains 5.1186% honest zero/invalid pixels at step 7,500; it is a safety layer, not a hole-recovery claim. Any corrective fine-tune is reported separately from the formal Stage-B run.
 - Revisit trigger: the final 15,000-step sign-stratified audit or an independently controlled positivity ablation.
 - Evidence: `reports/m4/stage_b_negative_diagnostic_step7500.json`, `reports/m4/stage_b_eval_step7500.json`.
+
+## D-026 — Stage-C formal sampling and runtime are strictly deterministic
+
+- Date: 2026-09-01
+- Status: accepted
+- Context: the original local matcher used CUDA `grid_sample` backward, which PyTorch explicitly reports as lacking a deterministic implementation. Warning-only determinism would make a full-state resume operationally exact but would not guarantee the same numerical trajectory.
+- Decision: the audited same-row formal path uses FP32 floor/ceil gather plus linear interpolation and rejects any runtime row scale/offset other than exactly 1/0. The generalized vertical-affine `grid_sample` path remains diagnostic-only. Stage-C producer/evaluator require deterministic algorithms with `warn_only=false`, cuBLAS workspace `:4096:8`, deterministic cuDNN and benchmark disabled; all settings are checkpointed and revalidated.
+- Rationale: the saved pixel audit already establishes same-row geometry, so a deterministic 1D sampler is both the minimal geometry and the reproducible implementation. Unsupported nondeterministic kernels must fail rather than warn during formal training.
+- Consequence: two independent full-config CUDA optimizer steps are bit-identical with zero warnings. Peak reserved memory rises to about 7.72 GiB but remains safe on the RTX 5090. Legacy/warn-only Stage-C checkpoints are evaluation-ineligible, and the runtime source bundle now covers 52 files including `eval_epipolar.py`.
+- Revisit trigger: PyTorch provides and verifies a deterministic generalized sampler, or the stored-pixel geometry contract changes away from same-row rectification.
+- Evidence: `reports/m6/stage_c_geometry_smoke.json`, `tests/test_epipolar_refiner.py`, `tests/test_epipolar_train.py`, `tests/test_epipolar_evaluation.py`.

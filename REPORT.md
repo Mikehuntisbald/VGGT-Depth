@@ -535,26 +535,32 @@ exact next data cursor; it correctly published neither final checkpoint nor
 run summary and records `formal_training_complete=false`. The strict Stage-C
 evaluator loaded that checkpoint and labeled its one-window held-out run
 `LIMITED_SMOKE_ONLY`. An independent RTX 5090 CUDA dry-run binds the same
-51-file source bundle, capability 12.0, CUDA 12.8 and native BF16 autocast; it
-makes no optimizer update. A full 384×768, micro-2/accumulation-4 CUDA optimizer
-step also completes with finite loss 0.116188 and pre-clip gradient norm 1.636,
-using 2.937/4.133 GB peak allocated/reserved memory for this process. It emits
-PyTorch's documented warning that CUDA `grid_sample` backward is not
-deterministic under the current warn-only policy, so state-exact resume is
-proven but CUDA bit-exact trajectory reproduction is not claimed. All remain
-acceptance-ineligible because the base is incomplete. Earlier two-run CPU
-integration still establishes bit-exact refiner determinism. Evidence:
+source bundle, capability 12.0, CUDA 12.8 and native BF16 autocast; it makes no
+optimizer update. A first full-config optimizer probe exposed PyTorch's
+nondeterministic CUDA `grid_sample` backward and was rejected as the formal
+path. The same-row sampler now uses mathematically equivalent FP32 floor/ceil
+gather interpolation, while the wrapper rejects nonzero row mappings. Two
+independent full 384×768, micro-2/accumulation-4 CUDA runs then produced the
+same loss 0.113453, gradient norm 0.980817, and bit-identical model/optimizer/
+scheduler tensors with zero deterministic warnings; peak allocation/reservation
+is 6.41/7.72 GiB. The current 52-file producer/evaluator receipt additionally
+requires `warn_only=false`, cuBLAS workspace `:4096:8`, deterministic cuDNN and
+benchmark disabled. A real strict CUDA optimizer checkpoint and strict limited
+evaluation pass those runtime checks but remain acceptance-ineligible because
+the base and Stage C are incomplete. Supervised-domain non-finite refined
+disparity/correction/confidence/correlation now fail immediately instead of
+being silently removed by a finite mask. Evidence:
 `reports/m6/stage_c_geometry_smoke.json`.
 
 ## Tests
 
 ```text
 conda run -n env-tsr pytest -q
-........................................................................ [ 28%]
-........................................................................ [ 57%]
-........................................................................ [ 86%]
-.................................                                        [100%]
-249 passed
+........................................................................ [ 26%]
+........................................................................ [ 53%]
+........................................................................ [ 80%]
+......................................................                   [100%]
+270 passed
 ```
 
 The current suite includes receipt/cache identity, manifest/crop/intrinsics,
@@ -568,7 +574,8 @@ learning-rate schedule auditing. Stage-C coverage now includes runtime/device
 eligibility, right-image SHA lineage, same-domain refined/base metrics,
 periodic checkpoint publication, exact optimizer/RNG/data-cursor resume,
 crash-tail reconciliation, and the rule that bounded smoke runs cannot publish
-a formal completion receipt.
+a formal completion receipt. It also tests deterministic same-row sampling,
+strict CUDA runtime receipts, and supervised-domain non-finite fail-fast.
 
 ## Current open work
 

@@ -424,11 +424,15 @@ and evaluation fail closed if this receipt changes or is missing.
 ## 14. Train and evaluate Stage C (local HR epipolar refinement)
 
 Use a committed, fixed worktree for the whole run. The producer records a
-51-file runtime bundle and refuses to publish completion if its Git/source
-identity changes mid-run. Formal Stage C is 5,000 optimizer steps, random
-384×768 HR crops, AdamW, the 2×4 batch schedule, and native BF16 on the RTX
-5090. It also refuses to start an unbounded formal run unless the Stage-B base
-is exactly 15,000/15,000 steps:
+52-file runtime bundle (including the strict evaluator) and refuses to publish
+completion if its Git/source identity changes mid-run. Formal Stage C is 5,000
+optimizer steps, random 384×768 HR crops, AdamW, the 2×4 batch schedule, and
+native BF16 on the RTX
+5090. Its same-row matcher uses deterministic FP32 floor/ceil gather rather
+than CUDA `grid_sample` backward. Training and evaluation require deterministic
+algorithms with `warn_only=false`, `CUBLAS_WORKSPACE_CONFIG=:4096:8`,
+deterministic cuDNN, and cuDNN benchmark disabled. It also refuses to start an
+unbounded formal run unless the Stage-B base is exactly 15,000/15,000 steps:
 
 ```bash
 conda run --no-capture-output -n env-tsr python train_epipolar.py \
