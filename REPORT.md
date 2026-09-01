@@ -464,6 +464,22 @@ hook run differs from the formal evaluator by three near-zero BF16 boundary
 pixels and explicitly has no persisted script/source hash; claim boundaries
 remain in `reports/m4/stage_b_negative_diagnostic_step7500.json`.
 
+At step 10,000, all 238 held-out windows remain coverage-valid but the
+checkpoint is explicitly `final_acceptance_eligible=false`. Paired TEPE now
+falls 23.4307% from T1 (0.363206 px) to T3 (0.278104 px). VGGT-on improves
+low-confidence EPE by 12.0683%, invalid-region completeness by 485.01%, and
+trusted-region EPE by 5.4580% versus bilinear; the prior improves T3 overall
+EPE by 16.4269%. In contrast, history-only T3 low-confidence EPE is 11.0857%
+worse than bilinear, so the quality-gated static prior has become important to
+the spatial result. Raw VGGT-on negative/invalid rate falls from 5.1186% at
+7,500 to 2.7824%, but still misses the 0.5% output-health target. The new
+reproducible sign-health evaluator confirms zero non-finite values at every
+tap: source mix 1.7651% negative, post-LR residual 9.7137%, post-convex
+9.8765%, post-HR residual 7.2138%, and post-anchor final 2.7824%. Thus the
+original LR-residual diagnosis still holds while the HR residual/anchor have
+recovered 1,639,724 final negative pixels since 7,500. Evidence:
+`reports/m4/stage_b_eval_step10000.json`.
+
 The training process was later found externally terminated after its last
 atomic checkpoint at step 7,000. The interrupted log contained complete but
 uncheckpointed records through step 7,144 and a partial JSON record for step
