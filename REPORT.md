@@ -526,7 +526,8 @@ learning-rate schedule auditing.
 | Blocker | Required resolution |
 |---|---|
 | Stage-B training | the formal causal T=3 run is active on the declared 15,000-step schedule; completion receipt and final audit remain pending |
-| Formal temporal evidence | no T3-vs-T1 TEPE acceptance claim exists until Stage-B training/evaluation completes |
+| Final temporal evidence | intermediate full-holdout checkpoints pass the TEPE threshold, but the final T3-vs-T1 acceptance claim waits for completed Stage-B training/evaluation |
+| Formal Stage C | the producer/evaluator and geometry/runtime contracts are implemented; formal training waits for the completed 15,000-step Stage-B checkpoint |
 | Independent accuracy | current Stage-A metrics use same-family FFS pseudo-GT; add real GT or an independent benchmark before paper claims |
 
 ## Claim boundary
@@ -538,5 +539,7 @@ baseline scaling, quality-gated priors/poses, and rejected-record zero safety;
 M3 proves numerical HR z-buffer conventions. The formal Stage-A artifacts prove
 its internal pseudo-GT engineering thresholds and completed-run throughput;
 training smokes prove only execution and provenance plumbing. No current
-artifact proves the Stage-B go/no-go threshold, independent-GT accuracy, point
-cloud accuracy, or paper-level performance.
+artifact proves the *final* Stage-B go/no-go result, independent-GT accuracy,
+point-cloud accuracy, or paper-level performance. The complete step-7,500
+holdout diagnostic crosses the internal temporal/accuracy/completeness gates
+but does not replace the declared 15,000-step completion receipt.

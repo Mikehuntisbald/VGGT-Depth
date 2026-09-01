@@ -55,10 +55,10 @@
 - Revisit trigger: never; schemas may version but meanings stay stable.
 - Evidence: `tools/_m0_status.py`, `reports/m0/`.
 
-## D-006 — FFS M0 checkpoint is provisional
+## D-006 — FFS M0 checkpoint is provisional (resolved by D-014)
 
 - Date: 2026-09-01
-- Status: accepted for interface smoke only
+- Status: resolved historical interface-smoke decision
 - Context: the machine already had a `20-26-39` FFS artifact, but not the final `20-30-48` observation and `23-36-37` teacher pair. Upstream publishes no checksums.
 - Decision: copy the candidate into ignored project checkpoint storage, record source/size/hash, and use it only for a real M0 interface smoke.
 - Rationale: it validates current official code on the 5090 without pretending the final experiment identity exists.
@@ -88,10 +88,10 @@
 - Revisit trigger: upstream publishes a corrected checkpoint or updated notice.
 - Evidence: pinned VGGT-Ω README and `reports/m0/smoke_vggt.json`.
 
-## D-009 — Cache location capacity
+## D-009 — Cache location capacity (resolved by D-015)
 
 - Date: 2026-09-01
-- Status: accepted
+- Status: resolved
 - Context: `/media/haoyi/T9` has only about 90 GiB free while `/home` has about 1.2 TiB free.
 - Decision: do not default a new large cache to T9 without an explicit capacity budget; select `CACHE_ROOT` before M1.
 - Rationale: offline FFS/VGGT caches can be much larger than checkpoints.
@@ -179,7 +179,7 @@
 ## D-017 — Initial TSR capacity
 
 - Date: 2026-09-01
-- Status: accepted for Stage-A smoke
+- Status: accepted for the x2 MVP
 - Context: the specified 96-channel, two-layer ConvGRU architecture naturally totals 1,619,882 trainable parameters, below the broad 8–12M planning estimate and the hard 12M ceiling.
 - Decision: validate the smaller exact architecture first; do not add unused blocks merely to hit a parameter count.
 - Rationale: capacity should be increased only if matched training evidence shows underfitting.

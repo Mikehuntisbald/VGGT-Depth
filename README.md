@@ -15,10 +15,11 @@ offline cache producers and are never optimized with the TSR model.
 
 ## Current status
 
-M0 is **PASS_WITH_FALLBACK**, M1 is **PASS**, and the M2 cache/geometry stage is
-complete as of 2026-09-01 (Asia/Shanghai). M3 geometry is tested and the formal
-M4 Stage-A spatial run has a conditional engineering PASS against pseudo-GT;
-Stage-B temporal training/evaluation is next.
+M0 is **PASS_WITH_FALLBACK**, M1 is **PASS**, M2/M3 geometry is complete, and
+the formal Stage-A spatial run has a conditional pseudo-GT engineering PASS.
+Formal Stage-B is running after a verified exact resume from its last atomic
+checkpoint. Complete held-out intermediate evaluations are trend diagnostics;
+the 15,000-step final checkpoint and audit own the final Stage-B go/no-go.
 
 - Three isolated cu128 environments pass RTX 5090/SM120 FP16 and BF16 CUDA
   checks; both upstream repositories are clean pinned submodules.
@@ -41,9 +42,10 @@ Stage-B temporal training/evaluation is next.
   forward/backward smoke on the RTX 5090. The strict causal T=3 loader and
   trainer also pass a real-cache BF16 optimizer step using HR z-buffer
   transport and HR temporal loss.
-- A separate 69,905-parameter HR local epipolar refiner is implemented and
-  CUDA-tested, but is not enabled until the spatial and temporal stages are
-  evaluated.
+- A separate 69,905-parameter HR local epipolar refiner, audited same-row pixel
+  contract, training entrypoint, and strict held-out evaluator are implemented.
+  CPU one-step and CUDA BF16 dry-run artifacts are integration evidence only;
+  formal Stage-C training waits for the completed Stage-B checkpoint.
 - Formal Stage-A completed 5,000 steps at 3.682 step/s. On all 244 held-out
   frames at full 800×1280 resolution, low-confidence EPE improves 11.996%,
   invalid-region completeness improves 725.3%, and trusted-region EPE improves
@@ -84,7 +86,7 @@ src/losses/          training losses (M4-M6)
 src/metrics/         evaluation metrics (M4-M7)
 tools/               environment and backbone smoke tools
 tests/               executable contracts
-reports/m0..m3/      structured milestone receipts
+reports/m0..m6/      structured milestone receipts
 ```
 
 The GitHub FFS source and VGGT-Ω research materials have non-commercial-use
