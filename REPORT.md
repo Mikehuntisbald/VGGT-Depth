@@ -693,6 +693,7 @@ cross-checks.
 
 | Blocker | Required resolution |
 |---|---|
+| D-025 output-health control | an independent full 15,000-update Stage-B rerun from the same final Stage-A checkpoint is active from frozen commit `7f2bbbc`; its step-500 audit validates the opt-in positivity loss schema, exact LR, finite state, and unchanged data/cache lineage, but no accuracy or output-health result is claimed before its final held-out evaluation |
 | M5 gate recovery | Stage-C improves boundary/Bad-1/EPE but raises raw negative/invalid output to 4.41968% and reduces hole completeness by 23.1346%; any positivity/completeness change requires a new matched run rather than promoting clamp0 |
 | Refined temporal evidence | the frozen Stage-C evaluator does not compute refined TEPE, so no Stage-C temporal-improvement claim is currently available |
 | Independent 3D accuracy | Stage-A/B/C engineering metrics use same-family FFS pseudo-GT and point-to-plane is unavailable; add real GT or an independent benchmark with valid correspondences/normals before paper or 3D-accuracy claims |

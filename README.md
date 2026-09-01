@@ -22,6 +22,9 @@ On the complete held-out pseudo-GT domain, its temporal, low-confidence,
 completeness, and trusted-region gates pass; raw output health remains a fail.
 Formal Stage-C also completed 5,000 steps with a passing training audit, but
 its complete held-out result is **STAGE_C_M5_GATE_FAIL**.
+The separately configured D-025 positivity control is now running as a full
+15,000-update Stage-B rerun from the same final Stage-A checkpoint. Its
+step-500 audit is healthy; it is not a short fine-tune and has no result yet.
 
 - Three isolated cu128 environments pass RTX 5090/SM120 FP16 and BF16 CUDA
   checks; both upstream repositories are clean pinned submodules.
