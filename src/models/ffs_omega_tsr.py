@@ -10,6 +10,7 @@ import torch
 import torch.nn.functional as functional
 from torch import Tensor, nn
 
+from .calibration_conditioner import CalibrationConditionerV3
 from .convex_upsampler import ConvexUpsampler
 from .rgb_encoder import ConvNormAct, RGBPyramidEncoder
 from .source_gating import SourceGatingHead
@@ -145,6 +146,10 @@ class FFSOmegaTSR(nn.Module):
         trusted_ffs_confidence_threshold: float = 0.8,
         temporal_history_top_k: int | None = None,
         temporal_history_feature_channels: int = 32,
+        calibration_conditioning_v3: bool = False,
+        use_rays: bool = True,
+        use_stereo_pose: bool = True,
+        use_temporal_pose: bool = True,
     ) -> None:
         super().__init__()
         if rgb_channels != (32, 64, 96):
@@ -193,6 +198,14 @@ class FFSOmegaTSR(nn.Module):
             or temporal_history_feature_channels <= 0
         ):
             raise ValueError("temporal_history_feature_channels must be positive")
+        for name, value in (
+            ("calibration_conditioning_v3", calibration_conditioning_v3),
+            ("use_rays", use_rays),
+            ("use_stereo_pose", use_stereo_pose),
+            ("use_temporal_pose", use_temporal_pose),
+        ):
+            if not isinstance(value, bool):
+                raise TypeError(f"{name} must be a bool")
 
         self.scale = scale
         self.residual_limit_hr_px = float(residual_limit_hr_px)
@@ -213,6 +226,11 @@ class FFSOmegaTSR(nn.Module):
             trusted_ffs_confidence_threshold
         )
         self.temporal_history_top_k = temporal_history_top_k
+        self.calibration_conditioning_v3 = calibration_conditioning_v3
+        self.use_rays = use_rays
+        self.use_stereo_pose = use_stereo_pose
+        self.use_temporal_pose = use_temporal_pose
+        self.calibration_conditioner: CalibrationConditionerV3 | None = None
         self.rgb_encoder = RGBPyramidEncoder(rgb_channels)
         self.geometry_encoder = GeometryEncoder(geometry_channels)
         self.topk_history_encoder: TopKHistoryEncoder | None = None
@@ -277,6 +295,17 @@ class FFSOmegaTSR(nn.Module):
             nn.init.zeros_(final_validity_layer.weight)
             nn.init.zeros_(final_validity_layer.bias)
 
+        # Instantiate v3 last so enabling the opt-in branch does not perturb the
+        # RNG initialization of any legacy/shared module.  Disabled models have
+        # no extra parameters or state-dict keys.
+        if self.calibration_conditioning_v3:
+            self.calibration_conditioner = CalibrationConditionerV3(
+                spatial_scale=scale,
+                use_rays=use_rays,
+                use_stereo_pose=use_stereo_pose,
+                use_temporal_pose=use_temporal_pose,
+            )
+
     @property
     def trainable_parameter_count(self) -> int:
         return count_trainable_parameters(self)
@@ -329,6 +358,11 @@ class FFSOmegaTSR(nn.Module):
         valid_vggt: Tensor | None = None,
         valid_history: Tensor | None = None,
         hidden_state: Sequence[Tensor] | None = None,
+        K_left_hr_px: Tensor | None = None,
+        baseline_m: Tensor | None = None,
+        E_right_camera_from_left_camera_m: Tensor | None = None,
+        E_current_camera_from_history_camera_m: Tensor | None = None,
+        temporal_pose_valid_mask: Tensor | None = None,
     ) -> ModelOutput:
         """Run one causal time step.
 
@@ -348,6 +382,15 @@ class FFSOmegaTSR(nn.Module):
                 They are already z-aware splatted into the current LR grid.
             valid_ffs, valid_vggt, valid_history: Optional source masks.
             hidden_state: Previous two-layer causal state, or ``None`` at reset.
+            K_left_hr_px: Opt-in v3 cropped HR intrinsics ``[B,3,3]``.
+            baseline_m: Opt-in v3 physical stereo baseline ``[B]`` in metres.
+            E_right_camera_from_left_camera_m: Opt-in v3 static stereo
+                camera-from-camera transform ``[B,3,4]``. It maps left-camera
+                coordinates into the right camera.
+            E_current_camera_from_history_camera_m: Opt-in v3 temporal
+                camera-from-camera transforms ``[B,2,3,4]`` ordered age1,
+                age2. Each maps its history camera into the current camera.
+            temporal_pose_valid_mask: Boolean temporal-pose mask ``[B,2]``.
         """
 
         if rgb_hr.ndim != 4 or rgb_hr.shape[1] != 3:
@@ -369,6 +412,20 @@ class FFSOmegaTSR(nn.Module):
             raise ValueError(f"rgb_hr must have shape {expected_rgb_shape}, got {rgb_hr.shape}")
         if rgb_hr.device != disparity_ffs_hr_px.device or rgb_hr.device != confidence_ffs.device:
             raise ValueError("rgb_hr, disparity_ffs_hr_px, and confidence_ffs need one device")
+
+        calibration_inputs = (
+            K_left_hr_px,
+            baseline_m,
+            E_right_camera_from_left_camera_m,
+            E_current_camera_from_history_camera_m,
+            temporal_pose_valid_mask,
+        )
+        if self.calibration_conditioner is None and any(
+            value is not None for value in calibration_inputs
+        ):
+            raise ValueError(
+                "calibration inputs require calibration_conditioning_v3=True"
+            )
 
         def optional_scalar_pair(
             disparity_hr_px_name: str,
@@ -524,6 +581,20 @@ class FFSOmegaTSR(nn.Module):
                 f"{rgb_features.feature_lr.shape[-2:]} vs {(height_lr, width_lr)}"
             )
         geometry_feature_lr = self.geometry_encoder(geometry_lr)
+        if self.calibration_conditioner is not None:
+            calibration_residual_lr = self.calibration_conditioner(
+                geometry_feature_lr,
+                K_left_hr_px=K_left_hr_px,
+                baseline_m=baseline_m,
+                E_right_camera_from_left_camera_m=(
+                    E_right_camera_from_left_camera_m
+                ),
+                E_current_camera_from_history_camera_m=(
+                    E_current_camera_from_history_camera_m
+                ),
+                temporal_pose_valid_mask=temporal_pose_valid_mask,
+            )
+            geometry_feature_lr = geometry_feature_lr + calibration_residual_lr
         recurrent_features = [rgb_features.feature_lr, geometry_feature_lr]
         topk_effective_weights: Tensor | None = None
         topk_effective_valid_mask: Tensor | None = None

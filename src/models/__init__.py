@@ -1,5 +1,9 @@
 """Trainable temporal disparity super-resolution models."""
 
+from .calibration_conditioner import (
+    CalibrationConditionerV3,
+    dense_unit_rays_from_K_hr,
+)
 from .convex_upsampler import ConvexUpsampler
 from .epipolar_refiner import (
     EpipolarRefinementOutput,
@@ -15,6 +19,7 @@ from .topk_history_encoder import TopKHistoryEncoder, TopKHistoryEncoding
 __all__ = [
     "ConvGRUCell",
     "ConvexUpsampler",
+    "CalibrationConditionerV3",
     "EpipolarRefinementOutput",
     "FFSOmegaTSR",
     "HREpipolarRefiner",
@@ -26,6 +31,7 @@ __all__ = [
     "TopKHistoryEncoder",
     "TopKHistoryEncoding",
     "count_trainable_parameters",
+    "dense_unit_rays_from_K_hr",
     "groupwise_epipolar_correlation",
     "masked_source_softmax",
 ]
