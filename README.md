@@ -99,6 +99,18 @@ runs do not require changing the Python environment. If neither encoder path
 works, an explicitly enabled run writes `temporal_flicker_video.status=NOT_AVAILABLE`
 with the reason in `metrics.json` and does not silently write partial MP4s.
 
+## Frozen-evaluator posthoc Stage-C PLY
+
+`tools/export_epipolar_pointclouds_posthoc.py` is separately labeled
+`POSTHOC_DIAGNOSTIC`. It refuses anything except the clean audited frozen
+Stage-C evaluator source at `4e6b7eb`, dynamically runs that evaluator without
+any lineage/runtime bypass, and appends calibrated base/refined PLY only after
+the frozen visualization callback succeeds. Its receipt binds the frozen
+evaluator SHA, Stage-B/Stage-C checkpoint hashes, exact endpoint HR `K`,
+baseline, and PLY counts. It neither computes nor claims formal accuracy; the
+unchanged frozen evaluator remains the sole owner of its formal metrics, and
+point-to-plane stays `NOT_AVAILABLE`.
+
 ## Start here
 
 Read [`CODEX_TASK.md`](CODEX_TASK.md), then follow [`RUNBOOK.md`](RUNBOOK.md).

@@ -515,6 +515,36 @@ unchanged metrics and explicitly writes `temporal_flicker_video.status=NOT_AVAIL
 in `metrics.json`; incomplete temporary files and encoder processes are cleaned
 up on failures or interruptions.
 
+### Strict posthoc Stage-C point-cloud diagnostic
+
+The formal Stage-C source is frozen at commit `4e6b7eb`, so its evaluator is not
+modified to add later visualization helpers. The posthoc command below executes
+that exact clean evaluator, preserves all of its runtime/source-bundle/lineage
+checks, and only wraps its successful visualization callback to append
+calibrated base/refined left-camera-frame PLY files. Use a **new** output path;
+do not write into the formal evaluator directory.
+
+```bash
+conda run --no-capture-output -n env-tsr python \
+  tools/export_epipolar_pointclouds_posthoc.py \
+  --formal-source-root /tmp/ffs_omega_tsr_stagec_formal_source_4e6b7eb \
+  --config /tmp/ffs_omega_tsr_stagec_formal_source_4e6b7eb/configs/epipolar_x2.yaml \
+  --checkpoint outputs/ffs_omega_tsr_x2/stage_c/final.pt \
+  --base-checkpoint outputs/ffs_omega_tsr_x2/stage_b/final.pt \
+  --manifest "$CACHE_ROOT/manifests/val_video_isolated.jsonl" \
+  --observation-cache-root "$CACHE_ROOT/m1_formal_val/observation" \
+  --teacher-cache-root "$CACHE_ROOT/m1_formal_val/teacher" \
+  --derived-cache-root "$CACHE_ROOT/m2_formal_val/derived" \
+  --rectification-audit reports/m6/epipolar_rectification_audit.json \
+  --output outputs/ffs_omega_tsr_x2/stage_c_posthoc_pointclouds \
+  --samples 4 --device cuda --batch-size 1 --num-workers 4
+```
+
+`posthoc_pointcloud_receipt.json` has the explicit status
+`POSTHOC_DIAGNOSTIC_COMPLETE`, frozen evaluator SHA/commit, both checkpoint
+hashes, exported endpoint `K`/baseline, and PLY counts. This diagnostic does
+not own or claim formal metrics; it does not manufacture point-to-plane error.
+
 ### Optional T3 failure-sample bundles
 
 For a separate diagnostic evaluation run, `--failure-samples-per-criterion N`
