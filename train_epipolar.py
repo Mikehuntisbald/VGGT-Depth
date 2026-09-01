@@ -728,6 +728,7 @@ def _validated_rectification_audit(
     path: str | Path,
     *,
     expected_train_manifest_sha256: str,
+    allow_consistent_metadata: bool = False,
 ) -> dict[str, Any]:
     """Validate and compact the required same-row pixel audit receipt."""
 
@@ -776,9 +777,17 @@ def _validated_rectification_audit(
     ):
         if not isinstance(value, Mapping):
             raise ValueError(f"epipolar rectification audit {name} is missing")
-    if metadata_vs_pixels.get("conclusion") != (
+    allowed_conclusions = {
         "INCONSISTENT_WITH_AUDITED_PIXEL_COORDINATES"
-    ):
+    }
+    if allow_consistent_metadata:
+        # Spring's official stereo frames are already rectified and its
+        # metadata is expected to agree with the pixel audit.  The canonical
+        # first-round audit intentionally records the opposite diagnosis for
+        # its legacy corpus, so keep that strict default while allowing the
+        # explicit Spring screening wrapper to accept the consistent result.
+        allowed_conclusions.add("CONSISTENT_WITH_AUDITED_PIXEL_COORDINATES")
+    if metadata_vs_pixels.get("conclusion") not in allowed_conclusions:
         raise ValueError("epipolar metadata/pixel-coordinate diagnosis is missing")
     counts = global_result.get("counts")
     dy = global_result.get("dy_right_minus_left_px")

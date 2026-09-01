@@ -112,6 +112,10 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "derived_cache_lineage": None,
         "calibration_sidecar_lineage": None,
         "crop_mode": "random",
+        # Temporal transport defaults to the frozen VGGT pose cache.  Spring
+        # ablations can set this to ``gt`` without changing the VGGT cache
+        # lineage; the temporal dataset exposes a separate GT pose tensor.
+        "temporal_pose_source": "vggt",
     },
     "ffs": {
         "observation_iters": 4,
@@ -150,6 +154,9 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "epipolar_refinement": False,
         "use_history": False,
         "use_vggt_pose": False,
+        # Explicit ablation switch: VGGT depth prior can be removed while
+        # retaining the same model/checkpoint graph and (optionally) pose.
+        "use_vggt_depth": True,
         "use_registers_in_model": False,
     },
     "train": {
@@ -194,6 +201,117 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "gate_regularizer": 0.02,
     },
 }
+
+
+TEMPORAL_POSE_SOURCES = frozenset({"vggt", "gt"})
+
+
+def temporal_pose_source_from_config(
+    config: Mapping[str, Any] | DictConfig,
+) -> str:
+    """Resolve the explicit temporal pose source for transport/conditioning.
+
+    ``data.temporal_pose_source`` is canonical.  ``model.pose_source`` is
+    accepted as a compatibility alias for experiment configs that group all
+    pose switches under ``model``.  If both are present they must agree.
+    Missing values retain the historical ``vggt`` behavior.
+    """
+
+    data_section = config.get("data")
+    model_section = config.get("model")
+    data_value = (
+        data_section.get("temporal_pose_source")
+        if isinstance(data_section, Mapping)
+        else None
+    )
+    model_value = (
+        model_section.get("pose_source")
+        if isinstance(model_section, Mapping)
+        else None
+    )
+    values = [value for value in (data_value, model_value) if value is not None]
+    if len(values) > 1 and str(values[0]).lower() != str(values[1]).lower():
+        raise ValueError(
+            "data.temporal_pose_source and model.pose_source disagree: "
+            f"{values[0]!r} vs {values[1]!r}"
+        )
+    source = str(values[0] if values else "vggt").strip().lower()
+    aliases = {"ground_truth": "gt", "ground-truth": "gt", "manifest": "gt"}
+    source = aliases.get(source, source)
+    if source not in TEMPORAL_POSE_SOURCES:
+        raise ValueError(
+            "temporal pose source must be one of "
+            f"{sorted(TEMPORAL_POSE_SOURCES)}, got {source!r}"
+        )
+    return source
+
+
+def temporal_pose_inputs_from_batch(
+    batch: Mapping[str, Any],
+    config: Mapping[str, Any] | DictConfig | None = None,
+) -> tuple[Tensor, Tensor, Tensor]:
+    """Return ``(poses, valid, quality)`` for the configured pose source.
+
+    Both pose sources use the same ``[B,T,10,3,4]`` view contract, so callers
+    can pass the returned tensors directly to the existing transport and
+    calibration helpers.  GT poses are trusted only when the optional field is
+    present; their quality score is one for valid entries.
+    """
+
+    source = "vggt" if config is None else temporal_pose_source_from_config(config)
+    if source == "gt":
+        poses = batch.get("gt_pose_sequence")
+        if poses is None:
+            poses = batch.get("gt_extrinsics_camera_from_world_sequence")
+        if not isinstance(poses, Tensor):
+            raise ValueError(
+                "temporal_pose_source='gt' requires "
+                "gt_extrinsics_camera_from_world_sequence"
+            )
+        valid = batch.get("gt_temporal_pose_valid_sequence")
+        if valid is None:
+            if poses.ndim != 5:
+                raise ValueError(
+                    "GT temporal poses must have shape [B,T,10,3,4]"
+                )
+            valid = torch.ones(
+                poses.shape[:2], device=poses.device, dtype=torch.bool
+            )
+        quality = batch.get("gt_temporal_pose_quality_score_sequence")
+        if quality is None:
+            quality = torch.ones(
+                valid.shape, device=poses.device, dtype=torch.float32
+            )
+    else:
+        poses = batch.get("vggt_extrinsics_camera_from_world_metric_sequence")
+        valid = batch.get("temporal_pose_valid_sequence")
+        quality = batch.get("temporal_pose_quality_score_sequence")
+        if not isinstance(poses, Tensor) or not isinstance(valid, Tensor):
+            raise ValueError("VGGT temporal pose fields are missing from batch")
+        if quality is None:
+            quality = torch.where(
+                valid,
+                torch.ones(valid.shape, device=poses.device, dtype=torch.float32),
+                torch.zeros(valid.shape, device=poses.device, dtype=torch.float32),
+            )
+    if not isinstance(valid, Tensor) or valid.dtype != torch.bool:
+        raise ValueError("temporal pose validity must be a bool Tensor")
+    if not isinstance(quality, Tensor) or not quality.is_floating_point():
+        raise ValueError("temporal pose quality must be a floating Tensor")
+    if poses.ndim != 5 or tuple(poses.shape[-3:]) != (10, 3, 4):
+        raise ValueError(
+            "temporal poses must have shape [B,T,10,3,4], got "
+            f"{tuple(poses.shape)}"
+        )
+    if tuple(valid.shape) != tuple(poses.shape[:2]) or tuple(quality.shape) != tuple(
+        poses.shape[:2]
+    ):
+        raise ValueError("temporal pose masks/quality must have shape [B,T]")
+    if poses.device != valid.device or poses.device != quality.device:
+        raise ValueError("temporal pose fields must share a device")
+    if not bool(torch.isfinite(poses).all().item()):
+        raise ValueError("temporal poses contain NaN or infinity")
+    return poses, valid, quality
 
 
 @dataclass(frozen=True, slots=True)
@@ -773,6 +891,7 @@ def loss_weights_from_config(config: Mapping[str, Any] | DictConfig) -> LossWeig
 
 
 def _validate_common_training_config(config: DictConfig, *, total_steps: int) -> None:
+    temporal_pose_source_from_config(config)
     physical_v2 = physical_output_v2_from_config(config)
     temporal_history = temporal_history_v2_from_config(config)
     temporal_residual = temporal_residual_v2_from_config(config)
@@ -900,8 +1019,14 @@ def validate_stage_b_config(config: DictConfig) -> None:
         raise ValueError("Stage B requires five causal VGGT stereo pairs")
     if not bool(config.vggt.causal):
         raise ValueError("Stage B forbids non-causal VGGT context")
-    if not bool(config.model.use_history) or not bool(config.model.use_vggt_pose):
-        raise ValueError("Stage B requires model.use_history and model.use_vggt_pose")
+    if not bool(config.model.use_history):
+        raise ValueError("Stage B requires model.use_history")
+    pose_source = temporal_pose_source_from_config(config)
+    if pose_source == "vggt" and not bool(config.model.use_vggt_pose):
+        raise ValueError(
+            "Stage B with temporal_pose_source='vggt' requires "
+            "model.use_vggt_pose"
+        )
     if bool(config.model.epipolar_refinement):
         raise ValueError("HR epipolar refinement belongs to Stage C")
     if str(config.train.init_from_stage).lower() != "spatial":
@@ -3037,6 +3162,7 @@ def calibration_model_kwargs_temporal(
     *,
     time_index: int,
     contract: CalibrationConditioningV3,
+    config: Mapping[str, Any] | DictConfig | None = None,
 ) -> dict[str, Tensor]:
     """Build current/causal-past-only v3 inputs for one temporal step."""
 
@@ -3054,9 +3180,12 @@ def calibration_model_kwargs_temporal(
     }
     result = calibration_model_kwargs_spatial(spatial_view, contract)
     if contract.use_temporal_pose:
+        pose_sequence, pose_valid_sequence, _pose_quality_sequence = (
+            temporal_pose_inputs_from_batch(batch, config)
+        )
         transforms, valid = temporal_conditioning_transforms(
-            batch["vggt_extrinsics_camera_from_world_metric_sequence"][:, time_index],
-            batch["temporal_pose_valid_sequence"][:, time_index],
+            pose_sequence[:, time_index],
+            pose_valid_sequence[:, time_index],
             student_time_index=time_index,
         )
         result["T_current_from_history_m"] = transforms
@@ -3080,6 +3209,20 @@ def _forward_temporal_loss(
     temporal_residual_v2 = temporal_residual_v2_from_config(config)
     calibration_v3 = calibration_conditioning_v3_from_config(config)
     candidate_v31 = temporal_candidate_fusion_v3_1_from_config(config)
+    # Resolve the pose source once and project it onto the historical field
+    # names consumed by the existing transport code.  GT poses are supplied by
+    # the Spring manifest and remain separate from the VGGT cache lineage until
+    # this explicit, local aliasing boundary.
+    temporal_poses, temporal_pose_valid, temporal_pose_quality = (
+        temporal_pose_inputs_from_batch(batch, config)
+    )
+    batch = dict(batch)
+    batch["vggt_extrinsics_camera_from_world_metric_sequence"] = temporal_poses
+    batch["temporal_pose_valid_sequence"] = temporal_pose_valid
+    batch["temporal_pose_quality_score_sequence"] = temporal_pose_quality
+    temporal_pose_sequence = temporal_poses
+    temporal_pose_valid_sequence = temporal_pose_valid
+    temporal_pose_quality_sequence = temporal_pose_quality
     if temporal_history_v2.enabled and not calibration_v3.enabled:
         validate_v2_temporal_calibration(
             batch["K_hr_sequence"], batch["baseline_m_sequence"]
@@ -3094,7 +3237,7 @@ def _forward_temporal_loss(
     losses: list[LossBreakdown] = []
     for time_index in range(3):
         step = _temporal_step_batch(batch, time_index)
-        pose_valid = batch["temporal_pose_valid_sequence"][:, time_index]
+        pose_valid = temporal_pose_valid_sequence[:, time_index]
         transport: TemporalTransport | None = None
         reference_transport: ReferenceTemporalWarp | None = None
         if time_index > 0:
@@ -3107,18 +3250,13 @@ def _forward_temporal_loss(
                     current_ffs_confidence=step["confidence_ffs"],
                     intrinsics_current_hr=batch["K_hr_sequence"][:, time_index],
                     baseline_current_m=batch["baseline_m_sequence"][:, time_index],
-                    temporal_extrinsics_camera_from_world=batch[
-                        "vggt_extrinsics_camera_from_world_metric_sequence"
-                    ][:, time_index],
+                    temporal_extrinsics_camera_from_world=temporal_pose_sequence[
+                        :, time_index
+                    ],
                     temporal_pose_valid=pose_valid,
                     contract=temporal_history_v2,
                     temporal_pose_quality_score=(
-                        None
-                        if batch.get("temporal_pose_quality_score_sequence")
-                        is None
-                        else batch["temporal_pose_quality_score_sequence"][
-                            :, time_index
-                        ]
+                        temporal_pose_quality_sequence[:, time_index]
                     ),
                     candidate_contract=candidate_v31,
                     scale=int(config.data.scale),
@@ -3174,9 +3312,9 @@ def _forward_temporal_loss(
                     baseline_previous_m=memory[-1].baseline_m,
                     intrinsics_current_hr=batch["K_hr_sequence"][:, time_index],
                     baseline_current_m=batch["baseline_m_sequence"][:, time_index],
-                    temporal_extrinsics_camera_from_world=batch[
-                        "vggt_extrinsics_camera_from_world_metric_sequence"
-                    ][:, time_index],
+                    temporal_extrinsics_camera_from_world=temporal_pose_sequence[
+                        :, time_index
+                    ],
                     temporal_pose_valid=pose_valid,
                     contract=temporal_history_v2,
                 )
@@ -3191,9 +3329,9 @@ def _forward_temporal_loss(
                     current_ffs_confidence=step["confidence_ffs"],
                     intrinsics_current_hr=batch["K_hr_sequence"][:, time_index],
                     baseline_current_m=batch["baseline_m_sequence"][:, time_index],
-                    temporal_extrinsics_camera_from_world=batch[
-                        "vggt_extrinsics_camera_from_world_metric_sequence"
-                    ][:, time_index],
+                    temporal_extrinsics_camera_from_world=temporal_pose_sequence[
+                        :, time_index
+                    ],
                     temporal_pose_valid=pose_valid,
                     scale=int(config.data.scale),
                     photometric_temperature=float(config.train.photometric_temperature),
@@ -3209,19 +3347,39 @@ def _forward_temporal_loss(
                     ),
                 )
         static_prior = batch["static_prior_valid_sequence"][:, time_index]
-        valid_vggt = batch["valid_vggt_sequence"][:, time_index] & static_prior.reshape(
-            -1, 1, 1, 1
-        )
+        use_vggt_depth = bool(config.model.get("use_vggt_depth", True))
+        if use_vggt_depth:
+            valid_vggt = batch["valid_vggt_sequence"][:, time_index] & static_prior.reshape(
+                -1, 1, 1, 1
+            )
+            vggt_disparity = batch["disparity_vggt_hr_px_sequence"][:, time_index]
+            vggt_confidence = batch["confidence_vggt_sequence"][:, time_index]
+        else:
+            # Preserve tensor shapes and the model graph while making the prior
+            # genuinely absent.  This is the S2/S3 control needed to isolate the
+            # effect of adding VGGT depth in S4.
+            vggt_disparity = torch.zeros_like(
+                batch["disparity_vggt_hr_px_sequence"][:, time_index]
+            )
+            vggt_confidence = torch.zeros_like(
+                batch["confidence_vggt_sequence"][:, time_index]
+            )
+            valid_vggt = torch.zeros_like(
+                batch["valid_vggt_sequence"][:, time_index], dtype=torch.bool
+            )
         model_kwargs: dict[str, Any] = {
-            "disparity_vggt_hr_px": batch["disparity_vggt_hr_px_sequence"][:, time_index],
-            "confidence_vggt": batch["confidence_vggt_sequence"][:, time_index],
+            "disparity_vggt_hr_px": vggt_disparity,
+            "confidence_vggt": vggt_confidence,
             "valid_vggt": valid_vggt,
             "valid_ffs": step["valid_ffs"],
             "hidden_state": hidden_state,
         }
         model_kwargs.update(
             calibration_model_kwargs_temporal(
-                batch, time_index=time_index, contract=calibration_v3
+                batch,
+                time_index=time_index,
+                contract=calibration_v3,
+                config=config,
             )
         )
         if transport is not None:

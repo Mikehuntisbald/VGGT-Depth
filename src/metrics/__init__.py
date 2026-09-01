@@ -31,6 +31,12 @@ from .temporal import (
     temporal_residual_error,
     trusted_region_degradation,
 )
+from .spring_arms import (
+    aggregate_metric_rows as aggregate_spring_metric_rows,
+    disparity_metrics as spring_disparity_metrics,
+    temporal_residual_metrics as spring_temporal_residual_metrics,
+    topk_diagnostics as spring_topk_diagnostics,
+)
 
 __all__ = [
     "CompletenessImprovementReport",
@@ -59,4 +65,8 @@ __all__ = [
     "temporal_disparity_error",
     "temporal_residual_error",
     "trusted_region_degradation",
+    "aggregate_spring_metric_rows",
+    "spring_disparity_metrics",
+    "spring_temporal_residual_metrics",
+    "spring_topk_diagnostics",
 ]

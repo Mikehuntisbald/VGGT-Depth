@@ -34,3 +34,28 @@ an observation/teacher identity substitute.
 Every used artifact must have its byte size, SHA-256, source, and license status
 recorded in `REPORT.md` and in its smoke receipt. A filename match is not proof
 of official byte identity when upstream publishes no checksum.
+
+## FoundationStereo upstream weights (downloaded locally)
+
+The upstream FoundationStereo release is stored separately because its
+`model_best_bp2.pth` checkpoints are not byte-compatible with the formal Fast-
+FoundationStereo `model_best_bp2_serialize.pth` artifacts above:
+
+```text
+checkpoints/foundationstereo/11-33-40/model_best_bp2.pth
+checkpoints/foundationstereo/23-51-11/model_best_bp2.pth
+checkpoints/foundationstereo/onnx/foundation_stereo_23-51-11.onnx
+```
+
+Use the 23-51-11 checkpoint for FoundationStereo demo inference, for example:
+
+```bash
+cd third_party/Fast-FoundationStereo
+python scripts/run_demo.py \
+  --model_dir ../../checkpoints/foundationstereo/23-51-11/model_best_bp2.pth \
+  --left_file demo_data/left.png --right_file demo_data/right.png \
+  --out_dir output/
+```
+
+Do not substitute this checkpoint into the frozen FFS cache identities without
+re-running the observation/teacher cache producers and their receipts.

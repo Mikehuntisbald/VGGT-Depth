@@ -576,6 +576,8 @@ def derive_geometry_manifest(
     canonical_vggt_identity: Mapping[str, Any] | None = None
     raw_canonical_receipt_sha256: str | None = None
     raw_canonical_contract_verified = False
+    source_manifest_path: str | None = None
+    source_manifest_sha256: str | None = None
     if raw_canonical_receipt_path.exists():
         try:
             raw_canonical_receipt = json.loads(
@@ -586,6 +588,23 @@ def derive_geometry_manifest(
             raw_reused = int(raw_canonical_receipt["reused_records"])
             raw_available = int(raw_canonical_receipt["available_windows"])
             canonical_vggt_identity = raw_canonical_receipt["identity"]
+            # Older test/fixture receipts may omit the optional source
+            # manifest binding.  Parse it lazily so a count inconsistency is
+            # reported as the stronger complete-coverage failure first; real
+            # producer receipts always include both fields and are checked
+            # below after coverage has passed.
+            source_manifest_value = raw_canonical_receipt.get("manifest")
+            source_manifest_sha_value = raw_canonical_receipt.get("manifest_sha256")
+            source_manifest_path = (
+                str(source_manifest_value)
+                if isinstance(source_manifest_value, str)
+                else None
+            )
+            source_manifest_sha256 = (
+                str(source_manifest_sha_value)
+                if isinstance(source_manifest_sha_value, str)
+                else None
+            )
         except (KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
             raise CacheMismatchError(
                 f"raw VGGT canonical receipt is malformed: {raw_canonical_receipt_path}"
@@ -598,6 +617,18 @@ def derive_geometry_manifest(
         ):
             raise CacheMismatchError(
                 "raw VGGT canonical receipt does not prove complete manifest coverage"
+            )
+        if source_manifest_path is None or source_manifest_sha256 is None:
+            raise CacheMismatchError(
+                "raw VGGT canonical receipt is not bound to a valid source manifest"
+            )
+        source_manifest = Path(source_manifest_path).expanduser().resolve()
+        if (
+            not source_manifest.is_file()
+            or source_manifest_sha256 != sha256_file(source_manifest)
+        ):
+            raise CacheMismatchError(
+                "raw VGGT canonical receipt is not bound to a valid source manifest"
             )
         raw_canonical_receipt_sha256 = sha256_file(raw_canonical_receipt_path)
         raw_canonical_contract_verified = True
@@ -845,6 +876,8 @@ def derive_geometry_manifest(
             "vggt_root": str(vggt_root),
             "vggt_cache_manifest": str(raw_manifest_path),
             "vggt_cache_manifest_sha256": sha256_file(raw_manifest_path),
+            "manifest": source_manifest_path,
+            "manifest_sha256": source_manifest_sha256,
             "vggt_available_windows": len(all_entries),
             "ffs_root": str(ffs_root),
             **(
@@ -905,6 +938,12 @@ def derive_geometry_manifest(
             "limit": limit,
             "selected_windows": total,
         },
+        # Keep the source frame-manifest binding at the top level as well as
+        # under inputs.  Consumers such as the Spring arm runner can then
+        # reject a geometry cache generated from a different bounded split
+        # without having to follow the raw VGGT receipt indirection.
+        "manifest": source_manifest_path,
+        "manifest_sha256": source_manifest_sha256,
         "counts": {
             "selected": total,
             "written": written_count,

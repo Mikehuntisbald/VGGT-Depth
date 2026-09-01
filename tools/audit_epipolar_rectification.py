@@ -348,7 +348,15 @@ def _load_manifest(path: Path, split: str) -> tuple[list[ManifestFrame], str, in
         _require(left.is_file() and right.is_file(), f"{split} stereo files are missing at row {index}")
         _require(left != right, f"{split} left/right paths are identical at row {index}")
         left_cy = _matrix_cy(row.get("K"), f"{split}[{index}].K", 3)
-        right_cy = _matrix_cy(row.get("K_right"), f"{split}[{index}].K_right", 3)
+        # Spring's rectified training manifest stores one calibrated K for
+        # the stereo pair; the right camera uses the same pixel intrinsics
+        # (the baseline is carried separately).  Preserve strict behaviour
+        # for every other dataset while accepting this explicit Spring
+        # convention in the pixel audit.
+        right_matrix = row.get("K_right")
+        if right_matrix is None and str(row.get("dataset", "")).lower() == "spring":
+            right_matrix = row.get("K")
+        right_cy = _matrix_cy(right_matrix, f"{split}[{index}].K_right", 3)
         projection_left = row.get("P_left")
         projection_right = row.get("P_right")
         projection_left_cy = (

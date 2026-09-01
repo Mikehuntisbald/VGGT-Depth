@@ -64,6 +64,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--limit", type=int)
     parser.add_argument("--overwrite", action="store_true")
     parser.add_argument(
+        "--device",
+        default="cuda",
+        help="inference device (cuda, cuda:N, or cpu); CPU is intended for bounded screening",
+    )
+    parser.add_argument(
         "--repo",
         type=Path,
         default=PROJECT_ROOT / "third_party" / "Fast-FoundationStereo",
@@ -140,6 +145,7 @@ def _load_model(
     iterations: int,
     max_disp: int,
     missing_normalize: str,
+    device: torch.device,
 ) -> tuple[torch.nn.Module, dict[str, Any]]:
     sys.path.insert(0, str(repo.resolve()))
     import core.foundation_stereo  # noqa: F401
@@ -164,7 +170,11 @@ def _load_model(
         compatibility["normalize"] = bool(normalize)
     model.args.valid_iters = iterations
     model.args.max_disp = max_disp
-    model.requires_grad_(False).eval().cuda()
+    if device.type != "cuda":
+        # The upstream forward wraps CUDA autocast explicitly; disabling its
+        # mixed-precision branch keeps the same model usable for CPU screening.
+        model.args.mixed_precision = False
+    model.requires_grad_(False).eval().to(device)
     return model, compatibility
 
 
@@ -239,6 +249,9 @@ def main() -> int:
         raise ValueError("start-index must be non-negative and limit must be positive")
     if not args.checkpoint.is_file() or not args.repo.is_dir():
         raise FileNotFoundError("checkpoint and FFS repository must exist")
+    device = torch.device(args.device)
+    if device.type == "cuda" and not torch.cuda.is_available():
+        raise RuntimeError(f"requested CUDA device is unavailable: {device}")
 
     records = _manifest_records(args.manifest)
     selected = records[args.start_index :]
@@ -292,6 +305,7 @@ def main() -> int:
         iterations=iterations,
         max_disp=max_disp,
         missing_normalize=args.missing_normalize,
+        device=device,
     )
     adapter = FFSAdapter(
         model,
@@ -358,8 +372,8 @@ def main() -> int:
             right_hr = _rgb_0_255(right_path)
             if left_hr.shape != right_hr.shape:
                 raise ValueError(f"stereo shape mismatch: {left_hr.shape} vs {right_hr.shape}")
-            left_input = _downsample_integer(left_hr, scale).cuda()
-            right_input = _downsample_integer(right_hr, scale).cuda()
+            left_input = _downsample_integer(left_hr, scale).to(device)
+            right_input = _downsample_integer(right_hr, scale).to(device)
             output = adapter(left_input, right_input, right_left_check=args.right_left_check)
             tensors = _cache_tensors(args.role, output, cache_dtype)
             metadata = {

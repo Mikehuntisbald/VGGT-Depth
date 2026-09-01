@@ -605,10 +605,22 @@ def validate_checkpoint_lineage(
         raise CheckpointMismatchError("temporal checkpoint must use five VGGT pairs")
     if not bool(vggt.get("causal")):
         raise CheckpointMismatchError("temporal checkpoint is not causal")
-    if not bool(model.get("use_history")) or not bool(model.get("use_vggt_pose")):
+    temporal_pose_source = str(data.get("temporal_pose_source", "vggt")).strip().lower()
+    aliases = {"ground_truth": "gt", "ground-truth": "gt", "manifest": "gt"}
+    temporal_pose_source = aliases.get(temporal_pose_source, temporal_pose_source)
+    if temporal_pose_source not in {"vggt", "gt"}:
         raise CheckpointMismatchError(
-            "temporal checkpoint must enable history and VGGT pose"
+            f"checkpoint temporal_pose_source is unsupported: {temporal_pose_source!r}"
         )
+    if not bool(model.get("use_history")):
+        raise CheckpointMismatchError("temporal checkpoint must enable history")
+    # The selected transport pose is controlled by data.temporal_pose_source.
+    # GT-pose arms intentionally leave the VGGT-pose branch disabled.
+    if temporal_pose_source == "vggt" and not bool(model.get("use_vggt_pose")):
+        raise CheckpointMismatchError(
+            "temporal checkpoint with temporal_pose_source='vggt' must enable VGGT pose"
+        )
+    result["temporal_pose_source"] = temporal_pose_source
     if bool(model.get("epipolar_refinement")):
         raise CheckpointMismatchError(
             "Stage-B checkpoint must not enable Stage-C epipolar refinement"

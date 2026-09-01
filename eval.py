@@ -93,6 +93,8 @@ from train import (  # noqa: E402
     calibration_model_kwargs_temporal,
     load_receipt_identity,
     physical_output_v2_from_config,
+    temporal_pose_inputs_from_batch,
+    temporal_pose_source_from_config,
     temporal_history_v2_from_config,
     temporal_candidate_fusion_v3_1_from_config,
     temporal_residual_v2_from_config,
@@ -366,6 +368,7 @@ def validate_evaluation_config(config: DictConfig) -> str:
     history_v2 = temporal_history_v2_from_config(config)
     residual_v2 = temporal_residual_v2_from_config(config)
     calibration_v3 = calibration_conditioning_v3_from_config(config)
+    pose_source = temporal_pose_source_from_config(config)
     if history_v2.enabled != residual_v2.enabled:
         raise ValueError(
             "temporal_history_v2 and temporal_residual_v2 must be enabled together"
@@ -379,10 +382,13 @@ def validate_evaluation_config(config: DictConfig) -> str:
             raise ValueError("Stage-B evaluation requires five VGGT context pairs")
         if not bool(config.vggt.causal):
             raise ValueError("Stage-B evaluation forbids future VGGT frames")
-        if not bool(config.model.use_history) or not bool(
-            config.model.use_vggt_pose
-        ):
-            raise ValueError("Stage-B evaluation requires history and VGGT pose")
+        if not bool(config.model.use_history):
+            raise ValueError("Stage-B evaluation requires history")
+        if pose_source == "vggt" and not bool(config.model.use_vggt_pose):
+            raise ValueError(
+                "Stage-B evaluation with temporal_pose_source='vggt' "
+                "requires model.use_vggt_pose"
+            )
         if bool(config.model.epipolar_refinement):
             raise ValueError("Stage-B evaluation must not claim Stage-C epipolar output")
         if history_v2.enabled and history_v2.top_k < 2:
@@ -820,6 +826,10 @@ def _build_eval_transport(
 ) -> TemporalTransport:
     """Call the exact Stage-B training transport with evaluation config values."""
 
+    pose_sequence, pose_valid_sequence, _pose_quality_sequence = (
+        temporal_pose_inputs_from_batch(batch, config)
+    )
+
     return build_temporal_transport(
         previous_output=previous_output,
         previous_rgb_hr=previous_rgb_hr,
@@ -828,10 +838,8 @@ def _build_eval_transport(
         current_ffs_confidence=current_ffs_confidence,
         intrinsics_current_hr=batch["K_hr_sequence"][:, time_index],
         baseline_current_m=batch["baseline_m_sequence"][:, time_index],
-        temporal_extrinsics_camera_from_world=batch[
-            "vggt_extrinsics_camera_from_world_metric_sequence"
-        ][:, time_index],
-        temporal_pose_valid=batch["temporal_pose_valid_sequence"][:, time_index],
+        temporal_extrinsics_camera_from_world=pose_sequence[:, time_index],
+        temporal_pose_valid=pose_valid_sequence[:, time_index],
         scale=int(config.data.scale),
         photometric_temperature=float(config.train.photometric_temperature),
         disparity_temperature_hr_px=float(
@@ -860,6 +868,9 @@ def _build_eval_topk_transport(
     contract = temporal_history_v2_from_config(config)
     if not contract.enabled:
         raise ValueError("top-K evaluation transport requires temporal_history_v2")
+    pose_sequence, pose_valid_sequence, pose_quality_sequence = (
+        temporal_pose_inputs_from_batch(batch, config)
+    )
     return build_topk_temporal_transport(
         memory=memory,
         current_time_index=time_index,
@@ -868,16 +879,10 @@ def _build_eval_topk_transport(
         current_ffs_confidence=current_ffs_confidence,
         intrinsics_current_hr=batch["K_hr_sequence"][:, time_index],
         baseline_current_m=batch["baseline_m_sequence"][:, time_index],
-        temporal_extrinsics_camera_from_world=batch[
-            "vggt_extrinsics_camera_from_world_metric_sequence"
-        ][:, time_index],
-        temporal_pose_valid=batch["temporal_pose_valid_sequence"][:, time_index],
+        temporal_extrinsics_camera_from_world=pose_sequence[:, time_index],
+        temporal_pose_valid=pose_valid_sequence[:, time_index],
         contract=contract,
-        temporal_pose_quality_score=(
-            None
-            if batch.get("temporal_pose_quality_score_sequence") is None
-            else batch["temporal_pose_quality_score_sequence"][:, time_index]
-        ),
+        temporal_pose_quality_score=pose_quality_sequence[:, time_index],
         candidate_contract=temporal_candidate_fusion_v3_1_from_config(config),
         scale=int(config.data.scale),
         align_corners_false_pixel_centers=(
@@ -912,6 +917,9 @@ def _build_eval_reference_transport(
         raise ValueError("reference warp requires both temporal V2 contracts")
     if time_index <= 0:
         raise ValueError("reference warp requires an immediate previous frame")
+    pose_sequence, pose_valid_sequence, _pose_quality_sequence = (
+        temporal_pose_inputs_from_batch(batch, config)
+    )
     disparity = batch.get("teacher_disparity_hr_px_sequence")
     confidence = batch.get("teacher_confidence_sequence")
     valid = batch.get("teacher_valid_mask_sequence")
@@ -937,10 +945,8 @@ def _build_eval_reference_transport(
         baseline_previous_m=batch["baseline_m_sequence"][:, time_index - 1],
         intrinsics_current_hr=batch["K_hr_sequence"][:, time_index],
         baseline_current_m=batch["baseline_m_sequence"][:, time_index],
-        temporal_extrinsics_camera_from_world=batch[
-            "vggt_extrinsics_camera_from_world_metric_sequence"
-        ][:, time_index],
-        temporal_pose_valid=batch["temporal_pose_valid_sequence"][:, time_index],
+        temporal_extrinsics_camera_from_world=pose_sequence[:, time_index],
+        temporal_pose_valid=pose_valid_sequence[:, time_index],
         contract=contract,
     )
 
@@ -1644,9 +1650,24 @@ def _run_temporal_endpoint_ablation(
     candidate_v31 = temporal_candidate_fusion_v3_1_from_config(config).enabled
     temporal_v2 = history_contract.enabled and residual_contract.enabled
     calibration_v3 = _calibration_contract_for_model(model)
+    if (
+        "vggt_extrinsics_camera_from_world_metric_sequence" not in batch
+        and "gt_pose_sequence" not in batch
+        and "gt_extrinsics_camera_from_world_sequence" not in batch
+    ):
+        # Lightweight unit-test/diagnostic callers may monkeypatch transport
+        # construction and provide only the historical validity mask.  Real
+        # transport paths remain strict and validate the full pose tensor.
+        pose_valid_sequence = batch.get("temporal_pose_valid_sequence")
+        if not isinstance(pose_valid_sequence, Tensor):
+            raise ValueError("temporal pose validity is missing from temporal batch")
+    else:
+        _pose_sequence, pose_valid_sequence, _pose_quality_sequence = (
+            temporal_pose_inputs_from_batch(batch, config)
+        )
     for time_index in range(3):
         step = _temporal_step_batch(batch, time_index)
-        pose_valid = batch["temporal_pose_valid_sequence"][:, time_index]
+        pose_valid = pose_valid_sequence[:, time_index]
         if time_index > 0:
             assert previous_on is not None and previous_rgb_hr is not None
             assert previous_mask_off is not None and previous_no_vggt is not None
@@ -1737,9 +1758,23 @@ def _run_temporal_endpoint_ablation(
                     config=config,
                 )
         static_prior = batch["static_prior_valid_sequence"][:, time_index]
-        valid_vggt = batch["valid_vggt_sequence"][:, time_index] & static_prior.reshape(
-            -1, 1, 1, 1
-        )
+        use_vggt_depth = bool(config.model.get("use_vggt_depth", True))
+        if use_vggt_depth:
+            valid_vggt = batch["valid_vggt_sequence"][:, time_index] & static_prior.reshape(
+                -1, 1, 1, 1
+            )
+            vggt_disparity = batch["disparity_vggt_hr_px_sequence"][:, time_index]
+            vggt_confidence = batch["confidence_vggt_sequence"][:, time_index]
+        else:
+            vggt_disparity = torch.zeros_like(
+                batch["disparity_vggt_hr_px_sequence"][:, time_index]
+            )
+            vggt_confidence = torch.zeros_like(
+                batch["confidence_vggt_sequence"][:, time_index]
+            )
+            valid_vggt = torch.zeros_like(
+                batch["valid_vggt_sequence"][:, time_index], dtype=torch.bool
+            )
         history_kwargs = _history_model_kwargs(
             transport,
             rgb_dtype=step["rgb_hr"].dtype,
@@ -1747,14 +1782,15 @@ def _run_temporal_endpoint_ablation(
             temporal_candidate_v31=candidate_v31,
         )
         geometry_kwargs: dict[str, Any] = {
-            "disparity_vggt_hr_px": batch["disparity_vggt_hr_px_sequence"][
-                :, time_index
-            ],
-            "confidence_vggt": batch["confidence_vggt_sequence"][:, time_index],
+            "disparity_vggt_hr_px": vggt_disparity,
+            "confidence_vggt": vggt_confidence,
             "valid_ffs": step["valid_ffs"],
         }
         calibration_kwargs = calibration_model_kwargs_temporal(
-            batch, time_index=time_index, contract=calibration_v3
+            batch,
+            time_index=time_index,
+            contract=calibration_v3,
+            config=config,
         )
         geometry_kwargs.update(calibration_kwargs)
         output_on = model(
@@ -3436,6 +3472,10 @@ def _audit_temporal_holdout_and_raw_lineage(
     ):
         raise ValueError("temporal checkpoint data lineage is missing")
     training_data = training_config["data"]
+    pose_source_value = str(training_data.get("temporal_pose_source", "vggt")).strip().lower()
+    pose_source_value = {"ground_truth": "gt", "ground-truth": "gt", "manifest": "gt"}.get(
+        pose_source_value, pose_source_value
+    )
     training_manifest_value = training_data.get("manifest_path")
     if not isinstance(training_manifest_value, str):
         raise ValueError("temporal checkpoint has no training manifest path")
@@ -3475,6 +3515,53 @@ def _audit_temporal_holdout_and_raw_lineage(
     training_derived_root = Path(
         saved_derived["derived_cache_root"]
     ).expanduser().resolve()
+
+    # Spring GT-pose controls intentionally have no raw VGGT cache.  Keep the
+    # normal sequence/cache isolation checks above, validate every derived
+    # record's FFS linkage below, and report the explicit pose-source boundary
+    # instead of trying to fabricate a VGGT receipt.
+    if pose_source_value == "gt":
+        for entry in dataset.derived_entries.values():
+            if sha256_file(entry.cache_path) != entry.cache_sha256:
+                raise ValueError(
+                    f"derived cache SHA-256 differs from its manifest: {entry.cache_path}"
+                )
+            payload = torch.load(
+                entry.cache_path, map_location="cpu", weights_only=True, mmap=True
+            )
+            metadata = payload.get("metadata") if isinstance(payload, dict) else None
+            source = metadata.get("source") if isinstance(metadata, dict) else None
+            linkage = source.get("linkage") if isinstance(source, dict) else None
+            if not isinstance(linkage, dict):
+                raise ValueError(f"derived GT-pose linkage missing: {entry.cache_path}")
+            if linkage.get("ffs_raw_identity") is not None and linkage.get(
+                "ffs_raw_identity"
+            ) != observation_identity:
+                raise ValueError(
+                    f"derived FFS identity differs from evaluation cache: {entry.cache_path}"
+                )
+            if linkage.get("pose_source") not in {None, "Spring_GT_pose"}:
+                raise ValueError(
+                    f"GT-pose derived record has unexpected pose source: {entry.cache_path}"
+                )
+        return {
+            "training_manifest_path": str(training_manifest_path),
+            "training_manifest_sha256": sha256_file(training_manifest_path),
+            "evaluation_manifest_path": str(evaluation_manifest_path.resolve()),
+            "evaluation_manifest_sha256": sha256_file(evaluation_manifest_path),
+            "training_sequences": sorted(training_sequences),
+            "evaluation_sequences": sorted(evaluation_sequences),
+            "sequence_overlap": overlap,
+            "same_manifest": same_manifest,
+            "formal_holdout": not same_manifest and not overlap,
+            "non_holdout_smoke_override": allow_non_holdout_smoke,
+            "training_raw_vggt": None,
+            "evaluation_raw_vggt": None,
+            "pose_source": "gt",
+            "gt_pose_lineage": "Spring manifest cam_data/extrinsics.txt",
+            "audited_evaluation_derived_records": len(dataset.derived_entries),
+        }
+
     def raw_vggt_root(derived_root: Path) -> Path:
         receipt_path = derived_root / "run_receipt.json"
         try:
@@ -3591,9 +3678,9 @@ def run(args: argparse.Namespace) -> int:
     if args.allow_non_holdout_smoke:
         if stage != "temporal":
             raise ValueError("--allow-non-holdout-smoke is only valid for Stage B")
-        if config.eval.limit is None or int(config.eval.limit) > 4:
+        if config.eval.limit is None or int(config.eval.limit) <= 0:
             raise ValueError(
-                "non-holdout smoke requires an explicit eval.limit in [1,4]"
+                "non-holdout smoke requires an explicit positive eval.limit"
             )
     manifest_path = _required_path(config, "data.manifest_path", directory=False)
     observation_root = _required_path(
@@ -3667,7 +3754,21 @@ def run(args: argparse.Namespace) -> int:
             vggt_context_pairs=5,
             seed=int(config.seed),
         )
-        formal_coverage = _validate_formal_temporal_coverage(dataset)
+        if args.allow_non_holdout_smoke:
+            # Bounded Spring screening manifests intentionally contain only a
+            # few records from one sequence.  Their derived cache therefore
+            # has extra per-frame entries relative to the canonical full
+            # endpoint set, and must not be mistaken for a formal Stage-B
+            # holdout.  Keep an explicit audit object instead of fabricating
+            # formal coverage.
+            formal_coverage = {
+                "status": "NON_HOLDOUT_SMOKE",
+                "records": int(len(dataset.records)),
+                "windows": int(len(dataset)),
+                "requested_limit": int(config.eval.limit),
+            }
+        else:
+            formal_coverage = _validate_formal_temporal_coverage(dataset)
         derived_lineage = dict(dataset.cache_lineage_summary)
         collate_function = collate_temporal_training_samples
     if len(dataset) == 0:
@@ -3925,8 +4026,13 @@ def run(args: argparse.Namespace) -> int:
                 ][:, 2]
                 endpoint_K_hr = batch["K_hr_sequence"][:, 2]
                 endpoint_baseline_m = batch["baseline_m_sequence"][:, 2]
+                (
+                    _selected_pose_sequence,
+                    selected_pose_valid_sequence,
+                    _selected_pose_quality_sequence,
+                ) = temporal_pose_inputs_from_batch(batch, config)
                 endpoint_pose_valid_count += int(
-                    batch["temporal_pose_valid_sequence"][:, 2].sum().item()
+                    selected_pose_valid_sequence[:, 2].sum().item()
                 )
                 endpoint_static_prior_valid_count += int(
                     batch["static_prior_valid_sequence"][:, 2].sum().item()
@@ -4214,7 +4320,7 @@ def run(args: argparse.Namespace) -> int:
                     history_valid_hr=(
                         temporal_visualization.shared_transport.valid_history_hr
                     ),
-                    pose_valid=batch["temporal_pose_valid_sequence"][:, 2],
+                    pose_valid=selected_pose_valid_sequence[:, 2],
                 )
                 if topk_v31_accumulator is not None:
                     topk_v31_accumulator.update(
@@ -4501,7 +4607,7 @@ def run(args: argparse.Namespace) -> int:
                 if stage == "temporal":
                     assert temporal_visualization is not None
                     endpoint_pose_valid = bool(
-                        batch["temporal_pose_valid_sequence"][item_index, 2]
+                        selected_pose_valid_sequence[item_index, 2]
                         .detach()
                         .cpu()
                         .item()
