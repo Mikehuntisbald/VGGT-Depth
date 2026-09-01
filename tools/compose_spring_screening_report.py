@@ -350,11 +350,22 @@ def main() -> int:
 
     vggt_arm_reports = [arm_reports.get(name) for name in ("S4", "S5", "S6")]
     any_vggt_result = any(isinstance(report, Mapping) for report in vggt_arm_reports)
-    device_note = (
-        "CPU for S0-S3; CUDA for VGGT-dependent S4-S6"
-        if any_vggt_result
-        else "CPU for S0-S3; CUDA pending for VGGT-dependent S4-S6"
-    )
+    vggt_devices = {
+        str(report.get("device")).lower()
+        for report in vggt_arm_reports
+        if isinstance(report, Mapping) and report.get("device") is not None
+    }
+    if not any_vggt_result:
+        device_note = "CPU for S0-S3; CUDA pending for VGGT-dependent S4-S6"
+    elif vggt_devices == {"cpu"}:
+        device_note = "CPU for S0-S6 (VGGT CPU fallback; resident vLLM left untouched)"
+    elif vggt_devices == {"cuda"} or vggt_devices == {"cuda:0"}:
+        device_note = "CPU for S0-S3; CUDA for VGGT-dependent S4-S6"
+    else:
+        device_note = (
+            "CPU for S0-S3; VGGT-dependent arms used devices "
+            + ", ".join(sorted(vggt_devices))
+        )
 
     payload = {
         "schema_version": 1,
@@ -388,7 +399,11 @@ def main() -> int:
             "spring_gt_teacher": "dataset GT (disp1_left), independent from FFS observation",
             "ffs_observation": "FoundationStereo 11-33-40 model_best_bp2.pth",
             "gt_pose": "Spring cam_data/extrinsics.txt, world_to_camera_opencv",
-            "vggt_pose": "not materialized; independent switch remains explicit",
+            "vggt_pose": (
+                "VGGT-Omega derived pose cache for S5/S6; independent from Spring GT pose"
+                if any_vggt_result
+                else "not materialized; independent switch remains explicit"
+            ),
             "train_manifest": str(train_manifest.expanduser().resolve()),
             "validation_manifest": str(args.manifest.expanduser().resolve()),
             "sequence_disjoint": True,
@@ -417,9 +432,10 @@ def main() -> int:
             (
                 "S4/S5 are blocked by missing raw/derived VGGT caches; current GPU memory is insufficient while vLLM occupies both GPUs."
                 if not any_vggt_result
-                else "S4-S6 VGGT-dependent artifacts were evaluated through the bounded screening path."
+                else "S4-S6 VGGT-dependent artifacts were evaluated through the bounded screening path; all used the recorded device and no resident vLLM process was modified."
             ),
             "S6 uses tools/train_spring_epipolar.py and tools/eval_spring_epipolar.py; any produced result remains bounded screening-only and cannot replace canonical Stage-C evidence.",
+            "S6 native Spring fields are an explicitly marked exact-zero-correction reuse of the fixed-crop S5 base side-channel; the S6 pseudo-GT evaluator itself remains the direct Stage-C receipt.",
         ],
     }
     args.output_json.parent.mkdir(parents=True, exist_ok=True)
