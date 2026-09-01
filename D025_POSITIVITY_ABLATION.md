@@ -80,3 +80,26 @@ finite, non-negative `positivity_penalty`. The audit reports a separate
 rolling statistic for that weighted penalty and rejects missing, extra, or
 negative terms. Baseline runs remain constrained to exactly the original eight
 terms.
+
+For the final controlled comparison only (never an intermediate or limited
+evaluation), run the read-only final audit after both the D-025 15k training
+audit and its complete 238-window evaluation are available:
+
+```bash
+python tools/audit_d025_evaluation.py \
+  --d025-training-audit /path/to/d025_training_audit_final.json \
+  --d025-evaluation-dir /path/to/d025_eval_238_windows \
+  --canonical-stage-b-report reports/m4/stage_b_eval_final.json \
+  --canonical-stage-b-evaluation-dir outputs/ffs_omega_tsr_x2/stage_b_eval \
+  --d025-preflight reports/m4/d025_positivity_preflight_formal_source.json \
+  --json-out /path/outside/evaluations/d025_final_controlled_audit.json
+```
+
+It binds the D-025 run to the frozen full-15k protocol, final Stage-A SHA,
+training cache/manifest lineage, checkpoint/config/Git identity, raw T3+VGGT
+metrics JSON/CSV, 244/240/238 coverage, and evaluator hashes. `T3_VGGT` raw
+alone owns the decision: raw negative, invalid, and NaN rates must each be
+strictly below 0.5%. It also fail-closes if low-confidence, completeness,
+trusted-region, EPE/Bad/boundary, or temporal guardrails regress beyond the
+declared limits. `*_clamp0` remains a non-owning diagnostic, and the FFS
+pseudo-target remains engineering-only rather than paper ground truth.
