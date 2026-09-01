@@ -1,0 +1,34 @@
+experiment: ffs_omega_tsr_epipolar_x2_v2
+defaults_from: configs/temporal_x2_v2.yaml
+
+data:
+  crop_mode: random
+  epipolar_rectification_audit_path: null
+
+model:
+  use_history: true
+  use_vggt_pose: true
+  epipolar_refinement: true
+  epipolar_offsets_hr_px: [-2, -1, 0, 1, 2]
+  epipolar_feature_channels: 32
+  epipolar_correlation_groups: 8
+  epipolar_head_channels: 48
+  epipolar_correction_limit_hr_px: 2.0
+  epipolar_confidence_temperature: 1.0
+  epipolar_vertical_geometry: audited_same_row_rectified_pixels_v1
+
+stage_c_physical_output_v2:
+  enabled: true
+  protocol_version: base_aware_noop_nonnegative_v2
+  no_op_threshold: 0.5
+  pre_lower_bound_negative_penalty_weight: 0.10
+
+train:
+  stage: epipolar
+  init_from_stage: temporal
+  steps_epipolar: 5000
+  correction_regularizer_weight: 0.01
+  checkpoint_interval: 500
+  log_interval: 1
+  epipolar_output_dir: null
+  compile_model: false

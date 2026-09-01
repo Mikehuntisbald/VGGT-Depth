@@ -104,9 +104,12 @@ ages 1 and 2. Every candidate carries HR-pixel disparity, continuous
 fractional phase, confidence, temporal age, visibility/collision state, and an
 explicit normalized z-aware weight. Weights combine the bilinear footprint,
 confidence, depth relative to the nearest candidate, age decay, and collision
-penalty. The ConvGRU hidden state is detached and forward-splatted on the LR
-grid with calibrated LR intrinsics; it is not copied unwarped between frames
-and is not backward-warped with `grid_sample`.
+penalty. The latest ConvGRU hidden state is forward-splatted on the LR grid
+with calibrated LR intrinsics; geometry/index selection is detached while
+gradients through the selected hidden feature values are retained. The age-2
+state is not injected again because it is already summarized by the age-1
+recurrent state. Hidden state is neither copied unwarped between frames nor
+backward-warped with `grid_sample`.
 
 The primary v2 temporal metric/loss is teacher/GT temporal-residual error:
 
@@ -115,8 +118,11 @@ abs((d_hat_t - W(d_hat_{t-1})) - (d_ref_t - W(d_ref_{t-1})))
 ```
 
 It is reduced only on the common valid, visible, non-collision, static and
-geometry-safe prediction/reference domain. The current cache-backed reference
-is the trusted HR FFS teacher; `reference: gt` is reserved but fails closed
+geometry-safe prediction/reference domain. Both warped terms use the same
+teacher/GT source correspondence and reference depth ratio; prediction and
+reference are never associated by two independent warps. The current
+cache-backed reference is the trusted HR FFS teacher; `reference: gt` is
+reserved but fails closed
 until real sequence GT is wired end to end. The historical v1 `TEPE` field is
 the legacy absolute current-versus-warped-history difference and remains
 available under its legacy name for reproducibility; it must not be relabeled
@@ -125,14 +131,17 @@ as the v2 residual metric.
 The v2 reconstruction head predicts physical validity and FFS-hole completion
 explicitly. Disparity is a non-negative magnitude with no positive epsilon
 floor. Pixels rejected by the validity/completion contract are exactly zero and
-invalid, so they cannot become fake positive point-cloud completion. Trusted
-FFS pixels remain exact metric anchors.
+invalid, so they cannot become fake positive point-cloud completion. V2 does
+not supervise or emit RGB-only metric completion when every geometry source is
+absent. Trusted FFS pixels remain exact metric anchors.
 
 Stage C v2 adds a hard no-op gate with a straight-through estimator. A freshly
 initialized refiner is an exact identity in the forward pass, while the soft
 backward path can train the correction and gate. The applied FP32 correction is
 base-aware and satisfies `delta_hr_px >= -base_disparity_hr_px`; an invalid or
-zero base stays exactly zero instead of being fabricated into depth.
+zero base stays exactly zero instead of being fabricated into depth. Its
+checkpoint role is `ARCHITECTURE_V2_STAGE_C`, with canonical replacement
+explicitly false until a future, separately audited promotion decision.
 
 The v2 launch order is fixed:
 

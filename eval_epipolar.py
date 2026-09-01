@@ -494,11 +494,13 @@ def checkpoint_completion_status(
     controlled_ablation = stage_c_positivity_ablation_from_config(
         stage_c_config
     ).enabled
+    architecture_v2 = stage_c_physical_output_v2_from_config(stage_c_config).enabled
     high_vram = stage_c_high_vram_from_config(stage_c_config).enabled
     stage_c_complete = (
         stage_c_execution_complete
         and stage_c_canonical_schedule
         and not controlled_ablation
+        and not architecture_v2
     )
     base_execution_complete = actual_base == expected_base
     base_canonical_schedule = (
@@ -546,6 +548,20 @@ def checkpoint_completion_status(
                 and stage_c_metadata["high_vram_preflight"].get("status")
                 == "PREFLIGHT_PASS"
             )
+    if architecture_v2:
+        architecture_complete = (
+            stage_c_execution_complete and stage_c_canonical_schedule
+        )
+        stage_c_status.update(
+            {
+                "architecture_v2": True,
+                "architecture_v2_training_complete": architecture_complete,
+                "canonical_stage_c_replacement": False,
+            }
+        )
+        result["architecture_v2_all_complete"] = bool(
+            architecture_complete and base_complete
+        )
     return result
 
 
@@ -1851,6 +1867,7 @@ def load_stage_c_checkpoint(
     if payload["supervision"] != PSEUDO_GT_SUPERVISION:
         raise CheckpointMismatchError("Stage-C pseudo-GT supervision contract differs")
     saved_positivity = stage_c_positivity_ablation_from_config(config)
+    saved_physical_v2 = stage_c_physical_output_v2_from_config(config)
     if saved_positivity.enabled:
         prerequisite = payload.get("d025_prerequisite")
         formal_audit = (
@@ -1888,6 +1905,21 @@ def load_stage_c_checkpoint(
         ):
             raise CheckpointMismatchError(
                 "Stage-C positivity checkpoint lacks its formal passing D-025 lineage"
+            )
+    elif saved_physical_v2.enabled:
+        completion = payload.get("completion")
+        if (
+            payload.get("experiment_role") != "ARCHITECTURE_V2_STAGE_C"
+            or "d025_prerequisite" in payload
+            or not isinstance(completion, Mapping)
+            or completion.get("formal_training_complete") is not False
+            or completion.get("canonical_stage_c_replacement") is not False
+            or not isinstance(
+                completion.get("architecture_v2_training_complete"), bool
+            )
+        ):
+            raise CheckpointMismatchError(
+                "architecture-v2 Stage-C checkpoint role/completion is malformed"
             )
     elif "d025_prerequisite" in payload or "experiment_role" in payload:
         raise CheckpointMismatchError(
@@ -2325,6 +2357,9 @@ def _validate_stage_c_and_base_lineage(
     if recomputed_d025_prerequisite is not None:
         result["d025_prerequisite"] = dict(recomputed_d025_prerequisite)
         result["canonical_stage_c_replacement"] = False
+    if stage_c_metadata.get("experiment_role") == "ARCHITECTURE_V2_STAGE_C":
+        result["experiment_role"] = "ARCHITECTURE_V2_STAGE_C"
+        result["canonical_stage_c_replacement"] = False
     if recomputed_high_vram_preflight is not None:
         result["high_vram_preflight"] = dict(recomputed_high_vram_preflight)
     return result
@@ -2641,16 +2676,21 @@ def run(args: argparse.Namespace) -> int:
     high_vram = stage_c_high_vram_from_config(
         stage_c_metadata["config"]
     ).enabled
+    physical_v2 = stage_c_physical_output_v2_from_config(
+        stage_c_metadata["config"]
+    ).enabled
     runtime_source_bundle = validate_runtime_source_bundle(
         stage_c_metadata["runtime_source_bundle"],
         checkpoint_git_hash=str(stage_c_metadata["git_hash"]),
         expected_scopes=stage_c_runtime_git_scopes(
             controlled_ablation=controlled_ablation,
             high_vram=high_vram,
+            physical_v2=physical_v2,
         ),
         expected_paths=stage_c_runtime_relative_paths(
             controlled_ablation=controlled_ablation,
             high_vram=high_vram,
+            physical_v2=physical_v2,
         ),
     )
     crop_contract = validate_formal_crop_contract(

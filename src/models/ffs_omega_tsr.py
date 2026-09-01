@@ -14,6 +14,7 @@ from .convex_upsampler import ConvexUpsampler
 from .rgb_encoder import ConvNormAct, RGBPyramidEncoder
 from .source_gating import SourceGatingHead
 from .temporal_gru import StackedConvGRU
+from .topk_history_encoder import TopKHistoryEncoder
 
 
 @dataclass(frozen=True)
@@ -52,6 +53,9 @@ class ModelOutput:
             exact zero rather than epsilon. ``None`` for legacy models.
         completion_mask: Opt-in hard hole-completion decision. ``None`` for
             legacy models.
+        history_topk_effective_weights: Sanitized top-K candidate weights
+            ``[B,K,H,W]`` for the opt-in history V2 path.
+        history_topk_valid_mask: Effective candidate mask with the same shape.
 
     The final five fields are diagnostic tensor taps only.  They do not add
     modules, parameters, buffers, or checkpoint state.  Their optional defaults
@@ -78,6 +82,8 @@ class ModelOutput:
     completion_logits: Tensor | None = None
     output_valid_mask: Tensor | None = None
     completion_mask: Tensor | None = None
+    history_topk_effective_weights: Tensor | None = None
+    history_topk_valid_mask: Tensor | None = None
 
 
 def count_trainable_parameters(module: nn.Module) -> int:
@@ -137,6 +143,8 @@ class FFSOmegaTSR(nn.Module):
         physical_valid_threshold: float = 0.5,
         completion_threshold: float = 0.5,
         trusted_ffs_confidence_threshold: float = 0.8,
+        temporal_history_top_k: int | None = None,
+        temporal_history_feature_channels: int = 32,
     ) -> None:
         super().__init__()
         if rgb_channels != (32, 64, 96):
@@ -173,6 +181,18 @@ class FFSOmegaTSR(nn.Module):
                 or not 0.0 < float(value) < 1.0
             ):
                 raise ValueError(f"{name} must be finite and in (0,1)")
+        if temporal_history_top_k is not None and (
+            isinstance(temporal_history_top_k, bool)
+            or not isinstance(temporal_history_top_k, int)
+            or temporal_history_top_k < 2
+        ):
+            raise ValueError("temporal_history_top_k must be None or an integer >= 2")
+        if (
+            isinstance(temporal_history_feature_channels, bool)
+            or not isinstance(temporal_history_feature_channels, int)
+            or temporal_history_feature_channels <= 0
+        ):
+            raise ValueError("temporal_history_feature_channels must be positive")
 
         self.scale = scale
         self.residual_limit_hr_px = float(residual_limit_hr_px)
@@ -192,10 +212,19 @@ class FFSOmegaTSR(nn.Module):
         self.trusted_ffs_confidence_threshold = float(
             trusted_ffs_confidence_threshold
         )
+        self.temporal_history_top_k = temporal_history_top_k
         self.rgb_encoder = RGBPyramidEncoder(rgb_channels)
         self.geometry_encoder = GeometryEncoder(geometry_channels)
+        self.topk_history_encoder: TopKHistoryEncoder | None = None
+        if temporal_history_top_k is not None:
+            self.topk_history_encoder = TopKHistoryEncoder(
+                output_channels=temporal_history_feature_channels
+            )
+        recurrent_input_channels = rgb_channels[-1] + geometry_channels
+        if self.topk_history_encoder is not None:
+            recurrent_input_channels += temporal_history_feature_channels
         self.temporal_fusion = StackedConvGRU(
-            input_channels=rgb_channels[-1] + geometry_channels,
+            input_channels=recurrent_input_channels,
             hidden_channels=hidden_channels,
             num_layers=gru_layers,
         )
@@ -290,6 +319,12 @@ class FFSOmegaTSR(nn.Module):
         history_visibility: Tensor | None = None,
         photometric_residual: Tensor | None = None,
         fractional_offset_px: Tensor | None = None,
+        history_topk_disparity_hr_px: Tensor | None = None,
+        history_topk_confidence: Tensor | None = None,
+        history_topk_fractional_offset_px: Tensor | None = None,
+        history_topk_age_frames: Tensor | None = None,
+        history_topk_weights: Tensor | None = None,
+        history_topk_valid_mask: Tensor | None = None,
         valid_ffs: Tensor | None = None,
         valid_vggt: Tensor | None = None,
         valid_history: Tensor | None = None,
@@ -308,6 +343,9 @@ class FFSOmegaTSR(nn.Module):
             history_visibility: Z-buffer visibility ``[B,1,H,W]``.
             photometric_residual: Current/history residual ``[B,1,H,W]``.
             fractional_offset_px: Reprojection phase ``[B,2,H,W]`` in pixels.
+            history_topk_*: Opt-in candidate tensors. Scalar fields are
+                ``[B,K,H,W]``, phase is ``[B,K,2,H,W]``, and validity is bool.
+                They are already z-aware splatted into the current LR grid.
             valid_ffs, valid_vggt, valid_history: Optional source masks.
             hidden_state: Previous two-layer causal state, or ``None`` at reset.
         """
@@ -486,9 +524,104 @@ class FFSOmegaTSR(nn.Module):
                 f"{rgb_features.feature_lr.shape[-2:]} vs {(height_lr, width_lr)}"
             )
         geometry_feature_lr = self.geometry_encoder(geometry_lr)
-        recurrent_input_lr = torch.cat(
-            (rgb_features.feature_lr, geometry_feature_lr), dim=1
+        recurrent_features = [rgb_features.feature_lr, geometry_feature_lr]
+        topk_effective_weights: Tensor | None = None
+        topk_effective_valid_mask: Tensor | None = None
+        supplied_topk = (
+            history_topk_disparity_hr_px,
+            history_topk_confidence,
+            history_topk_fractional_offset_px,
+            history_topk_age_frames,
+            history_topk_weights,
+            history_topk_valid_mask,
         )
+        if self.topk_history_encoder is None:
+            if any(value is not None for value in supplied_topk):
+                raise ValueError(
+                    "top-K history inputs require temporal_history_top_k at construction"
+                )
+        else:
+            assert self.temporal_history_top_k is not None
+            if all(value is None for value in supplied_topk):
+                topk_shape = (
+                    batch,
+                    self.temporal_history_top_k,
+                    height_lr,
+                    width_lr,
+                )
+                topk_disparity = disparity_ffs_hr_px.new_zeros(topk_shape)
+                topk_confidence = disparity_ffs_hr_px.new_zeros(topk_shape)
+                topk_phase = disparity_ffs_hr_px.new_zeros(
+                    (batch, self.temporal_history_top_k, 2, height_lr, width_lr)
+                )
+                topk_age = disparity_ffs_hr_px.new_zeros(topk_shape)
+                topk_weights = disparity_ffs_hr_px.new_zeros(topk_shape)
+                topk_valid = torch.zeros(
+                    topk_shape, dtype=torch.bool, device=rgb_hr.device
+                )
+            elif any(value is None for value in supplied_topk):
+                raise ValueError("all six top-K history tensors must be supplied together")
+            else:
+                assert history_topk_disparity_hr_px is not None
+                assert history_topk_confidence is not None
+                assert history_topk_fractional_offset_px is not None
+                assert history_topk_age_frames is not None
+                assert history_topk_weights is not None
+                assert history_topk_valid_mask is not None
+                topk_shape = (
+                    batch,
+                    self.temporal_history_top_k,
+                    height_lr,
+                    width_lr,
+                )
+                if history_topk_disparity_hr_px.shape != topk_shape:
+                    raise ValueError(
+                        "history_topk_disparity_hr_px must have shape "
+                        f"{topk_shape}, got {tuple(history_topk_disparity_hr_px.shape)}"
+                    )
+                for name, value in (
+                    ("history_topk_confidence", history_topk_confidence),
+                    ("history_topk_age_frames", history_topk_age_frames),
+                    ("history_topk_weights", history_topk_weights),
+                ):
+                    if value.shape != topk_shape:
+                        raise ValueError(f"{name} must have shape {topk_shape}")
+                expected_phase_shape = (
+                    batch,
+                    self.temporal_history_top_k,
+                    2,
+                    height_lr,
+                    width_lr,
+                )
+                if history_topk_fractional_offset_px.shape != expected_phase_shape:
+                    raise ValueError(
+                        "history_topk_fractional_offset_px must have shape "
+                        f"{expected_phase_shape}"
+                    )
+                if history_topk_valid_mask.shape != topk_shape:
+                    raise ValueError(
+                        f"history_topk_valid_mask must have shape {topk_shape}"
+                    )
+                topk_disparity = history_topk_disparity_hr_px
+                topk_confidence = history_topk_confidence
+                topk_phase = history_topk_fractional_offset_px
+                topk_age = history_topk_age_frames
+                topk_weights = history_topk_weights
+                topk_valid = history_topk_valid_mask
+            encoding = self.topk_history_encoder(
+                topk_disparity.to(dtype=target_dtype),
+                topk_confidence.to(dtype=target_dtype),
+                topk_phase.to(dtype=target_dtype),
+                topk_age.to(dtype=target_dtype),
+                topk_weights.to(dtype=target_dtype),
+                topk_valid,
+            )
+            recurrent_features.append(encoding.aggregate_feature)
+            topk_effective_weights = encoding.effective_weights
+            topk_effective_valid_mask = (
+                topk_valid & (encoding.effective_weights > 0)
+            )
+        recurrent_input_lr = torch.cat(recurrent_features, dim=1)
         fused_feature_lr, next_hidden_state = self.temporal_fusion(
             recurrent_input_lr, hidden_state
         )
@@ -557,9 +690,10 @@ class FFSOmegaTSR(nn.Module):
             disparity_hr_px = disparity_anchored_hr_px
         else:
             # V2 represents disparity as a non-negative magnitude plus an
-            # explicit physical-valid gate.  ``abs`` has no epsilon floor:
-            # magnitude can be exactly zero, and zero always remains invalid.
-            # Keep the sign boundary in FP32 under BF16 autocast.
+            # explicit physical-valid gate. Softplus avoids mirroring a large
+            # negative raw proposal into a large positive disparity. Invalid
+            # pixels are hard-masked to exact zero below, so the magnitude
+            # parameterization never creates epsilon-valid fake points.
             validity_outputs = self.validity_completion_head(hr_decoder_input)
             valid_logits = validity_outputs[:, :1].float()
             completion_logits = validity_outputs[:, 1:2].float()
@@ -603,7 +737,9 @@ class FFSOmegaTSR(nn.Module):
                 | (valid_ffs_hr & predicted_valid)
                 | completion_mask
             )
-            raw_magnitude_hr_px = disparity_raw_hr_px.float().abs()
+            raw_magnitude_hr_px = functional.softplus(
+                disparity_raw_hr_px.float(), beta=4.0
+            )
             disparity_raw_hr_px = torch.where(
                 source_support_hr,
                 raw_magnitude_hr_px,
@@ -665,4 +801,6 @@ class FFSOmegaTSR(nn.Module):
             completion_logits=completion_logits,
             output_valid_mask=output_valid_mask,
             completion_mask=completion_mask,
+            history_topk_effective_weights=topk_effective_weights,
+            history_topk_valid_mask=topk_effective_valid_mask,
         )

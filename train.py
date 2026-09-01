@@ -56,9 +56,15 @@ from losses import (  # noqa: E402
     measurement_consistency_loss,
     sample_hr_at_lr_centers,
     temporal_consistency_loss,
+    temporal_residual_consistency_loss,
     validity_completion_loss,
 )
 from geometry.history_confidence import history_confidence  # noqa: E402
+from geometry.topk_splat import (  # noqa: E402
+    TopKSplatResult,
+    merge_topk_splat_results,
+    topk_z_aware_splat,
+)
 from geometry.zbuffer_reproject import WarpResult, zbuffer_reproject  # noqa: E402
 from models.ffs_omega_tsr import (  # noqa: E402
     FFSOmegaTSR,
@@ -197,6 +203,133 @@ class PhysicalOutputV2:
     valid_bce_weight: float = 0.0
     completion_bce_weight: float = 0.0
     calibration_weight: float = 0.0
+
+
+TEMPORAL_HISTORY_V2_PROTOCOL = "topk_z_aware_hidden_warp_v2"
+TEMPORAL_RESIDUAL_V2_PROTOCOL = "teacher_gt_temporal_residual_v2"
+
+
+@dataclass(frozen=True, slots=True)
+class TemporalHistoryV2:
+    """Opt-in multi-age top-K history and hidden-state warp contract."""
+
+    enabled: bool = False
+    top_k: int = 1
+    memory_frames: int = 1
+    splat_footprint: str = "nearest"
+    depth_temperature_m: float = 0.25
+    age_temperature_frames: float = 3.0
+    source_collision_penalty: float = 0.5
+    candidate_feature_channels: int = 32
+    collision_depth_gap_m: float = 0.05
+    collision_relative_depth_gap: float = 0.05
+
+
+@dataclass(frozen=True, slots=True)
+class TemporalResidualV2:
+    """Opt-in teacher/GT temporal-residual supervision contract."""
+
+    enabled: bool = False
+    reference: str = "teacher"
+
+
+def temporal_history_v2_from_config(
+    config: Mapping[str, Any] | DictConfig,
+) -> TemporalHistoryV2:
+    """Parse top-K transport without changing resolved legacy configs."""
+
+    section = config.get("temporal_history_v2")
+    if section is None:
+        return TemporalHistoryV2()
+    if not isinstance(section, Mapping):
+        raise ValueError("temporal_history_v2 must be a mapping")
+    enabled = section.get("enabled")
+    if enabled is False:
+        return TemporalHistoryV2()
+    if enabled is not True:
+        raise ValueError("temporal_history_v2.enabled must be a bool")
+    if section.get("protocol_version") != TEMPORAL_HISTORY_V2_PROTOCOL:
+        raise ValueError("temporal_history_v2 protocol version mismatch")
+
+    def positive_integer(name: str) -> int:
+        value = section.get(name)
+        if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+            raise ValueError(f"temporal_history_v2.{name} must be a positive integer")
+        return value
+
+    def positive_float(name: str) -> float:
+        value = section.get(name)
+        if (
+            isinstance(value, bool)
+            or not isinstance(value, (int, float))
+            or not math.isfinite(float(value))
+            or float(value) <= 0
+        ):
+            raise ValueError(f"temporal_history_v2.{name} must be finite and > 0")
+        return float(value)
+
+    top_k = positive_integer("top_k")
+    memory_frames = positive_integer("memory_frames")
+    candidate_channels = positive_integer("candidate_feature_channels")
+    if memory_frames > 2:
+        raise ValueError("causal T=3 supports at most two history memory frames")
+    footprint = section.get("splat_footprint")
+    if footprint not in {"bilinear", "nearest"}:
+        raise ValueError(
+            "temporal_history_v2.splat_footprint must be bilinear or nearest"
+        )
+    collision_penalty = section.get("source_collision_penalty")
+    if (
+        isinstance(collision_penalty, bool)
+        or not isinstance(collision_penalty, (int, float))
+        or not math.isfinite(float(collision_penalty))
+        or not 0.0 <= float(collision_penalty) <= 1.0
+    ):
+        raise ValueError(
+            "temporal_history_v2.source_collision_penalty must be in [0,1]"
+        )
+    return TemporalHistoryV2(
+        enabled=True,
+        top_k=top_k,
+        memory_frames=memory_frames,
+        splat_footprint=str(footprint),
+        depth_temperature_m=positive_float("depth_temperature_m"),
+        age_temperature_frames=positive_float("age_temperature_frames"),
+        source_collision_penalty=float(collision_penalty),
+        candidate_feature_channels=candidate_channels,
+        collision_depth_gap_m=positive_float("collision_depth_gap_m"),
+        collision_relative_depth_gap=positive_float(
+            "collision_relative_depth_gap"
+        ),
+    )
+
+
+def temporal_residual_v2_from_config(
+    config: Mapping[str, Any] | DictConfig,
+) -> TemporalResidualV2:
+    """Parse teacher/GT residual supervision while retaining legacy TEPE."""
+
+    section = config.get("temporal_residual_v2")
+    if section is None:
+        return TemporalResidualV2()
+    if not isinstance(section, Mapping):
+        raise ValueError("temporal_residual_v2 must be a mapping")
+    enabled = section.get("enabled")
+    if enabled is False:
+        return TemporalResidualV2()
+    if enabled is not True:
+        raise ValueError("temporal_residual_v2.enabled must be a bool")
+    if section.get("protocol_version") != TEMPORAL_RESIDUAL_V2_PROTOCOL:
+        raise ValueError("temporal_residual_v2 protocol version mismatch")
+    reference = section.get("reference")
+    if reference not in {"teacher", "gt"}:
+        raise ValueError("temporal_residual_v2.reference must be teacher or gt")
+    # The current cache dataset exposes the teacher path.  Reserving ``gt`` in
+    # the schema makes the metric definition stable, but fail closed until a
+    # real-GT sequence field is present end to end.
+    if reference == "gt":
+        raise ValueError("temporal_residual_v2 reference=gt is not yet cache-backed")
+    return TemporalResidualV2(enabled=True, reference=str(reference))
 
 
 def physical_output_v2_from_config(
@@ -418,6 +551,17 @@ def loss_weights_from_config(config: Mapping[str, Any] | DictConfig) -> LossWeig
 
 def _validate_common_training_config(config: DictConfig, *, total_steps: int) -> None:
     physical_output_v2_from_config(config)
+    temporal_history = temporal_history_v2_from_config(config)
+    temporal_residual = temporal_residual_v2_from_config(config)
+    if temporal_history.enabled != temporal_residual.enabled:
+        raise ValueError(
+            "temporal_history_v2 and temporal_residual_v2 must be enabled together"
+        )
+    if temporal_history.enabled:
+        if temporal_history.top_k < 2:
+            raise ValueError("temporal_history_v2 must retain at least K=2 candidates")
+        if temporal_history.candidate_feature_channels != 32:
+            raise ValueError("the V2 top-K candidate feature width is fixed to 32")
     if int(config.data.scale) != 2 or int(config.model.convex_scale) != 2:
         raise ValueError("the first-round training pipeline is fixed to x2")
     if list(config.model.rgb_channels) != [32, 64, 96]:
@@ -497,6 +641,9 @@ def validate_stage_b_config(config: DictConfig) -> None:
         raise ValueError("Stage B must initialize from the spatial stage")
     if not bool(config.train.history_detach):
         raise ValueError("Stage B MVP requires detached disparity history")
+    temporal_history = temporal_history_v2_from_config(config)
+    if temporal_history.enabled and temporal_history.memory_frames != 2:
+        raise ValueError("causal T=3 V2 requires exactly two history memory frames")
     # Parsing here makes a malformed ablation config fail before cache/model
     # construction, while an absent section leaves the formal contract alone.
     positivity_ablation_from_config(config)
@@ -750,6 +897,7 @@ def build_temporal_dataset_and_identities(
 def build_model(config: DictConfig) -> FFSOmegaTSR:
     positivity_ablation = positivity_ablation_from_config(config)
     physical_v2 = physical_output_v2_from_config(config)
+    temporal_history_v2 = temporal_history_v2_from_config(config)
     model = FFSOmegaTSR(
         rgb_channels=tuple(int(value) for value in config.model.rgb_channels),
         geometry_channels=int(config.model.geometry_channels),
@@ -766,6 +914,12 @@ def build_model(config: DictConfig) -> FFSOmegaTSR:
         completion_threshold=physical_v2.completion_threshold,
         trusted_ffs_confidence_threshold=(
             physical_v2.trusted_ffs_confidence_threshold
+        ),
+        temporal_history_top_k=(
+            temporal_history_v2.top_k if temporal_history_v2.enabled else None
+        ),
+        temporal_history_feature_channels=(
+            temporal_history_v2.candidate_feature_channels
         ),
     )
     parameter_count = count_trainable_parameters(model)
@@ -888,6 +1042,11 @@ def _with_physical_output_v2_loss(
         size=output.valid_logits.shape[-2:],
         mode="nearest",
     ).to(dtype=torch.bool)
+    source_support_hr = functional.interpolate(
+        output.source_valid_mask.any(dim=1, keepdim=True).to(dtype=torch.float32),
+        size=output.valid_logits.shape[-2:],
+        mode="nearest",
+    ).to(dtype=torch.bool)
     terms = validity_completion_loss(
         valid_logits=output.valid_logits,
         completion_logits=output.completion_logits,  # type: ignore[arg-type]
@@ -896,6 +1055,7 @@ def _with_physical_output_v2_loss(
         teacher_valid_mask=teacher_valid,
         teacher_confidence=teacher_confidence,
         observation_valid_mask_hr=observation_valid_hr,
+        source_support_mask_hr=source_support_hr,
     )
     additional = (
         contract.valid_bce_weight * terms.valid_bce
@@ -959,6 +1119,33 @@ class TemporalTransport:
     photometric_residual_hr: Tensor
     static_mask_hr: Tensor
     geometry_consistent_mask_hr: Tensor
+    topk_disparity_history_hr_px: Tensor | None = None
+    topk_confidence_history: Tensor | None = None
+    topk_fractional_offset_px: Tensor | None = None
+    topk_temporal_age_frames: Tensor | None = None
+    topk_z_aware_weights: Tensor | None = None
+    topk_valid_mask: Tensor | None = None
+    warped_hidden_state: tuple[Tensor, ...] | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class TemporalMemoryEntry:
+    """One causal model state retained for direct warp into a future frame."""
+
+    output: ModelOutput
+    rgb_hr: Tensor
+    time_index: int
+
+
+@dataclass(frozen=True, slots=True)
+class ReferenceTemporalWarp:
+    """Teacher/GT age-1 warp used only by temporal-residual supervision."""
+
+    disparity_hr_px: Tensor
+    prediction_disparity_hr_px: Tensor | None
+    valid_mask_hr: Tensor
+    visibility_mask_hr: Tensor
+    collision_mask_hr: Tensor
 
 
 def _identity_camera_from_world(
@@ -1203,16 +1390,715 @@ def build_temporal_transport(
     )
 
 
+def _lr_intrinsics_from_hr(intrinsics_hr: Tensor, *, scale: int) -> Tensor:
+    """Return calibrated LR-grid intrinsics without changing disparity units."""
+
+    if intrinsics_hr.ndim != 3 or intrinsics_hr.shape[-2:] != (3, 3):
+        raise ValueError("intrinsics_hr must have shape [B,3,3]")
+    if isinstance(scale, bool) or not isinstance(scale, int) or scale <= 0:
+        raise ValueError("scale must be a positive integer")
+    intrinsics_lr = intrinsics_hr.clone()
+    intrinsics_lr[:, 0, :] /= float(scale)
+    intrinsics_lr[:, 1, :] /= float(scale)
+    intrinsics_lr[:, 2] = intrinsics_hr[:, 2]
+    return intrinsics_lr
+
+
+def validate_v2_temporal_calibration(
+    intrinsics_hr_sequence: Tensor,
+    baseline_m_sequence: Tensor,
+) -> None:
+    """Require one calibrated stereo camera across the causal T=3 crop.
+
+    V2 directly warps age-1/age-2 memories using the current window's VGGT
+    pose gauge. Its HR-disparity depth conversion therefore assumes the same
+    cropped intrinsics and physical baseline at every student time. The formal
+    dataset already uses one shared crop; this check prevents silent misuse by
+    another caller.
+    """
+
+    if (
+        intrinsics_hr_sequence.ndim != 4
+        or intrinsics_hr_sequence.shape[1:] != (3, 3, 3)
+    ):
+        raise ValueError("K_hr_sequence must have shape [B,3,3,3]")
+    if baseline_m_sequence.shape != (intrinsics_hr_sequence.shape[0], 3):
+        raise ValueError("baseline_m_sequence must have shape [B,3]")
+    reference_k = intrinsics_hr_sequence[:, :1]
+    if not bool(
+        torch.isclose(
+            intrinsics_hr_sequence,
+            reference_k.expand_as(intrinsics_hr_sequence),
+            atol=1e-6,
+            rtol=0.0,
+        ).all()
+    ):
+        raise ValueError("temporal_history_v2 requires time-invariant cropped K")
+    reference_baseline = baseline_m_sequence[:, :1]
+    if not bool(
+        torch.isclose(
+            baseline_m_sequence,
+            reference_baseline.expand_as(baseline_m_sequence),
+            atol=1e-8,
+            rtol=0.0,
+        ).all()
+    ):
+        raise ValueError("temporal_history_v2 requires time-invariant baseline")
+
+
+def _metric_depth_from_hr_disparity(
+    disparity_hr_px: Tensor,
+    *,
+    intrinsics_hr: Tensor,
+    baseline_m: Tensor,
+) -> tuple[Tensor, Tensor]:
+    """Convert HR-pixel disparity to metric depth and an explicit valid mask."""
+
+    batch_size = disparity_hr_px.shape[0]
+    if disparity_hr_px.ndim != 4 or disparity_hr_px.shape[1] != 1:
+        raise ValueError("disparity_hr_px must have shape [B,1,H,W]")
+    if intrinsics_hr.shape != (batch_size, 3, 3):
+        raise ValueError("intrinsics_hr must have shape [B,3,3]")
+    if baseline_m.shape not in {(batch_size,), (batch_size, 1)}:
+        raise ValueError("baseline_m must have shape [B] or [B,1]")
+    fx_hr = intrinsics_hr[:, 0, 0].reshape(batch_size, 1, 1, 1)
+    baseline = baseline_m.reshape(batch_size, 1, 1, 1)
+    valid = torch.isfinite(disparity_hr_px) & (disparity_hr_px > 0)
+    depth_m = torch.where(
+        valid,
+        fx_hr * baseline / disparity_hr_px.clamp_min(1e-6),
+        torch.zeros_like(disparity_hr_px),
+    )
+    return depth_m, valid
+
+
+def _vggt_pose_pair_for_age(
+    temporal_extrinsics_camera_from_world: Tensor,
+    temporal_pose_valid: Tensor,
+    *,
+    age_frames: int,
+) -> tuple[Tensor, Tensor, Tensor]:
+    """Select same-window left-camera poses for a causal history age."""
+
+    if (
+        temporal_extrinsics_camera_from_world.ndim != 4
+        or temporal_extrinsics_camera_from_world.shape[1:] != (10, 3, 4)
+    ):
+        raise ValueError("temporal extrinsics must have shape [B,10,3,4]")
+    if isinstance(age_frames, bool) or not isinstance(age_frames, int) or not 1 <= age_frames <= 4:
+        raise ValueError("age_frames must be an integer in [1,4]")
+    batch_size = temporal_extrinsics_camera_from_world.shape[0]
+    pose_valid = temporal_pose_valid.reshape(-1).to(dtype=torch.bool)
+    if pose_valid.shape != (batch_size,):
+        raise ValueError("temporal_pose_valid must contain one value per batch item")
+    previous_index = 8 - 2 * age_frames
+    previous_pose = temporal_extrinsics_camera_from_world[:, previous_index].detach()
+    current_pose = temporal_extrinsics_camera_from_world[:, 8].detach()
+    identity = _identity_camera_from_world(
+        batch_size, dtype=previous_pose.dtype, device=previous_pose.device
+    )
+    selector = pose_valid.reshape(batch_size, 1, 1)
+    return (
+        torch.where(selector, previous_pose, identity),
+        torch.where(selector, current_pose, identity),
+        pose_valid,
+    )
+
+
+def _topk_splat_for_memory(
+    *,
+    disparity_hr_px: Tensor,
+    confidence: Tensor,
+    hidden_feature: Tensor | None,
+    source_valid_mask: Tensor,
+    intrinsics_grid: Tensor,
+    intrinsics_hr: Tensor,
+    baseline_m: Tensor,
+    previous_pose: Tensor,
+    current_pose: Tensor,
+    pose_valid: Tensor,
+    age_frames: int,
+    contract: TemporalHistoryV2,
+) -> TopKSplatResult:
+    depth_m, positive = _metric_depth_from_hr_disparity(
+        disparity_hr_px,
+        intrinsics_hr=intrinsics_hr,
+        baseline_m=baseline_m,
+    )
+    source_valid = (
+        source_valid_mask.to(dtype=torch.bool)
+        & positive
+        & pose_valid.reshape(-1, 1, 1, 1)
+    )
+    with torch.autocast(device_type=disparity_hr_px.device.type, enabled=False):
+        return topk_z_aware_splat(
+            disparity_hr_px.float(),
+            depth_m.float(),
+            confidence.float(),
+            intrinsics_grid.float(),
+            previous_pose.float(),
+            current_pose.float(),
+            top_k=contract.top_k,
+            temporal_age_frames=age_frames,
+            previous_hidden_feature=hidden_feature,
+            source_valid_mask=source_valid,
+            splat_footprint=contract.splat_footprint,
+            depth_temperature_m=contract.depth_temperature_m,
+            age_temperature_frames=contract.age_temperature_frames,
+            source_collision_penalty=contract.source_collision_penalty,
+        )
+
+
+def _merge_topk_results(
+    results: Sequence[TopKSplatResult], contract: TemporalHistoryV2
+) -> TopKSplatResult:
+    if not results:
+        raise ValueError("top-K temporal memory cannot be empty")
+    if len(results) == 1:
+        return results[0]
+    return merge_topk_splat_results(
+        results,
+        top_k=contract.top_k,
+        depth_temperature_m=contract.depth_temperature_m,
+        age_temperature_frames=contract.age_temperature_frames,
+        source_collision_penalty=contract.source_collision_penalty,
+    )
+
+
+def _topk_photometric_residual(
+    result: TopKSplatResult,
+    current_rgb_hr: Tensor,
+    valid_mask: Tensor,
+) -> Tensor:
+    warped_rgb = result.weighted_hidden_feature
+    if warped_rgb is None or warped_rgb.shape != current_rgb_hr.shape:
+        raise ValueError("HR top-K transport must carry a warped RGB feature")
+    residual = (warped_rgb.detach().float() - current_rgb_hr.detach().float()).abs().mean(
+        dim=1, keepdim=True
+    )
+    return torch.where(
+        valid_mask,
+        torch.nan_to_num(residual, nan=0.0, posinf=0.0, neginf=0.0),
+        torch.zeros_like(residual),
+    )
+
+
+def _topk_depth_layer_collision(
+    result: TopKSplatResult,
+    contract: TemporalHistoryV2,
+) -> Tensor:
+    """Detect a competing depth layer, not ordinary bilinear overlap.
+
+    Four-neighbour splatting and multi-age same-surface memory naturally put
+    multiple candidates at a target pixel.  Those are not occlusion
+    collisions.  A strict collision exists only when a retained candidate
+    behind the nearest layer differs by both the configured absolute/relative
+    depth tolerance.
+    """
+
+    batch, candidates, height, width = result.depth_m.shape
+    if candidates < 2:
+        return torch.zeros(
+            (batch, 1, height, width),
+            dtype=torch.bool,
+            device=result.depth_m.device,
+        )
+    nearest_depth = result.depth_m[:, :1]
+    threshold = torch.maximum(
+        torch.full_like(nearest_depth, contract.collision_depth_gap_m),
+        nearest_depth.abs() * contract.collision_relative_depth_gap,
+    )
+    competing = (
+        result.valid_mask[:, 1:]
+        & torch.isfinite(result.depth_m[:, 1:])
+        & torch.isfinite(nearest_depth)
+        & ((result.depth_m[:, 1:] - nearest_depth) > threshold)
+    )
+    return competing.any(dim=1, keepdim=True)
+
+
+def _topk_quality_masks(
+    result: TopKSplatResult,
+    *,
+    contract: TemporalHistoryV2,
+    current_rgb_hr: Tensor,
+    current_ffs_disparity_hr_px: Tensor,
+    current_ffs_confidence: Tensor,
+    pose_valid: Tensor,
+    photometric_temperature: float,
+    disparity_temperature_hr_px: float,
+    reject_conflict_hr_px: float,
+    photometric_threshold: float,
+    geometry_threshold_hr_px: float,
+) -> tuple[Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor]:
+    """Gate one top-K aggregate and return confidence plus strict masks."""
+
+    pose_mask = pose_valid.reshape(-1, 1, 1, 1)
+    visibility = result.aggregate_valid_mask & pose_mask
+    collision = _topk_depth_layer_collision(result, contract) & pose_mask
+    warped_disparity = torch.where(
+        visibility,
+        result.weighted_disparity_hr_px,
+        torch.zeros_like(result.weighted_disparity_hr_px),
+    )
+    warped_confidence = torch.where(
+        visibility,
+        result.weighted_confidence,
+        torch.zeros_like(result.weighted_confidence),
+    )
+    photometric = _topk_photometric_residual(
+        result, current_rgb_hr, visibility
+    )
+    current_ffs_disparity_hr = functional.interpolate(
+        current_ffs_disparity_hr_px,
+        size=warped_disparity.shape[-2:],
+        mode="bilinear",
+        align_corners=False,
+    )
+    current_ffs_confidence_hr = functional.interpolate(
+        current_ffs_confidence,
+        size=warped_disparity.shape[-2:],
+        mode="bilinear",
+        align_corners=False,
+    )
+    confidence_result = history_confidence(
+        warped_confidence,
+        visibility,
+        # Top-K is the explicit collision-resolution mechanism. Keep the
+        # collision tensor for strict losses/diagnostics, but do not discard
+        # the z-aware aggregate merely because more than one candidate landed.
+        torch.zeros_like(collision),
+        photometric,
+        warped_disparity,
+        current_ffs_disparity_hr,
+        current_ffs_confidence_hr,
+        photometric_temperature=photometric_temperature,
+        disparity_temperature_hr_px=disparity_temperature_hr_px,
+        reject_conflict_hr_px=reject_conflict_hr_px,
+    )
+    effective_valid = confidence_result.valid_mask & pose_mask
+    geometry_consistent = (
+        effective_valid
+        & torch.isfinite(confidence_result.disparity_error_hr_px)
+        & (confidence_result.disparity_error_hr_px <= geometry_threshold_hr_px)
+    )
+    static_mask = (
+        geometry_consistent
+        & torch.isfinite(photometric)
+        & (photometric <= photometric_threshold)
+    )
+    effective_confidence = torch.where(
+        effective_valid,
+        confidence_result.confidence,
+        torch.zeros_like(confidence_result.confidence),
+    )
+    return (
+        effective_valid,
+        effective_confidence,
+        visibility & effective_valid,
+        collision,
+        photometric,
+        static_mask,
+        geometry_consistent,
+    )
+
+
+def build_topk_temporal_transport(
+    *,
+    memory: Sequence[TemporalMemoryEntry],
+    current_time_index: int,
+    current_rgb_hr: Tensor,
+    current_ffs_disparity_hr_px: Tensor,
+    current_ffs_confidence: Tensor,
+    intrinsics_current_hr: Tensor,
+    baseline_current_m: Tensor,
+    temporal_extrinsics_camera_from_world: Tensor,
+    temporal_pose_valid: Tensor,
+    contract: TemporalHistoryV2,
+    scale: int = 2,
+    photometric_temperature: float = 0.10,
+    disparity_temperature_hr_px: float = 2.0,
+    reject_conflict_hr_px: float = 2.0,
+    photometric_threshold: float = 0.10,
+    geometry_threshold_hr_px: float = 2.0,
+) -> TemporalTransport:
+    """Warp all available causal memories and their ConvGRU state to now.
+
+    Disparity/RGB are splatted on the HR grid before LR centre selection, so
+    thin geometry is never averaged away. ConvGRU states are independently
+    splatted on the calibrated LR grid and supplied as the current recurrent
+    prior. Geometry/index selection is detached; hidden feature values retain
+    gradients for the three-step unroll.
+    """
+
+    if not contract.enabled:
+        raise ValueError("build_topk_temporal_transport requires an enabled contract")
+    if not memory:
+        raise ValueError("top-K temporal transport requires at least one memory")
+    selected = list(memory)[-contract.memory_frames :]
+    selected.sort(key=lambda item: current_time_index - item.time_index)
+    ages = [current_time_index - item.time_index for item in selected]
+    if any(age < 1 or age > contract.memory_frames for age in ages):
+        raise ValueError("memory entries must be distinct causal predecessors")
+    if len(set(ages)) != len(ages):
+        raise ValueError("temporal memory contains duplicate frame ages")
+
+    batch_size = current_ffs_disparity_hr_px.shape[0]
+    if intrinsics_current_hr.shape != (batch_size, 3, 3):
+        raise ValueError("intrinsics_current_hr must have shape [B,3,3]")
+    intrinsics_lr = _lr_intrinsics_from_hr(intrinsics_current_hr, scale=scale)
+    hr_results: list[TopKSplatResult] = []
+    lr_results: list[TopKSplatResult] = []
+    hidden_widths: tuple[int, ...] | None = None
+    age_one_hr: TopKSplatResult | None = None
+
+    for entry, age in zip(selected, ages, strict=True):
+        previous_pose, current_pose, pose_valid = _vggt_pose_pair_for_age(
+            temporal_extrinsics_camera_from_world,
+            temporal_pose_valid,
+            age_frames=age,
+        )
+        previous_disparity_hr = entry.output.disparity_hr_px.detach()
+        previous_confidence_hr = torch.exp(
+            -0.5 * entry.output.log_variance.detach()
+        ).clamp(0.0, 1.0)
+        previous_valid_hr = (
+            torch.isfinite(previous_disparity_hr) & (previous_disparity_hr > 0)
+        )
+        if entry.output.output_valid_mask is not None:
+            previous_valid_hr &= entry.output.output_valid_mask.detach()
+        if entry.output.valid_probability is not None:
+            previous_confidence_hr = (
+                previous_confidence_hr
+                * entry.output.valid_probability.detach().to(previous_confidence_hr)
+            )
+        hr_result = _topk_splat_for_memory(
+            disparity_hr_px=previous_disparity_hr,
+            confidence=previous_confidence_hr,
+            hidden_feature=entry.rgb_hr.detach(),
+            source_valid_mask=previous_valid_hr,
+            intrinsics_grid=intrinsics_current_hr,
+            intrinsics_hr=intrinsics_current_hr,
+            baseline_m=baseline_current_m,
+            previous_pose=previous_pose,
+            current_pose=current_pose,
+            pose_valid=pose_valid,
+            age_frames=age,
+            contract=contract,
+        )
+        hr_results.append(hr_result)
+        if age == 1:
+            age_one_hr = hr_result
+
+        # A ConvGRU state already summarizes all earlier recurrent context.
+        # Warp only the latest state; directly mixing age-2 hidden again would
+        # double-inject information already contained in the age-1 state.
+        if age == 1:
+            if not entry.output.hidden_state:
+                raise ValueError("top-K hidden warp requires a non-empty ConvGRU state")
+            hidden_widths = tuple(
+                int(state.shape[1]) for state in entry.output.hidden_state
+            )
+            hidden_feature = torch.cat(tuple(entry.output.hidden_state), dim=1)
+            previous_disparity_lr = _sample_hr_winner_grid_to_lr(
+                previous_disparity_hr, scale=scale
+            )
+            previous_confidence_lr = _sample_hr_winner_grid_to_lr(
+                previous_confidence_hr, scale=scale
+            )
+            previous_valid_lr = _sample_hr_winner_grid_to_lr(
+                previous_valid_hr, scale=scale
+            )
+            lr_results.append(
+                _topk_splat_for_memory(
+                    disparity_hr_px=previous_disparity_lr,
+                    confidence=previous_confidence_lr,
+                    hidden_feature=hidden_feature,
+                    source_valid_mask=previous_valid_lr,
+                    intrinsics_grid=intrinsics_lr,
+                    intrinsics_hr=intrinsics_current_hr,
+                    baseline_m=baseline_current_m,
+                    previous_pose=previous_pose,
+                    current_pose=current_pose,
+                    pose_valid=pose_valid,
+                    age_frames=age,
+                    contract=contract,
+                )
+            )
+
+    if age_one_hr is None or hidden_widths is None:
+        raise ValueError("top-K transport requires the immediate age-1 memory")
+    merged_hr = _merge_topk_results(hr_results, contract)
+    merged_lr = _merge_topk_results(lr_results, contract)
+    _, _, pose_valid = _vggt_pose_pair_for_age(
+        temporal_extrinsics_camera_from_world,
+        temporal_pose_valid,
+        age_frames=1,
+    )
+    (
+        effective_valid_hr,
+        confidence_history_hr,
+        visibility_hr,
+        collision_hr,
+        photometric_hr,
+        static_hr,
+        geometry_consistent_hr,
+    ) = _topk_quality_masks(
+        merged_hr,
+        contract=contract,
+        current_rgb_hr=current_rgb_hr,
+        current_ffs_disparity_hr_px=current_ffs_disparity_hr_px,
+        current_ffs_confidence=current_ffs_confidence,
+        pose_valid=pose_valid,
+        photometric_temperature=photometric_temperature,
+        disparity_temperature_hr_px=disparity_temperature_hr_px,
+        reject_conflict_hr_px=reject_conflict_hr_px,
+        photometric_threshold=photometric_threshold,
+        geometry_threshold_hr_px=geometry_threshold_hr_px,
+    )
+    disparity_history_hr = torch.where(
+        effective_valid_hr,
+        merged_hr.weighted_disparity_hr_px,
+        torch.zeros_like(merged_hr.weighted_disparity_hr_px),
+    ).detach()
+    fractional_hr = torch.where(
+        effective_valid_hr.expand(-1, 2, -1, -1),
+        merged_hr.weighted_fractional_offset_grid_px,
+        torch.zeros_like(merged_hr.weighted_fractional_offset_grid_px),
+    ).detach()
+
+    # The loss/TEPE transition remains strictly age 1 even though the model
+    # receives an age-1/age-2 top-K aggregate.
+    (
+        loss_valid_hr,
+        loss_confidence_hr,
+        loss_visibility_hr,
+        loss_collision_hr,
+        loss_photometric_hr,
+        loss_static_hr,
+        loss_geometry_consistent_hr,
+    ) = _topk_quality_masks(
+        age_one_hr,
+        contract=contract,
+        current_rgb_hr=current_rgb_hr,
+        current_ffs_disparity_hr_px=current_ffs_disparity_hr_px,
+        current_ffs_confidence=current_ffs_confidence,
+        pose_valid=pose_valid,
+        photometric_temperature=photometric_temperature,
+        disparity_temperature_hr_px=disparity_temperature_hr_px,
+        reject_conflict_hr_px=reject_conflict_hr_px,
+        photometric_threshold=photometric_threshold,
+        geometry_threshold_hr_px=geometry_threshold_hr_px,
+    )
+    loss_disparity_hr = torch.where(
+        loss_valid_hr,
+        age_one_hr.weighted_disparity_hr_px,
+        torch.zeros_like(age_one_hr.weighted_disparity_hr_px),
+    ).detach()
+
+    effective_valid_lr = _sample_hr_winner_grid_to_lr(
+        effective_valid_hr, scale=scale
+    )
+    merged_hidden = merged_lr.weighted_hidden_feature
+    if merged_hidden is None:
+        raise RuntimeError("LR top-K transport did not return a hidden feature")
+    hidden_valid_lr = (
+        merged_lr.aggregate_valid_mask
+        & pose_valid.reshape(-1, 1, 1, 1)
+        & effective_valid_lr
+    )
+    merged_hidden = torch.where(
+        hidden_valid_lr,
+        merged_hidden,
+        torch.zeros_like(merged_hidden),
+    )
+    hidden_state: list[Tensor] = []
+    offset = 0
+    for width in hidden_widths:
+        hidden_state.append(merged_hidden[:, offset : offset + width])
+        offset += width
+    if offset != merged_hidden.shape[1]:
+        raise RuntimeError("warped hidden-state channel partition is inconsistent")
+
+    candidate_valid_hr = merged_hr.valid_mask & effective_valid_hr
+    candidate_weights_hr = torch.where(
+        candidate_valid_hr,
+        merged_hr.z_aware_weights,
+        torch.zeros_like(merged_hr.z_aware_weights),
+    )
+    return TemporalTransport(
+        disparity_history_hr_px=_sample_hr_winner_grid_to_lr(
+            disparity_history_hr, scale=scale
+        ),
+        confidence_history=_sample_hr_winner_grid_to_lr(
+            confidence_history_hr.detach(), scale=scale
+        ),
+        visibility_mask=_sample_hr_winner_grid_to_lr(
+            visibility_hr.detach(), scale=scale
+        ),
+        valid_history=effective_valid_lr.detach(),
+        collision_mask=_sample_hr_winner_grid_to_lr(
+            collision_hr.detach(), scale=scale
+        ),
+        photometric_residual=_sample_hr_winner_grid_to_lr(
+            photometric_hr.detach(), scale=scale
+        ),
+        fractional_offset_px=_sample_hr_winner_grid_to_lr(
+            fractional_hr, scale=scale
+        ),
+        static_mask=_sample_hr_winner_grid_to_lr(
+            static_hr.detach(), scale=scale
+        ),
+        geometry_consistent_mask=_sample_hr_winner_grid_to_lr(
+            geometry_consistent_hr.detach(), scale=scale
+        ),
+        disparity_history_loss_hr_px=loss_disparity_hr,
+        confidence_history_hr=loss_confidence_hr.detach(),
+        visibility_mask_hr=loss_visibility_hr.detach(),
+        valid_history_hr=loss_valid_hr.detach(),
+        collision_mask_hr=loss_collision_hr.detach(),
+        photometric_residual_hr=loss_photometric_hr.detach(),
+        static_mask_hr=loss_static_hr.detach(),
+        geometry_consistent_mask_hr=loss_geometry_consistent_hr.detach(),
+        topk_disparity_history_hr_px=_sample_hr_winner_grid_to_lr(
+            torch.where(
+                candidate_valid_hr,
+                merged_hr.disparity_hr_px,
+                torch.zeros_like(merged_hr.disparity_hr_px),
+            ),
+            scale=scale,
+        ).detach(),
+        topk_confidence_history=_sample_hr_winner_grid_to_lr(
+            torch.where(
+                candidate_valid_hr,
+                merged_hr.confidence,
+                torch.zeros_like(merged_hr.confidence),
+            ),
+            scale=scale,
+        ).detach(),
+        topk_fractional_offset_px=(
+            torch.where(
+                candidate_valid_hr.unsqueeze(2),
+                merged_hr.fractional_offset_grid_px,
+                torch.zeros_like(merged_hr.fractional_offset_grid_px),
+            )[..., ::scale, ::scale]
+            .contiguous()
+            .detach()
+        ),
+        topk_temporal_age_frames=_sample_hr_winner_grid_to_lr(
+            torch.where(
+                candidate_valid_hr,
+                merged_hr.temporal_age_frames,
+                torch.zeros_like(merged_hr.temporal_age_frames),
+            ),
+            scale=scale,
+        ).detach(),
+        topk_z_aware_weights=_sample_hr_winner_grid_to_lr(
+            candidate_weights_hr, scale=scale
+        ).detach(),
+        topk_valid_mask=_sample_hr_winner_grid_to_lr(
+            candidate_valid_hr, scale=scale
+        ).detach(),
+        warped_hidden_state=tuple(hidden_state),
+    )
+
+
+def build_reference_temporal_warp(
+    *,
+    previous_reference_disparity_hr_px: Tensor,
+    previous_reference_confidence: Tensor,
+    previous_reference_valid_mask: Tensor,
+    previous_prediction_disparity_hr_px: Tensor | None = None,
+    intrinsics_current_hr: Tensor,
+    baseline_current_m: Tensor,
+    temporal_extrinsics_camera_from_world: Tensor,
+    temporal_pose_valid: Tensor,
+    contract: TemporalHistoryV2,
+) -> ReferenceTemporalWarp:
+    """Warp the immediate previous teacher/GT onto the current HR grid."""
+
+    previous_pose, current_pose, pose_valid = _vggt_pose_pair_for_age(
+        temporal_extrinsics_camera_from_world,
+        temporal_pose_valid,
+        age_frames=1,
+    )
+    result = _topk_splat_for_memory(
+        disparity_hr_px=previous_reference_disparity_hr_px.detach(),
+        confidence=previous_reference_confidence.detach(),
+        hidden_feature=None,
+        source_valid_mask=previous_reference_valid_mask.detach(),
+        intrinsics_grid=intrinsics_current_hr,
+        intrinsics_hr=intrinsics_current_hr,
+        baseline_m=baseline_current_m,
+        previous_pose=previous_pose,
+        current_pose=current_pose,
+        pose_valid=pose_valid,
+        age_frames=1,
+        contract=contract,
+    )
+    pose_mask = pose_valid.reshape(-1, 1, 1, 1)
+    valid = result.aggregate_valid_mask & pose_mask
+    collision = _topk_depth_layer_collision(result, contract) & pose_mask
+    strict_valid = valid & ~collision
+    disparity = torch.where(
+        strict_valid,
+        result.weighted_disparity_hr_px,
+        torch.zeros_like(result.weighted_disparity_hr_px),
+    )
+    prediction_disparity: Tensor | None = None
+    if previous_prediction_disparity_hr_px is not None:
+        if previous_prediction_disparity_hr_px.shape != (
+            previous_reference_disparity_hr_px.shape
+        ):
+            raise ValueError(
+                "previous prediction/reference disparity shapes must match"
+            )
+        source_index = result.source_linear_index.clamp_min(0)
+        prediction_flat = previous_prediction_disparity_hr_px.detach().reshape(-1)
+        reference_flat = previous_reference_disparity_hr_px.detach().reshape(-1)
+        prediction_candidate = prediction_flat[source_index]
+        previous_reference_candidate = reference_flat[source_index]
+        ratio = torch.where(
+            result.valid_mask & torch.isfinite(previous_reference_candidate)
+            & (previous_reference_candidate > 0),
+            result.disparity_hr_px
+            / previous_reference_candidate.clamp_min(1e-6),
+            torch.zeros_like(result.disparity_hr_px),
+        )
+        transported_prediction_candidates = torch.where(
+            result.valid_mask,
+            prediction_candidate * ratio,
+            torch.zeros_like(prediction_candidate),
+        )
+        prediction_disparity = (
+            result.z_aware_weights * transported_prediction_candidates
+        ).sum(dim=1, keepdim=True)
+        prediction_disparity = torch.where(
+            strict_valid,
+            prediction_disparity,
+            torch.zeros_like(prediction_disparity),
+        ).detach()
+    return ReferenceTemporalWarp(
+        disparity_hr_px=disparity.detach(),
+        prediction_disparity_hr_px=prediction_disparity,
+        valid_mask_hr=strict_valid.detach(),
+        visibility_mask_hr=strict_valid.detach(),
+        collision_mask_hr=collision.detach(),
+    )
+
+
 def compute_stage_b_step_loss(
     output: ModelOutput,
     batch: Mapping[str, Any],
     *,
     transport: TemporalTransport | None,
+    reference_transport: ReferenceTemporalWarp | None = None,
     scale: int = 2,
     weights: LossWeights = LossWeights(),
     max_photometric_residual: float = 0.10,
     positivity_ablation: PositivityAblation = PositivityAblation(),
     physical_output_v2: PhysicalOutputV2 = PhysicalOutputV2(),
+    temporal_residual_v2: TemporalResidualV2 = TemporalResidualV2(),
 ) -> LossBreakdown:
     """Compute spatial supervision plus visibility-gated temporal consistency."""
 
@@ -1226,6 +2112,48 @@ def compute_stage_b_step_loss(
     )
     if transport is None:
         temporal = output.disparity_hr_px.sum() * 0.0
+    elif temporal_residual_v2.enabled:
+        if reference_transport is None:
+            raise ValueError(
+                "temporal_residual_v2 requires a teacher/GT reference warp"
+            )
+        if reference_transport.prediction_disparity_hr_px is None:
+            raise ValueError(
+                "temporal_residual_v2 reference warp lacks teacher-correspondence prediction"
+            )
+        target = batch.get("teacher_disparity_hr_px")
+        target_valid = batch.get("teacher_valid_mask")
+        target_trusted = batch.get("teacher_trusted_mask")
+        if not all(
+            isinstance(value, Tensor)
+            for value in (target, target_valid, target_trusted)
+        ):
+            raise ValueError(
+                "temporal_residual_v2 requires teacher disparity/valid/trusted tensors"
+            )
+        current_reference_valid = (
+            target_valid.to(dtype=torch.bool)
+            & target_trusted.to(dtype=torch.bool)
+            & torch.isfinite(target)
+            & (target > 0)
+        )
+        temporal = temporal_residual_consistency_loss(
+            output.disparity_hr_px,
+            reference_transport.prediction_disparity_hr_px,
+            target,
+            reference_transport.disparity_hr_px,
+            static_mask=transport.static_mask_hr,
+            visibility_mask=transport.visibility_mask_hr,
+            collision_mask=transport.collision_mask_hr,
+            photometric_residual=transport.photometric_residual_hr,
+            max_photometric_residual=max_photometric_residual,
+            geometry_consistent_mask=transport.geometry_consistent_mask_hr,
+            current_reference_valid_mask=current_reference_valid,
+            warped_previous_reference_valid_mask=(
+                reference_transport.valid_mask_hr
+            ),
+            history_confidence=transport.confidence_history_hr,
+        )
     else:
         temporal = temporal_consistency_loss(
             output.disparity_hr_px,
@@ -1366,45 +2294,122 @@ def _forward_temporal_loss(
     """Unroll exactly three causal steps and average their supervised losses."""
 
     physical_v2 = physical_output_v2_from_config(config)
+    temporal_history_v2 = temporal_history_v2_from_config(config)
+    temporal_residual_v2 = temporal_residual_v2_from_config(config)
+    if temporal_history_v2.enabled:
+        validate_v2_temporal_calibration(
+            batch["K_hr_sequence"], batch["baseline_m_sequence"]
+        )
     rgb_sequence = batch["rgb_hr_sequence"]
     if rgb_sequence.ndim != 5 or rgb_sequence.shape[1] != 3:
         raise ValueError("temporal RGB batch must have shape [B,3,3,H,W]")
     hidden_state: Sequence[Tensor] | None = None
     previous_output: ModelOutput | None = None
     previous_rgb_hr: Tensor | None = None
+    memory: list[TemporalMemoryEntry] = []
     losses: list[LossBreakdown] = []
     for time_index in range(3):
         step = _temporal_step_batch(batch, time_index)
         pose_valid = batch["temporal_pose_valid_sequence"][:, time_index]
         transport: TemporalTransport | None = None
+        reference_transport: ReferenceTemporalWarp | None = None
         if time_index > 0:
-            assert previous_output is not None and previous_rgb_hr is not None
-            hidden_state = _reset_hidden_where_pose_invalid(hidden_state, pose_valid)
-            transport = build_temporal_transport(
-                previous_output=previous_output,
-                previous_rgb_hr=previous_rgb_hr,
-                current_rgb_hr=step["rgb_hr"],
-                current_ffs_disparity_hr_px=step["disparity_ffs_hr_px"],
-                current_ffs_confidence=step["confidence_ffs"],
-                intrinsics_current_hr=batch["K_hr_sequence"][:, time_index],
-                baseline_current_m=batch["baseline_m_sequence"][:, time_index],
-                temporal_extrinsics_camera_from_world=batch[
-                    "vggt_extrinsics_camera_from_world_metric_sequence"
-                ][:, time_index],
-                temporal_pose_valid=pose_valid,
-                scale=int(config.data.scale),
-                photometric_temperature=float(config.train.photometric_temperature),
-                disparity_temperature_hr_px=float(
-                    config.train.disparity_temperature_hr_px
-                ),
-                reject_conflict_hr_px=float(config.train.history_conflict_hr_px),
-                photometric_threshold=float(
-                    config.train.temporal_photometric_threshold
-                ),
-                geometry_threshold_hr_px=float(
-                    config.train.temporal_geometry_threshold_hr_px
-                ),
-            )
+            if temporal_history_v2.enabled:
+                transport = build_topk_temporal_transport(
+                    memory=memory,
+                    current_time_index=time_index,
+                    current_rgb_hr=step["rgb_hr"],
+                    current_ffs_disparity_hr_px=step["disparity_ffs_hr_px"],
+                    current_ffs_confidence=step["confidence_ffs"],
+                    intrinsics_current_hr=batch["K_hr_sequence"][:, time_index],
+                    baseline_current_m=batch["baseline_m_sequence"][:, time_index],
+                    temporal_extrinsics_camera_from_world=batch[
+                        "vggt_extrinsics_camera_from_world_metric_sequence"
+                    ][:, time_index],
+                    temporal_pose_valid=pose_valid,
+                    contract=temporal_history_v2,
+                    scale=int(config.data.scale),
+                    photometric_temperature=float(config.train.photometric_temperature),
+                    disparity_temperature_hr_px=float(
+                        config.train.disparity_temperature_hr_px
+                    ),
+                    reject_conflict_hr_px=float(config.train.history_conflict_hr_px),
+                    photometric_threshold=float(
+                        config.train.temporal_photometric_threshold
+                    ),
+                    geometry_threshold_hr_px=float(
+                        config.train.temporal_geometry_threshold_hr_px
+                    ),
+                )
+                hidden_state = transport.warped_hidden_state
+                previous_teacher = batch.get("teacher_disparity_hr_px_sequence")
+                previous_teacher_confidence = batch.get(
+                    "teacher_confidence_sequence"
+                )
+                previous_teacher_valid = batch.get("teacher_valid_mask_sequence")
+                previous_teacher_trusted = batch.get(
+                    "teacher_trusted_mask_sequence"
+                )
+                if not all(
+                    isinstance(value, Tensor)
+                    for value in (
+                        previous_teacher,
+                        previous_teacher_confidence,
+                        previous_teacher_valid,
+                        previous_teacher_trusted,
+                    )
+                ):
+                    raise ValueError(
+                        "temporal V2 requires teacher sequence disparity/confidence/masks"
+                    )
+                reference_transport = build_reference_temporal_warp(
+                    previous_reference_disparity_hr_px=previous_teacher[
+                        :, time_index - 1
+                    ],
+                    previous_reference_confidence=previous_teacher_confidence[
+                        :, time_index - 1
+                    ],
+                    previous_reference_valid_mask=(
+                        previous_teacher_valid[:, time_index - 1]
+                        & previous_teacher_trusted[:, time_index - 1]
+                    ),
+                    previous_prediction_disparity_hr_px=memory[-1].output.disparity_hr_px,
+                    intrinsics_current_hr=batch["K_hr_sequence"][:, time_index],
+                    baseline_current_m=batch["baseline_m_sequence"][:, time_index],
+                    temporal_extrinsics_camera_from_world=batch[
+                        "vggt_extrinsics_camera_from_world_metric_sequence"
+                    ][:, time_index],
+                    temporal_pose_valid=pose_valid,
+                    contract=temporal_history_v2,
+                )
+            else:
+                assert previous_output is not None and previous_rgb_hr is not None
+                hidden_state = _reset_hidden_where_pose_invalid(hidden_state, pose_valid)
+                transport = build_temporal_transport(
+                    previous_output=previous_output,
+                    previous_rgb_hr=previous_rgb_hr,
+                    current_rgb_hr=step["rgb_hr"],
+                    current_ffs_disparity_hr_px=step["disparity_ffs_hr_px"],
+                    current_ffs_confidence=step["confidence_ffs"],
+                    intrinsics_current_hr=batch["K_hr_sequence"][:, time_index],
+                    baseline_current_m=batch["baseline_m_sequence"][:, time_index],
+                    temporal_extrinsics_camera_from_world=batch[
+                        "vggt_extrinsics_camera_from_world_metric_sequence"
+                    ][:, time_index],
+                    temporal_pose_valid=pose_valid,
+                    scale=int(config.data.scale),
+                    photometric_temperature=float(config.train.photometric_temperature),
+                    disparity_temperature_hr_px=float(
+                        config.train.disparity_temperature_hr_px
+                    ),
+                    reject_conflict_hr_px=float(config.train.history_conflict_hr_px),
+                    photometric_threshold=float(
+                        config.train.temporal_photometric_threshold
+                    ),
+                    geometry_threshold_hr_px=float(
+                        config.train.temporal_geometry_threshold_hr_px
+                    ),
+                )
         static_prior = batch["static_prior_valid_sequence"][:, time_index]
         valid_vggt = batch["valid_vggt_sequence"][:, time_index] & static_prior.reshape(
             -1, 1, 1, 1
@@ -1429,6 +2434,27 @@ def _forward_temporal_loss(
                     "valid_history": transport.valid_history,
                 }
             )
+            if temporal_history_v2.enabled:
+                topk_values = (
+                    transport.topk_disparity_history_hr_px,
+                    transport.topk_confidence_history,
+                    transport.topk_fractional_offset_px,
+                    transport.topk_temporal_age_frames,
+                    transport.topk_z_aware_weights,
+                    transport.topk_valid_mask,
+                )
+                if any(value is None for value in topk_values):
+                    raise RuntimeError("V2 transport did not populate top-K model inputs")
+                model_kwargs.update(
+                    {
+                        "history_topk_disparity_hr_px": topk_values[0],
+                        "history_topk_confidence": topk_values[1],
+                        "history_topk_fractional_offset_px": topk_values[2],
+                        "history_topk_age_frames": topk_values[3],
+                        "history_topk_weights": topk_values[4],
+                        "history_topk_valid_mask": topk_values[5],
+                    }
+                )
         output = model(
             step["rgb_hr"],
             step["disparity_ffs_hr_px"],
@@ -1452,6 +2478,7 @@ def _forward_temporal_loss(
                 output,
                 step,
                 transport=transport,
+                reference_transport=reference_transport,
                 scale=int(config.data.scale),
                 weights=weights,
                 max_photometric_residual=float(
@@ -1459,9 +2486,21 @@ def _forward_temporal_loss(
                 ),
                 positivity_ablation=positivity_ablation,
                 physical_output_v2=physical_v2,
+                temporal_residual_v2=temporal_residual_v2,
             )
         )
-        hidden_state = output.hidden_state
+        if temporal_history_v2.enabled:
+            memory.append(
+                TemporalMemoryEntry(
+                    output=output,
+                    rgb_hr=step["rgb_hr"],
+                    time_index=time_index,
+                )
+            )
+            memory = memory[-temporal_history_v2.memory_frames :]
+            hidden_state = None
+        else:
+            hidden_state = output.hidden_state
         previous_output = output
         previous_rgb_hr = step["rgb_hr"]
     return average_loss_breakdowns(losses)

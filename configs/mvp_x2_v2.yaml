@@ -1,0 +1,35 @@
+experiment: ffs_omega_tsr_spatial_x2_v2
+defaults_from: configs/mvp_x2.yaml
+
+# Architecture-v2 is a new checkpoint lineage.  Keeping these sections out of
+# the canonical config preserves exact resume/evaluation of all v1 artifacts.
+physical_output_v2:
+  enabled: true
+  protocol_version: explicit_valid_completion_nonnegative_v2
+  valid_threshold: 0.5
+  completion_threshold: 0.5
+  trusted_ffs_confidence_threshold: 0.8
+  valid_bce_weight: 0.10
+  completion_bce_weight: 0.20
+  calibration_weight: 0.02
+
+# Instantiate the candidate encoder already in Stage A so its state dict is
+# exactly compatible with the later Stage-B v2 model. T=1 supplies zero/invalid
+# candidates and no recurrent state.
+temporal_history_v2:
+  enabled: true
+  protocol_version: topk_z_aware_hidden_warp_v2
+  top_k: 4
+  memory_frames: 2
+  splat_footprint: bilinear
+  depth_temperature_m: 0.25
+  age_temperature_frames: 3.0
+  source_collision_penalty: 0.5
+  candidate_feature_channels: 32
+  collision_depth_gap_m: 0.05
+  collision_relative_depth_gap: 0.05
+
+temporal_residual_v2:
+  enabled: true
+  protocol_version: teacher_gt_temporal_residual_v2
+  reference: teacher

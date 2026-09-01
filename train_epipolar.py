@@ -59,15 +59,19 @@ from tools.audit_d025_evaluation import (  # noqa: E402
 from train import (  # noqa: E402
     DEFAULT_CONFIG,
     DeterministicEpochSampler,
+    TemporalMemoryEntry,
     _load_yaml_with_defaults,
     _reset_hidden_where_pose_invalid,
     _temporal_step_batch,
     build_model,
+    build_topk_temporal_transport,
     build_temporal_transport,
     learning_rate_multiplier,
     load_receipt_identity,
     physical_output_v2_from_config,
     positivity_ablation_from_config,
+    temporal_history_v2_from_config,
+    validate_v2_temporal_calibration,
 )
 from utils.checkpoint import (  # noqa: E402
     CheckpointMismatchError,
@@ -134,6 +138,11 @@ STAGE_C_CONTROLLED_RUNTIME_ADDITIONS = (
 STAGE_C_HIGH_VRAM_RUNTIME_ADDITIONS = (
     "configs/ablations/d025_stage_c_positivity_high_vram.yaml",
 )
+STAGE_C_V2_RUNTIME_ADDITIONS = (
+    "configs/mvp_x2_v2.yaml",
+    "configs/temporal_x2_v2.yaml",
+    "configs/epipolar_x2_v2.yaml",
+)
 STAGE_C_CONTROLLED_RUNTIME_ROOT_FILES = (
     *STAGE_C_RUNTIME_ROOT_FILES[:-1],
     *STAGE_C_CONTROLLED_RUNTIME_ADDITIONS,
@@ -160,6 +169,7 @@ FORMAL_STAGE_B_STEPS = 15_000
 FORMAL_STAGE_C_STEPS = 5_000
 STAGE_C_D025_POSITIVITY_PROTOCOL = "d025_stage_c_physical_positivity_v1"
 STAGE_C_PHYSICAL_OUTPUT_V2_PROTOCOL = "base_aware_noop_nonnegative_v2"
+STAGE_C_ARCHITECTURE_V2_ROLE = "ARCHITECTURE_V2_STAGE_C"
 STAGE_C_HIGH_VRAM_PROTOCOL = "d025_stage_c_high_vram_cuda_preflight_v1"
 STAGE_C_HIGH_VRAM_PREFLIGHT_COMPONENT = "d025-stage-c-high-vram-preflight"
 STAGE_C_HIGH_VRAM_FALLBACK = {
@@ -237,6 +247,16 @@ def stage_c_physical_output_v2_from_config(
         no_op_threshold=float(threshold),
         pre_lower_bound_negative_penalty_weight=float(weight),
     )
+
+
+def stage_c_experiment_role(config: Mapping[str, Any] | DictConfig) -> str:
+    """Classify canonical, controlled D-025, and unpromoted architecture V2."""
+
+    if stage_c_positivity_ablation_from_config(config).enabled:
+        return "CONTROLLED_D025_STAGE_C_ABLATION"
+    if stage_c_physical_output_v2_from_config(config).enabled:
+        return STAGE_C_ARCHITECTURE_V2_ROLE
+    return "CANONICAL_STAGE_C"
 
 
 def stage_c_positivity_ablation_from_config(
@@ -575,11 +595,14 @@ def stage_c_runtime_relative_paths(
     *,
     controlled_ablation: bool = False,
     high_vram: bool = False,
+    physical_v2: bool = False,
 ) -> tuple[str, ...]:
     """Canonical ordered Stage-C producer/evaluator source paths."""
 
     if high_vram and not controlled_ablation:
         raise ValueError("high-VRAM runtime requires the controlled D-025 arm")
+    if physical_v2 and (controlled_ablation or high_vram):
+        raise ValueError("physical V2 and D-025 runtime scopes are separate")
     root_files = (
         STAGE_C_HIGH_VRAM_RUNTIME_ROOT_FILES
         if high_vram
@@ -589,6 +612,12 @@ def stage_c_runtime_relative_paths(
             else STAGE_C_RUNTIME_ROOT_FILES
         )
     )
+    if physical_v2:
+        root_files = (
+            *root_files[:-1],
+            *STAGE_C_V2_RUNTIME_ADDITIONS,
+            root_files[-1],
+        )
     return (
         *root_files,
         *(
@@ -599,13 +628,18 @@ def stage_c_runtime_relative_paths(
 
 
 def stage_c_runtime_git_scopes(
-    *, controlled_ablation: bool = False, high_vram: bool = False
+    *,
+    controlled_ablation: bool = False,
+    high_vram: bool = False,
+    physical_v2: bool = False,
 ) -> tuple[str, ...]:
     """Return the opt-in-aware clean-worktree scopes for Stage C."""
 
     if high_vram and not controlled_ablation:
         raise ValueError("high-VRAM runtime requires the controlled D-025 arm")
-    return (
+    if physical_v2 and (controlled_ablation or high_vram):
+        raise ValueError("physical V2 and D-025 runtime scopes are separate")
+    scopes = (
         STAGE_C_HIGH_VRAM_RUNTIME_GIT_SCOPES
         if high_vram
         else (
@@ -614,16 +648,23 @@ def stage_c_runtime_git_scopes(
             else STAGE_C_RUNTIME_GIT_SCOPES
         )
     )
+    if physical_v2:
+        scopes = (*scopes[:-1], *STAGE_C_V2_RUNTIME_ADDITIONS, scopes[-1])
+    return scopes
 
 
 def _runtime_source_bundle(
-    *, controlled_ablation: bool = False, high_vram: bool = False
+    *,
+    controlled_ablation: bool = False,
+    high_vram: bool = False,
+    physical_v2: bool = False,
 ) -> dict[str, Any]:
     """Hash the committed Stage-C runtime and reject scoped dirty state."""
 
     git_scopes = stage_c_runtime_git_scopes(
         controlled_ablation=controlled_ablation,
         high_vram=high_vram,
+        physical_v2=physical_v2,
     )
     command = [
         "git",
@@ -656,6 +697,7 @@ def _runtime_source_bundle(
         for path in stage_c_runtime_relative_paths(
             controlled_ablation=controlled_ablation,
             high_vram=high_vram,
+            physical_v2=physical_v2,
         )
     ]
     file_records = [
@@ -1609,8 +1651,10 @@ def _stage_c_checkpoint_payload(
         ),
     }
     controlled_ablation = d025_prerequisite is not None
+    architecture_v2 = stage_c_physical_output_v2_from_config(config).enabled
     completion["formal_training_complete"] = bool(
         not controlled_ablation
+        and not architecture_v2
         and execution_complete
         and canonical_schedule
         and completion["base_complete"]
@@ -1625,6 +1669,15 @@ def _stage_c_checkpoint_payload(
             and completion["cuda_bf16_eligible"]
             and completion["strict_determinism_eligible"]
             and d025_prerequisite.get("status") == "PASS"
+        )
+        completion["canonical_stage_c_replacement"] = False
+    if architecture_v2:
+        completion["architecture_v2_training_complete"] = bool(
+            execution_complete
+            and canonical_schedule
+            and completion["base_complete"]
+            and completion["cuda_bf16_eligible"]
+            and completion["strict_determinism_eligible"]
         )
         completion["canonical_stage_c_replacement"] = False
     if high_vram_preflight is not None:
@@ -1670,6 +1723,8 @@ def _stage_c_checkpoint_payload(
     if d025_prerequisite is not None:
         payload["d025_prerequisite"] = dict(d025_prerequisite)
         payload["experiment_role"] = "CONTROLLED_D025_STAGE_C_ABLATION"
+    elif architecture_v2:
+        payload["experiment_role"] = STAGE_C_ARCHITECTURE_V2_ROLE
     if high_vram_preflight is not None:
         payload["high_vram_preflight"] = dict(high_vram_preflight)
     return payload
@@ -1971,39 +2026,74 @@ def predict_frozen_stage_b_endpoint(
     hidden_state: Sequence[Tensor] | None = None
     previous_output: ModelOutput | None = None
     previous_rgb_hr: Tensor | None = None
+    temporal_history_v2 = temporal_history_v2_from_config(config)
+    if temporal_history_v2.enabled:
+        validate_v2_temporal_calibration(
+            batch["K_hr_sequence"], batch["baseline_m_sequence"]
+        )
+    memory: list[TemporalMemoryEntry] = []
     output: ModelOutput | None = None
     for time_index in range(3):
         step = _temporal_step_batch(batch, time_index)
         pose_valid = batch["temporal_pose_valid_sequence"][:, time_index]
         transport = None
         if time_index > 0:
-            assert previous_output is not None and previous_rgb_hr is not None
-            hidden_state = _reset_hidden_where_pose_invalid(hidden_state, pose_valid)
-            transport = build_temporal_transport(
-                previous_output=previous_output,
-                previous_rgb_hr=previous_rgb_hr,
-                current_rgb_hr=step["rgb_hr"],
-                current_ffs_disparity_hr_px=step["disparity_ffs_hr_px"],
-                current_ffs_confidence=step["confidence_ffs"],
-                intrinsics_current_hr=batch["K_hr_sequence"][:, time_index],
-                baseline_current_m=batch["baseline_m_sequence"][:, time_index],
-                temporal_extrinsics_camera_from_world=batch[
-                    "vggt_extrinsics_camera_from_world_metric_sequence"
-                ][:, time_index],
-                temporal_pose_valid=pose_valid,
-                scale=int(config.data.scale),
-                photometric_temperature=float(config.train.photometric_temperature),
-                disparity_temperature_hr_px=float(
-                    config.train.disparity_temperature_hr_px
-                ),
-                reject_conflict_hr_px=float(config.train.history_conflict_hr_px),
-                photometric_threshold=float(
-                    config.train.temporal_photometric_threshold
-                ),
-                geometry_threshold_hr_px=float(
-                    config.train.temporal_geometry_threshold_hr_px
-                ),
-            )
+            if temporal_history_v2.enabled:
+                transport = build_topk_temporal_transport(
+                    memory=memory,
+                    current_time_index=time_index,
+                    current_rgb_hr=step["rgb_hr"],
+                    current_ffs_disparity_hr_px=step["disparity_ffs_hr_px"],
+                    current_ffs_confidence=step["confidence_ffs"],
+                    intrinsics_current_hr=batch["K_hr_sequence"][:, time_index],
+                    baseline_current_m=batch["baseline_m_sequence"][:, time_index],
+                    temporal_extrinsics_camera_from_world=batch[
+                        "vggt_extrinsics_camera_from_world_metric_sequence"
+                    ][:, time_index],
+                    temporal_pose_valid=pose_valid,
+                    contract=temporal_history_v2,
+                    scale=int(config.data.scale),
+                    photometric_temperature=float(config.train.photometric_temperature),
+                    disparity_temperature_hr_px=float(
+                        config.train.disparity_temperature_hr_px
+                    ),
+                    reject_conflict_hr_px=float(config.train.history_conflict_hr_px),
+                    photometric_threshold=float(
+                        config.train.temporal_photometric_threshold
+                    ),
+                    geometry_threshold_hr_px=float(
+                        config.train.temporal_geometry_threshold_hr_px
+                    ),
+                )
+                hidden_state = transport.warped_hidden_state
+            else:
+                assert previous_output is not None and previous_rgb_hr is not None
+                hidden_state = _reset_hidden_where_pose_invalid(hidden_state, pose_valid)
+                transport = build_temporal_transport(
+                    previous_output=previous_output,
+                    previous_rgb_hr=previous_rgb_hr,
+                    current_rgb_hr=step["rgb_hr"],
+                    current_ffs_disparity_hr_px=step["disparity_ffs_hr_px"],
+                    current_ffs_confidence=step["confidence_ffs"],
+                    intrinsics_current_hr=batch["K_hr_sequence"][:, time_index],
+                    baseline_current_m=batch["baseline_m_sequence"][:, time_index],
+                    temporal_extrinsics_camera_from_world=batch[
+                        "vggt_extrinsics_camera_from_world_metric_sequence"
+                    ][:, time_index],
+                    temporal_pose_valid=pose_valid,
+                    scale=int(config.data.scale),
+                    photometric_temperature=float(config.train.photometric_temperature),
+                    disparity_temperature_hr_px=float(
+                        config.train.disparity_temperature_hr_px
+                    ),
+                    reject_conflict_hr_px=float(config.train.history_conflict_hr_px),
+                    photometric_threshold=float(
+                        config.train.temporal_photometric_threshold
+                    ),
+                    geometry_threshold_hr_px=float(
+                        config.train.temporal_geometry_threshold_hr_px
+                    ),
+                )
         static_prior = batch["static_prior_valid_sequence"][:, time_index]
         valid_vggt = batch["valid_vggt_sequence"][:, time_index] & static_prior.reshape(
             -1, 1, 1, 1
@@ -2030,13 +2120,41 @@ def predict_frozen_stage_b_endpoint(
                     "valid_history": transport.valid_history,
                 }
             )
+            if temporal_history_v2.enabled:
+                topk_values = (
+                    transport.topk_disparity_history_hr_px,
+                    transport.topk_confidence_history,
+                    transport.topk_fractional_offset_px,
+                    transport.topk_temporal_age_frames,
+                    transport.topk_z_aware_weights,
+                    transport.topk_valid_mask,
+                )
+                if any(value is None for value in topk_values):
+                    raise RuntimeError("V2 Stage-C base transport is incomplete")
+                kwargs.update(
+                    {
+                        "history_topk_disparity_hr_px": topk_values[0],
+                        "history_topk_confidence": topk_values[1],
+                        "history_topk_fractional_offset_px": topk_values[2],
+                        "history_topk_age_frames": topk_values[3],
+                        "history_topk_weights": topk_values[4],
+                        "history_topk_valid_mask": topk_values[5],
+                    }
+                )
         output = base_model(
             step["rgb_hr"],
             step["disparity_ffs_hr_px"],
             step["confidence_ffs"],
             **kwargs,
         )
-        hidden_state = output.hidden_state
+        if temporal_history_v2.enabled:
+            memory.append(
+                TemporalMemoryEntry(output=output, rgb_hr=step["rgb_hr"], time_index=time_index)
+            )
+            memory = memory[-temporal_history_v2.memory_frames :]
+            hidden_state = None
+        else:
+            hidden_state = output.hidden_state
         previous_output = output
         previous_rgb_hr = step["rgb_hr"]
     assert output is not None
@@ -2358,6 +2476,7 @@ def run(args: argparse.Namespace) -> int:
     runtime_source_bundle = _runtime_source_bundle(
         controlled_ablation=stage_c_positivity.enabled,
         high_vram=stage_c_high_vram.enabled,
+        physical_v2=stage_c_physical_v2.enabled,
     )
     seed_everything(int(config.seed), deterministic=True, warn_only=False)
     dataset, observation_identity, teacher_identity = _build_temporal_dataset(config)
@@ -2646,11 +2765,7 @@ def run(args: argparse.Namespace) -> int:
                     "base_completion": base_completion,
                     "d025_prerequisite": d025_prerequisite,
                     "high_vram_preflight": high_vram_preflight,
-                    "experiment_role": (
-                        "CONTROLLED_D025_STAGE_C_ABLATION"
-                        if stage_c_positivity.enabled
-                        else "CANONICAL_STAGE_C"
-                    ),
+                    "experiment_role": stage_c_experiment_role(config),
                     "geometry_contract": EPIPOLAR_GEOMETRY_CONTRACT,
                     "rectification_audit": rectification_audit,
                     "runtime_source_bundle": runtime_source_bundle,
@@ -2899,6 +3014,7 @@ def run(args: argparse.Namespace) -> int:
     end_source_bundle = _runtime_source_bundle(
         controlled_ablation=stage_c_positivity.enabled,
         high_vram=stage_c_high_vram.enabled,
+        physical_v2=stage_c_physical_v2.enabled,
     )
     if end_source_bundle != runtime_source_bundle or (
         repository_git_hash(PROJECT_ROOT) != repository_hash
@@ -2952,11 +3068,7 @@ def run(args: argparse.Namespace) -> int:
             "base_checkpoint": base_checkpoint,
             "base_completion": base_completion,
             "d025_prerequisite": d025_prerequisite,
-            "experiment_role": (
-                "CONTROLLED_D025_STAGE_C_ABLATION"
-                if stage_c_positivity.enabled
-                else "CANONICAL_STAGE_C"
-            ),
+            "experiment_role": stage_c_experiment_role(config),
             "runtime_source_bundle_sha256": runtime_source_bundle["bundle_sha256"],
             "formal_training_complete": payload["completion"][
                 "formal_training_complete"
@@ -2987,6 +3099,11 @@ def run(args: argparse.Namespace) -> int:
                 else None
             ),
         }
+        if stage_c_physical_v2.enabled:
+            summary["architecture_v2_training_complete"] = payload[
+                "completion"
+            ].get("architecture_v2_training_complete", False)
+            summary["canonical_stage_c_replacement"] = False
         if high_vram_preflight is not None:
             summary["high_vram_preflight"] = dict(high_vram_preflight)
         _write_json_atomic(summary_path, summary)
@@ -3009,6 +3126,10 @@ def run(args: argparse.Namespace) -> int:
                 "formal_training_complete": payload["completion"][
                     "formal_training_complete"
                 ],
+                "experiment_role": stage_c_experiment_role(config),
+                "architecture_v2_training_complete": payload["completion"].get(
+                    "architecture_v2_training_complete", False
+                ),
                 "loss": latest_loss_summary,
             },
             indent=2,

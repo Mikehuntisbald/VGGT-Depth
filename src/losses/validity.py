@@ -45,13 +45,17 @@ def validity_completion_loss(
     teacher_valid_mask: Tensor,
     teacher_confidence: Tensor,
     observation_valid_mask_hr: Tensor,
+    source_support_mask_hr: Tensor | None = None,
 ) -> ValidityCompletionLoss:
     """Supervise physical validity separately from FFS-hole completion.
 
     All tensors are ``[B,1,H,W]``. The soft target is
     ``teacher_valid * teacher_confidence``. Completion is supervised only in
     current-FFS holes. Calibration is a Brier term over the declared domains.
-    Empty domains return differentiable zero and no positive epsilon is made.
+    ``source_support_mask_hr`` restricts supervision to pixels where at least
+    one metric geometry source exists. This matches the conservative forward
+    contract: RGB alone is not allowed to invent metric completion. Empty
+    domains return differentiable zero and no positive epsilon is made.
     """
 
     if not isinstance(valid_logits, Tensor) or valid_logits.ndim != 4:
@@ -70,11 +74,18 @@ def validity_completion_loss(
         if value.device != valid_logits.device:
             raise ValueError(f"{name} must share valid_logits device")
     finite_target = torch.isfinite(teacher_confidence)
+    if source_support_mask_hr is None:
+        source_support = torch.ones_like(valid_logits, dtype=torch.bool)
+    else:
+        _check_shape(valid_logits, source_support_mask_hr, "source_support_mask_hr")
+        if source_support_mask_hr.device != valid_logits.device:
+            raise ValueError("source_support_mask_hr must share valid_logits device")
+        source_support = source_support_mask_hr.to(dtype=torch.bool)
     confidence = torch.nan_to_num(
         teacher_confidence.float(), nan=0.0, posinf=0.0, neginf=0.0
     ).clamp(0.0, 1.0)
     target_valid_soft = teacher_valid_mask.to(dtype=torch.bool).float() * confidence
-    valid_domain = finite_target & torch.isfinite(valid_logits)
+    valid_domain = source_support & finite_target & torch.isfinite(valid_logits)
     hole_domain = (
         ~observation_valid_mask_hr.to(dtype=torch.bool)
         & valid_domain

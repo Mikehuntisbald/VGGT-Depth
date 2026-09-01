@@ -658,11 +658,41 @@ point-to-plane available. Exact per-selection hashes, aggregate manifest
 contracts, file/point counts, and claim boundaries are in
 `reports/m7/delivery_artifacts.json`.
 
+## Architecture v2 implementation status (untrained)
+
+The opt-in architecture-v2 code path is complete as a new checkpoint lineage:
+`mvp_x2_v2.yaml -> temporal_x2_v2.yaml -> epipolar_x2_v2.yaml`. The spatial
+and temporal model has 1,733,260 trainable parameters, below the 12M ceiling.
+It now carries bilinear top-K z-aware age-1/age-2 history with confidence,
+fractional phase and age, and forward-warps the latest ConvGRU state on the LR
+grid. Projection/index selection is detached while selected hidden values keep
+their three-step gradients.
+
+The v2 temporal metric/loss is the teacher-correspondence residual error
+`|(d_hat_t-W(d_hat_prev))-(d_ref_t-W(d_ref_prev))|`. Both warped terms use the
+same trusted teacher source association and depth ratio. Normal bilinear
+footprint overlap is not labeled a collision; only a separate depth layer over
+the configured absolute/relative gap is excluded. The model also has explicit
+valid/completion heads, a softplus non-negative disparity magnitude, and exact
+zero invalid output. Source-free RGB-only metric completion is excluded from
+both the action and its training domain. Stage C starts as an exact hard no-op,
+retains an STE learning path, exposes the ungated raw correction to losses, and
+enforces the FP32 lower bound `delta >= -base`.
+Stage-C v2 checkpoints are labeled `ARCHITECTURE_V2_STAGE_C`; they cannot set
+the canonical v1 completion/replacement flag.
+
+No v2 checkpoint has been trained or evaluated on the held-out set. Therefore:
+
+- implementation/test readiness: **GO** to start Stage-A v2 training;
+- accuracy, temporal, completion, output-health, deployment, or paper claim:
+  **NO-GO / NOT ESTABLISHED**;
+- canonical v1 and D-025 metrics, fields, and historical decisions: unchanged.
+
 ## Tests
 
 ```text
-conda run -n env-tsr pytest -q
-383 passed in 36.89s
+conda run --no-capture-output -n env-tsr python -m pytest -q
+442 passed in 9.83s
 ```
 
 The current suite includes receipt/cache identity, manifest/crop/intrinsics,
@@ -690,7 +720,7 @@ cross-checks.
 |---|---|
 | D-025 output-health control | an independent full 15,000-update Stage-B rerun from the same final Stage-A checkpoint is active from frozen commit `7f2bbbc`; its step-500 audit validates the opt-in positivity loss schema, exact LR, finite state, and unchanged data/cache lineage, but no accuracy or output-health result is claimed before its final held-out evaluation |
 | M5 gate recovery | Stage-C improves boundary/Bad-1/EPE but raises raw negative/invalid output to 4.41968% and reduces hole completeness by 23.1346%; any positivity/completeness change requires a new matched run rather than promoting clamp0 |
-| Refined temporal evidence | the frozen Stage-C evaluator does not compute refined TEPE, so no Stage-C temporal-improvement claim is currently available |
+| Canonical refined temporal evidence | the canonical v1 frozen Stage-C evaluator does not compute refined TEPE, so no canonical Stage-C temporal-improvement claim is currently available; the untrained v2 evaluator has a new teacher-residual field but no result |
 | Independent 3D accuracy | Stage-A/B/C engineering metrics use same-family FFS pseudo-GT and point-to-plane is unavailable; add real GT or an independent benchmark with valid correspondences/normals before paper or 3D-accuracy claims |
 
 ## Claim boundary

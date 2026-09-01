@@ -1,15 +1,15 @@
 from __future__ import annotations
 
-import math
-
 import pytest
 import torch
 from omegaconf import OmegaConf
 
 import train
+import train_epipolar
 from losses.disparity import charbonnier
 from losses.temporal import temporal_residual_consistency_loss
 from models.ffs_omega_tsr import FFSOmegaTSR, ModelOutput
+from geometry.topk_splat import topk_z_aware_splat
 
 
 _HEIGHT_HR = 4
@@ -173,12 +173,7 @@ def test_topk_identity_transport_keeps_age_phase_and_warps_hidden_state() -> Non
     assert bool(transport.valid_history.all())
     assert bool(transport.visibility_mask.all())
 
-    age_one_weight = math.exp(-1.0) / (math.exp(-1.0) + math.exp(-2.0))
-    age_two_weight = 1.0 - age_one_weight
-    expected_layer_values = (
-        age_one_weight * 10.0 + age_two_weight * 20.0,
-        age_one_weight * 30.0 + age_two_weight * 40.0,
-    )
+    expected_layer_values = (10.0, 30.0)
     assert len(transport.warped_hidden_state) == 2
     for state, expected in zip(
         transport.warped_hidden_state, expected_layer_values, strict=True
@@ -187,8 +182,9 @@ def test_topk_identity_transport_keeps_age_phase_and_warps_hidden_state() -> Non
         torch.testing.assert_close(state, torch.full_like(state, expected))
 
     sum(state.sum() for state in transport.warped_hidden_state).backward()
-    assert all(value.grad is not None for value in hidden_inputs)
-    assert all(bool(torch.isfinite(value.grad).all()) for value in hidden_inputs)
+    assert all(value.grad is not None for value in hidden_inputs[:2])
+    assert all(bool(torch.isfinite(value.grad).all()) for value in hidden_inputs[:2])
+    assert all(value.grad is None for value in hidden_inputs[2:])
 
 
 def test_pose_invalid_topk_transport_is_exact_zero_including_hidden_state() -> None:
@@ -211,6 +207,33 @@ def test_pose_invalid_topk_transport_is_exact_zero_including_hidden_state() -> N
     ):
         assert value is not None
         assert value.eq(0).all()
+
+
+def test_bilinear_same_surface_overlap_is_not_a_depth_layer_collision() -> None:
+    disparity = torch.full((1, 1, _HEIGHT_HR, _WIDTH_HR), 4.0)
+    depth = torch.full_like(disparity, 0.25)
+    current = torch.eye(4)
+    current[0, 3] = 0.0125  # fx=10,Z=.25 -> +0.5 px projection.
+    result = topk_z_aware_splat(
+        disparity,
+        depth,
+        torch.ones_like(disparity),
+        _intrinsics_hr()[0],
+        torch.eye(4),
+        current,
+        top_k=4,
+        splat_footprint="bilinear",
+    )
+    assert bool((result.candidate_count > 1).any())
+    contract = train.TemporalHistoryV2(
+        enabled=True,
+        top_k=4,
+        memory_frames=2,
+        splat_footprint="bilinear",
+        candidate_feature_channels=32,
+    )
+    collision = train._topk_depth_layer_collision(result, contract)
+    assert not bool(collision.any())
 
 
 def _topk_model_inputs() -> dict[str, torch.Tensor]:
@@ -282,6 +305,7 @@ def test_reference_identity_warp_and_teacher_temporal_residual_loss() -> None:
         previous_reference_valid_mask=torch.ones_like(
             previous_teacher, dtype=torch.bool
         ),
+        previous_prediction_disparity_hr_px=previous_teacher + 2.0,
         intrinsics_current_hr=_intrinsics_hr(),
         baseline_current_m=torch.tensor([0.1]),
         temporal_extrinsics_camera_from_world=_identity_extrinsics(),
@@ -292,9 +316,13 @@ def test_reference_identity_warp_and_teacher_temporal_residual_loss() -> None:
     assert bool(reference_warp.valid_mask_hr.all())
     assert bool(reference_warp.visibility_mask_hr.all())
     assert not bool(reference_warp.collision_mask_hr.any())
+    assert reference_warp.prediction_disparity_hr_px is not None
+    torch.testing.assert_close(
+        reference_warp.prediction_disparity_hr_px, previous_teacher + 2.0
+    )
 
     current_teacher = previous_teacher + 1.0
-    warped_previous_prediction = previous_teacher + 2.0
+    warped_previous_prediction = reference_warp.prediction_disparity_hr_px
     current_prediction_same_bias = current_teacher + 2.0
     common = {
         "static_mask": torch.ones_like(previous_teacher, dtype=torch.bool),
@@ -343,6 +371,8 @@ def _history_v2_config_section() -> dict[str, object]:
         "age_temperature_frames": 3.0,
         "source_collision_penalty": 0.5,
         "candidate_feature_channels": 32,
+        "collision_depth_gap_m": 0.05,
+        "collision_relative_depth_gap": 0.05,
     }
 
 
@@ -369,3 +399,106 @@ def test_temporal_v2_config_parser_fails_closed() -> None:
     }
     with pytest.raises(ValueError, match="at least K=2"):
         train._validate_common_training_config(invalid_k, total_steps=1)
+
+
+def test_temporal_v2_requires_time_invariant_calibration() -> None:
+    intrinsics = _intrinsics_hr().unsqueeze(1).repeat(1, 3, 1, 1)
+    baseline = torch.full((1, 3), 0.1)
+    train.validate_v2_temporal_calibration(intrinsics, baseline)
+
+    changed_intrinsics = intrinsics.clone()
+    changed_intrinsics[:, 1, 0, 0] += 0.01
+    with pytest.raises(ValueError, match="time-invariant cropped K"):
+        train.validate_v2_temporal_calibration(changed_intrinsics, baseline)
+
+    changed_baseline = baseline.clone()
+    changed_baseline[:, 2] += 0.001
+    with pytest.raises(ValueError, match="time-invariant baseline"):
+        train.validate_v2_temporal_calibration(intrinsics, changed_baseline)
+
+
+def test_full_v2_three_step_unroll_has_finite_teacher_residual_and_backward() -> None:
+    batch_size, times = 1, 3
+    rgb = torch.rand(batch_size, times, 3, _HEIGHT_HR, _WIDTH_HR)
+    disparity_lr_grid_hr_px = torch.full(
+        (batch_size, times, 1, _HEIGHT_LR, _WIDTH_LR), 4.0
+    )
+    confidence_lr = torch.full_like(disparity_lr_grid_hr_px, 0.9)
+    valid_lr = torch.ones_like(disparity_lr_grid_hr_px, dtype=torch.bool)
+    teacher_hr = torch.full(
+        (batch_size, times, 1, _HEIGHT_HR, _WIDTH_HR), 4.0
+    )
+    teacher_confidence = torch.ones_like(teacher_hr)
+    teacher_valid = torch.ones_like(teacher_hr, dtype=torch.bool)
+    intrinsics = _intrinsics_hr().unsqueeze(1).repeat(1, times, 1, 1)
+    extrinsics = _identity_extrinsics().unsqueeze(1).repeat(1, times, 1, 1, 1)
+    batch = {
+        "rgb_hr_sequence": rgb,
+        "disparity_ffs_hr_px_sequence": disparity_lr_grid_hr_px,
+        "confidence_ffs_sequence": confidence_lr,
+        "valid_ffs_sequence": valid_lr,
+        "observation_disparity_lr_px_sequence": disparity_lr_grid_hr_px / 2.0,
+        "observation_confidence_sequence": confidence_lr,
+        "observation_trusted_mask_sequence": valid_lr,
+        "teacher_disparity_hr_px_sequence": teacher_hr,
+        "teacher_confidence_sequence": teacher_confidence,
+        "teacher_valid_mask_sequence": teacher_valid,
+        "teacher_trusted_mask_sequence": teacher_valid,
+        "K_hr_sequence": intrinsics,
+        "baseline_m_sequence": torch.full((batch_size, times), 0.1),
+        "disparity_vggt_hr_px_sequence": disparity_lr_grid_hr_px.clone(),
+        "confidence_vggt_sequence": confidence_lr.clone(),
+        "valid_vggt_sequence": valid_lr.clone(),
+        "vggt_extrinsics_camera_from_world_metric_sequence": extrinsics,
+        "temporal_pose_valid_sequence": torch.ones(
+            batch_size, times, dtype=torch.bool
+        ),
+        "static_prior_valid_sequence": torch.ones(
+            batch_size, times, dtype=torch.bool
+        ),
+    }
+    config = train.resolve_config("configs/temporal_x2_v2.yaml")
+    model = train.build_model(config).train()
+    with torch.no_grad():
+        frozen_endpoint = train_epipolar.predict_frozen_stage_b_endpoint(
+            model.eval(), batch, config=config
+        )
+    assert frozen_endpoint.shape == (1, 1, _HEIGHT_HR, _WIDTH_HR)
+    assert bool(torch.isfinite(frozen_endpoint).all())
+    model.train()
+    optimizer = torch.optim.SGD(model.parameters(), lr=1e-2)
+    loss = train._forward_temporal_loss(
+        model,
+        batch,
+        config=config,
+        weights=train.loss_weights_from_config(config),
+        diagnostic=True,
+    )
+    assert torch.isfinite(loss.total)
+    assert torch.isfinite(loss.temporal)
+    assert loss.valid_bce is not None
+    assert loss.completion_bce is not None
+    loss.total.backward()
+    optimizer.step()
+    optimizer.zero_grad(set_to_none=True)
+    # Conservative zero-initialized output/source heads intentionally shield
+    # the encoders on update zero. Once those heads move, the next unroll must
+    # propagate finite gradients into the top-K candidate encoder.
+    second_loss = train._forward_temporal_loss(
+        model,
+        batch,
+        config=config,
+        weights=train.loss_weights_from_config(config),
+        diagnostic=True,
+    )
+    second_loss.total.backward()
+    topk_gradients = [
+        parameter.grad
+        for parameter in model.topk_history_encoder.parameters()  # type: ignore[union-attr]
+    ]
+    assert any(
+        gradient is not None
+        and bool(torch.isfinite(gradient).all())
+        and bool((gradient != 0).any())
+        for gradient in topk_gradients
+    )

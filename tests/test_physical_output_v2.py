@@ -92,6 +92,20 @@ def test_v2_nonnegative_zero_invalid_and_trusted_ffs_is_conserved_exactly() -> N
     assert not torch.any((output.disparity_hr_px == 0) & output.output_valid_mask)
 
 
+def test_v2_negative_raw_proposal_is_not_mirrored_to_large_positive_disparity() -> None:
+    model = FFSOmegaTSR(physical_output_v2=True).eval()
+    rgb, disparity, confidence = _tsr_inputs()
+    confidence.zero_()
+    valid = torch.ones_like(disparity, dtype=torch.bool)
+    final_layer = model.hr_output_head[-1]
+    assert isinstance(final_layer, nn.Conv2d)
+    with torch.no_grad():
+        final_layer.bias[0] = -100.0
+        output = model(rgb, disparity, confidence, valid_ffs=valid)
+    assert torch.all(output.disparity_hr_px >= 0)
+    assert output.disparity_hr_px.max().item() < 1.0
+
+
 def test_validity_completion_loss_is_soft_empty_safe_and_has_finite_gradients() -> None:
     valid_logits = torch.zeros(1, 1, 2, 3, requires_grad=True)
     completion_logits = torch.zeros(1, 1, 2, 3, requires_grad=True)
@@ -115,6 +129,27 @@ def test_validity_completion_loss_is_soft_empty_safe_and_has_finite_gradients() 
     assert valid_logits.grad is not None and torch.isfinite(valid_logits.grad).all()
     assert completion_logits.grad is not None
     assert torch.count_nonzero(completion_logits.grad) == 0
+
+
+def test_validity_loss_excludes_unreachable_source_free_completion_domain() -> None:
+    logits = torch.zeros(1, 1, 2, 3, requires_grad=True)
+    supported = torch.zeros_like(logits, dtype=torch.bool)
+    terms = validity_completion_loss(
+        valid_logits=logits,
+        completion_logits=logits,
+        valid_probability=torch.sigmoid(logits),
+        completion_probability=torch.sigmoid(logits),
+        teacher_valid_mask=torch.ones_like(logits, dtype=torch.bool),
+        teacher_confidence=torch.ones_like(logits),
+        observation_valid_mask_hr=torch.zeros_like(logits, dtype=torch.bool),
+        source_support_mask_hr=supported,
+    )
+    assert terms.valid_pixel_count == 0
+    assert terms.completion_pixel_count == 0
+    total = terms.valid_bce + terms.completion_bce + terms.calibration
+    assert total.item() == 0.0
+    total.backward()
+    assert logits.grad is not None and logits.grad.eq(0).all()
 
 
 def test_v2_config_build_and_training_loss_wire_all_three_terms() -> None:
@@ -240,6 +275,31 @@ def test_stage_c_v2_fp32_lower_bound_and_zero_semantics() -> None:
     assert not output.output_valid_mask[..., 0].any()
 
 
+def test_stage_c_noop_gate_cannot_hide_harmful_raw_correction_tap() -> None:
+    model = HREpipolarRefiner(
+        feature_channels=8,
+        correlation_groups=2,
+        head_channels=12,
+        base_aware_noop_v2=True,
+    ).eval()
+    correction_layer = model.correction_head[-1]
+    gate_layer = model.no_op_gate_head
+    assert isinstance(correction_layer, nn.Conv2d)
+    assert isinstance(gate_layer, nn.Conv2d)
+    with torch.no_grad():
+        correction_layer.bias.fill_(-100.0)
+        gate_layer.bias.fill_(100.0)
+    rgb = torch.rand(1, 3, 4, 12)
+    base = torch.ones(1, 1, 4, 12)
+    with torch.no_grad():
+        output = model(rgb, rgb.clone(), base)
+    torch.testing.assert_close(output.corrected_disparity_hr_px, base)
+    assert output.pre_lower_bound_correction_hr_px is not None
+    assert output.pre_lower_bound_disparity_hr_px is not None
+    assert (output.pre_lower_bound_correction_hr_px < 0).any()
+    assert (output.pre_lower_bound_disparity_hr_px < 0).any()
+
+
 def test_stage_c_v2_ste_keeps_pre_bound_correction_gradient_finite() -> None:
     model = HREpipolarRefiner(
         feature_channels=8,
@@ -269,7 +329,7 @@ def test_stage_c_v2_ste_keeps_pre_bound_correction_gradient_finite() -> None:
     # soft product also gives the no-op gate a nonzero learning signal.
     second = model(rgb_left, rgb_right, base)
     assert second.pre_lower_bound_disparity_hr_px is not None
-    (second.pre_lower_bound_disparity_hr_px - 1.2).abs().mean().backward()
+    (second.corrected_disparity_hr_px - 1.2).abs().mean().backward()
     assert isinstance(model.no_op_gate_head, nn.Conv2d)
     assert model.no_op_gate_head.bias.grad is not None
     assert torch.isfinite(model.no_op_gate_head.bias.grad).all()

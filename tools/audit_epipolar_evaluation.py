@@ -22,6 +22,7 @@ import math
 import os
 import re
 import stat
+import subprocess
 import sys
 import tempfile
 from collections.abc import Mapping, Sequence
@@ -86,6 +87,9 @@ FORMAL_STAGE_C_EVALUATOR_SHA256 = (
 )
 FORMAL_STAGE_C_TRAINING_AUDITOR_SHA256 = (
     "779f0814cad7f82ff40d6943e4d2fbedeb5e06b2abfb823726e8d5e2ac553b70"
+)
+FORMAL_STAGE_C_TRAINING_AUDITOR_GIT_HASH = (
+    "22554b21a2c4364c94103fcdec4dd7dbf47318b2"
 )
 FORMAL_RECTIFICATION_AUDIT_SHA256 = (
     "3eb3e8853e4723b9e0703aeaffd36b9ef482b311ff5b9cff5a79e28e60e84429"
@@ -486,10 +490,26 @@ def _validate_training_audit(
     summary: JSONArtifact | None,
 ) -> dict[str, Any]:
     value = artifact.value
-    training_auditor_path = PROJECT_ROOT / "tools" / "audit_epipolar_training_run.py"
-    training_auditor_payload = _read_regular_file(
-        training_auditor_path, "Stage-C training auditor source"
-    )
+    # The canonical receipt is bound to the auditor blob that produced it,
+    # not to whichever newer auditor happens to be checked out now.  Retrieve
+    # that immutable blob from Git so current architecture-v2 audit support can
+    # evolve without invalidating historical Stage-C evidence.
+    try:
+        training_auditor_payload = subprocess.run(
+            [
+                "git",
+                "show",
+                f"{FORMAL_STAGE_C_TRAINING_AUDITOR_GIT_HASH}:"
+                "tools/audit_epipolar_training_run.py",
+            ],
+            cwd=PROJECT_ROOT,
+            check=True,
+            capture_output=True,
+        ).stdout
+    except (OSError, subprocess.CalledProcessError) as exc:
+        raise EpipolarEvaluationAuditError(
+            "cannot read canonical Stage-C training auditor Git blob"
+        ) from exc
     _require(
         _sha256_bytes(training_auditor_payload)
         == FORMAL_STAGE_C_TRAINING_AUDITOR_SHA256,

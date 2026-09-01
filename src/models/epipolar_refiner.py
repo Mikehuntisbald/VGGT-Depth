@@ -654,17 +654,21 @@ class HREpipolarRefiner(nn.Module):
             # Exact hard decision in forward, soft product in backward. At the
             # zero-logit/zero-correction initialization the output is exact
             # base while the correction head still receives a 0.5 gradient.
-            penalty_correction_hr_px = (
+            applied_correction_hr_px = (
                 hard_applied.detach() + soft_applied - soft_applied.detach()
             )
-            penalty_correction_hr_px = torch.where(
+            applied_correction_hr_px = torch.where(
                 any_valid & base_valid,
-                penalty_correction_hr_px,
-                torch.zeros_like(penalty_correction_hr_px),
+                applied_correction_hr_px,
+                torch.zeros_like(applied_correction_hr_px),
             )
+            # Diagnostics/losses see the ungated proposal. The no-op gate is
+            # therefore unable to hide a harmful negative or oversized raw
+            # correction from the regularizer and base-aware bound penalty.
+            penalty_correction_hr_px = pre_correction_fp32
             penalty_disparity_hr_px = base_fp32 + penalty_correction_hr_px
             correction_hr_px = torch.maximum(
-                penalty_correction_hr_px,
+                applied_correction_hr_px,
                 -base_fp32,
             )
             correction_hr_px = torch.where(

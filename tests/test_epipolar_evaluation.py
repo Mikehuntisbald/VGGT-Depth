@@ -522,6 +522,29 @@ def test_intermediate_checkpoints_are_acceptance_ineligible() -> None:
     assert not status["all_complete"]
 
 
+def test_architecture_v2_completion_is_never_canonical_replacement() -> None:
+    from omegaconf import OmegaConf
+
+    config = resolve_epipolar_config(
+        Path(__file__).parents[1] / "configs" / "epipolar_x2_v2.yaml"
+    )
+    plain = OmegaConf.to_container(config, resolve=True)
+    assert isinstance(plain, dict)
+    stage_c = {"step": 5000, "config": plain}
+    base = {
+        "step": 15000,
+        "training_config": {
+            "train": {"steps": 15000, "steps_temporal": 15000}
+        },
+    }
+    status = eval_epipolar.checkpoint_completion_status(stage_c, base)
+    assert status["stage_c"]["architecture_v2"] is True
+    assert status["stage_c"]["architecture_v2_training_complete"] is True
+    assert status["stage_c"]["canonical_stage_c_replacement"] is False
+    assert status["architecture_v2_all_complete"] is True
+    assert status["all_complete"] is False
+
+
 def test_formal_crop_must_match_checkpoint_and_384x768() -> None:
     stage = {
         "config": {"data": {"hr_crop": [384, 768], "crop_mode": "random"}}

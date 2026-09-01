@@ -48,6 +48,58 @@ def test_epipolar_config_enforces_config_driven_plus_minus_two_search() -> None:
         train_epipolar.validate_epipolar_config(fp32)
 
 
+def test_stage_c_architecture_v2_has_noncanonical_role_and_completion() -> None:
+    config = train_epipolar.resolve_epipolar_config(
+        Path(__file__).parents[1] / "configs" / "epipolar_x2_v2.yaml"
+    )
+    assert train_epipolar.stage_c_experiment_role(config) == (
+        "ARCHITECTURE_V2_STAGE_C"
+    )
+    base = _TinyBase()
+
+    def predictor(module: nn.Module, batch: dict[str, torch.Tensor]) -> torch.Tensor:
+        assert isinstance(module, _TinyBase)
+        return module.projection(batch["rgb_hr_sequence"][:, -1]).abs() + 1.0
+
+    stage = FrozenTemporalEpipolarStage(
+        base,
+        HREpipolarRefiner(
+            feature_channels=8,
+            correlation_groups=2,
+            head_channels=12,
+            base_aware_noop_v2=True,
+        ),
+        predictor,
+    )
+    optimizer = torch.optim.AdamW(stage.refiner.parameters(), lr=2e-4)
+    scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=lambda _: 1.0)
+    payload = train_epipolar._stage_c_checkpoint_payload(
+        stage=stage,
+        optimizer=optimizer,
+        scheduler=scheduler,
+        completed_steps=0,
+        config=config,
+        git_hash="a" * 40,
+        runtime_source_bundle={"git_head": "a" * 40, "bundle_sha256": "b" * 64},
+        training_runtime={
+            "formal_cuda_bf16_eligible": False,
+            "strict_determinism_eligible": True,
+        },
+        base_checkpoint={"path": "/tmp/base.pt", "sha256": "c" * 64, "step": 15000},
+        base_lineage={"valid": True},
+        raw_lineage={"valid": True},
+        base_completion={"complete": True},
+        rectification_audit={"status": "PASS"},
+        latest_loss={"total": 0.0},
+        elapsed_seconds=0.0,
+        batches_per_epoch=1,
+    )
+    assert payload["experiment_role"] == "ARCHITECTURE_V2_STAGE_C"
+    assert payload["completion"]["formal_training_complete"] is False
+    assert payload["completion"]["architecture_v2_training_complete"] is False
+    assert payload["completion"]["canonical_stage_c_replacement"] is False
+
+
 def test_exact_frozen_stage_b_endpoint_predictor_cpu_shape(tmp_path: Path) -> None:
     manifest, observation, teacher, derived, _ = _make_temporal_cache(tmp_path)
     temporal = CachedTemporalTrainingDataset(
@@ -230,7 +282,9 @@ def test_runtime_source_bundle_hashes_stage_c_evaluator(
     assert "configs/ablations/d025_positivity_t3.yaml" not in paths
     assert "configs/ablations/d025_stage_c_positivity.yaml" not in paths
     assert "tools/audit_d025_evaluation.py" not in paths
-    assert len(paths) == 52
+    # Three opt-in V2 source modules are now included in fresh runtime bundles;
+    # historical 52-file receipts remain validated by their pinned auditors.
+    assert len(paths) == 55
 
     controlled_bundle = train_epipolar._runtime_source_bundle(
         controlled_ablation=True
@@ -242,7 +296,17 @@ def test_runtime_source_bundle_hashes_stage_c_evaluator(
     assert "configs/ablations/d025_positivity_t3.yaml" in controlled_paths
     assert "configs/ablations/d025_stage_c_positivity.yaml" in controlled_paths
     assert "tools/audit_d025_evaluation.py" in controlled_paths
-    assert len(controlled_paths) == 55
+    assert len(controlled_paths) == 58
+
+    v2_bundle = train_epipolar._runtime_source_bundle(physical_v2=True)
+    v2_paths = [record["path"] for record in v2_bundle["files"]]
+    assert v2_paths == list(
+        train_epipolar.stage_c_runtime_relative_paths(physical_v2=True)
+    )
+    assert "configs/mvp_x2_v2.yaml" in v2_paths
+    assert "configs/temporal_x2_v2.yaml" in v2_paths
+    assert "configs/epipolar_x2_v2.yaml" in v2_paths
+    assert len(v2_paths) == 58
 
 
 def test_cpu_runtime_receipt_is_never_formal_bf16_eligible() -> None:
