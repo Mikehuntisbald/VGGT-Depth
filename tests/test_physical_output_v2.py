@@ -250,6 +250,7 @@ def test_stage_c_v2_ste_keeps_pre_bound_correction_gradient_finite() -> None:
     rgb_left = torch.rand(1, 3, 4, 12)
     rgb_right = torch.rand(1, 3, 4, 12)
     base = torch.full((1, 1, 4, 12), 1.0)
+    optimizer = torch.optim.SGD(model.parameters(), lr=0.1)
     output = model(rgb_left, rgb_right, base)
     assert output.pre_lower_bound_correction_hr_px is not None
     # The forward hard gate is no-op, but the soft backward path must reach the
@@ -261,6 +262,15 @@ def test_stage_c_v2_ste_keeps_pre_bound_correction_gradient_finite() -> None:
     assert correction_layer.bias.grad is not None
     assert torch.isfinite(correction_layer.bias.grad).all()
     assert correction_layer.bias.grad.abs().item() > 0
-    for parameter in model.no_op_gate_head.parameters():  # type: ignore[union-attr]
-        if parameter.grad is not None:
-            assert torch.isfinite(parameter.grad).all()
+    optimizer.step()
+    optimizer.zero_grad(set_to_none=True)
+
+    # Once the correction head has moved away from exact zero, the same STE
+    # soft product also gives the no-op gate a nonzero learning signal.
+    second = model(rgb_left, rgb_right, base)
+    assert second.pre_lower_bound_disparity_hr_px is not None
+    (second.pre_lower_bound_disparity_hr_px - 1.2).abs().mean().backward()
+    assert isinstance(model.no_op_gate_head, nn.Conv2d)
+    assert model.no_op_gate_head.bias.grad is not None
+    assert torch.isfinite(model.no_op_gate_head.bias.grad).all()
+    assert model.no_op_gate_head.bias.grad.abs().item() > 0
