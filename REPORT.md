@@ -418,6 +418,19 @@ active. Raw T3 also still emits 4.7392% negative disparity. The declared
 pixels honestly as 4.7392% zero/invalid, with no epsilon fill. Evidence and
 artifact hashes: `reports/m4/stage_b_eval_step2500.json`.
 
+At step 5,000, paired temporal error improved further from 0.364126 px (T1)
+to 0.319402 px (T3), or 12.2825%. The quality-gated VGGT prior now improves
+T3 overall EPE by 8.3640%, versus 1.5366% at step 2,500; the complete VGGT-on
+branch improves low-confidence EPE by 9.3834%, invalid-region completeness by
+957.57%, and trusted-region EPE by 3.3663% relative to bilinear. The no-prior
+history-only row trades spatial accuracy for temporal stability at this point:
+its low-confidence EPE is 1.7329% worse than bilinear even though its paired
+TEPE passes. Raw T3 negative rate fell from 4.7392% to 1.8198%, but still does
+not meet the raw physical gate. The formal run therefore continues. The
+stratified visualization set now contains two valid-geometry/history examples
+and two explicit pose-rejected fail-closed examples. Evidence:
+`reports/m4/stage_b_eval_step5000.json`.
+
 Stage-C now has a separate training entrypoint that runs the full frozen
 VGGT-on Stage-B endpoint through the exact three-step causal unroll, loads the
 rectified right endpoint with the identical HR crop, and optimizes only the
