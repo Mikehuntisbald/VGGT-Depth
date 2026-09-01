@@ -98,6 +98,9 @@ EVALUATION_DEFAULTS: dict[str, Any] = {
     }
 }
 
+FORMAL_STAGE_A_TRAINING_STEPS = 5_000
+FORMAL_STAGE_B_TRAINING_STEPS = 15_000
+
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
@@ -860,6 +863,122 @@ def _validate_formal_temporal_coverage(
         ),
         "raw_vggt_cache_manifest_path": str(raw_manifest_path),
         "raw_vggt_cache_manifest_sha256": raw_manifest_sha256,
+    }
+
+
+def checkpoint_training_completion(
+    checkpoint_metadata: dict[str, Any],
+    *,
+    stage: str,
+) -> dict[str, Any]:
+    """Classify execution completion separately from canonical finality.
+
+    A checkpoint that completed a shortened configured run is still not the
+    canonical Stage-A/Stage-B checkpoint. Likewise, a 7,500-step snapshot from
+    a 15,000-step Stage-B run is an intermediate artifact even when evaluated
+    over the complete held-out corpus.
+    """
+
+    if stage not in {"spatial", "temporal"}:
+        raise ValueError("stage must be spatial or temporal")
+    actual_step = checkpoint_metadata.get("step")
+    config = checkpoint_metadata.get("training_config")
+    train_config = config.get("train") if isinstance(config, dict) else None
+    if (
+        isinstance(actual_step, bool)
+        or not isinstance(actual_step, int)
+        or actual_step < 0
+        or not isinstance(train_config, dict)
+    ):
+        raise ValueError("checkpoint training completion metadata is malformed")
+
+    configured_field = "steps_spatial" if stage == "spatial" else "steps"
+    configured_steps = train_config.get(configured_field)
+    declared_schedule_field = (
+        "steps_spatial" if stage == "spatial" else "steps_temporal"
+    )
+    declared_schedule_steps = train_config.get(declared_schedule_field)
+    for name, value in (
+        (configured_field, configured_steps),
+        (declared_schedule_field, declared_schedule_steps),
+    ):
+        if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+            raise ValueError(f"checkpoint train.{name} is malformed")
+
+    canonical_steps = (
+        FORMAL_STAGE_A_TRAINING_STEPS
+        if stage == "spatial"
+        else FORMAL_STAGE_B_TRAINING_STEPS
+    )
+    execution_complete = actual_step == configured_steps
+    canonical_schedule = (
+        configured_steps == canonical_steps
+        and declared_schedule_steps == canonical_steps
+    )
+    final_training_checkpoint = execution_complete and canonical_schedule
+    return {
+        "stage": stage,
+        "actual_step": actual_step,
+        "configured_steps_field": f"train.{configured_field}",
+        "configured_steps": configured_steps,
+        "declared_schedule_field": f"train.{declared_schedule_field}",
+        "declared_schedule_steps": declared_schedule_steps,
+        "canonical_steps": canonical_steps,
+        "execution_complete": execution_complete,
+        "canonical_schedule": canonical_schedule,
+        "final_training_checkpoint": final_training_checkpoint,
+    }
+
+
+def evaluation_eligibility_status(
+    *,
+    stage: str,
+    full_selection: bool,
+    allow_non_holdout_smoke: bool,
+    formal_holdout: bool | None,
+    checkpoint_completion: dict[str, Any],
+    spatial_checkpoint_completion: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """Separate corpus coverage from final-checkpoint acceptance eligibility."""
+
+    if stage not in {"spatial", "temporal"}:
+        raise ValueError("stage must be spatial or temporal")
+    if checkpoint_completion.get("stage") != stage:
+        raise ValueError("primary checkpoint completion stage mismatch")
+    if stage == "temporal" and (
+        not isinstance(spatial_checkpoint_completion, dict)
+        or spatial_checkpoint_completion.get("stage") != "spatial"
+    ):
+        raise ValueError("temporal evaluation requires Stage-A completion metadata")
+    coverage_eligible = bool(
+        full_selection
+        and not allow_non_holdout_smoke
+        and (stage == "spatial" or formal_holdout is True)
+    )
+    final_training_checkpoint = bool(
+        checkpoint_completion.get("final_training_checkpoint") is True
+        and (
+            stage == "spatial"
+            or spatial_checkpoint_completion.get("final_training_checkpoint")
+            is True
+        )
+    )
+    final_acceptance_eligible = bool(
+        coverage_eligible and final_training_checkpoint
+    )
+    if allow_non_holdout_smoke:
+        status = "NON_HOLDOUT_SMOKE_COMPLETE"
+    elif final_acceptance_eligible:
+        status = "FINAL_CHECKPOINT_EVALUATION_COMPLETE"
+    elif coverage_eligible:
+        status = "INTERMEDIATE_CHECKPOINT_EVALUATION_COMPLETE"
+    else:
+        status = "LIMITED_EVALUATION_COMPLETE"
+    return {
+        "coverage_eligible": coverage_eligible,
+        "final_training_checkpoint": final_training_checkpoint,
+        "final_acceptance_eligible": final_acceptance_eligible,
+        "status": status,
     }
 
 
@@ -1666,6 +1785,38 @@ def run(args: argparse.Namespace) -> int:
 
     elapsed_seconds = time.perf_counter() - started
     full_selection = start_index == 0 and sample_count == len(dataset)
+    checkpoint_completion = checkpoint_training_completion(
+        checkpoint_metadata,
+        stage=stage,
+    )
+    spatial_checkpoint_completion = (
+        None
+        if spatial_checkpoint_metadata is None
+        else checkpoint_training_completion(
+            spatial_checkpoint_metadata,
+            stage="spatial",
+        )
+    )
+    eligibility = evaluation_eligibility_status(
+        stage=stage,
+        full_selection=full_selection,
+        allow_non_holdout_smoke=args.allow_non_holdout_smoke,
+        formal_holdout=(
+            None
+            if holdout_raw_lineage is None
+            else holdout_raw_lineage.get("formal_holdout") is True
+        ),
+        checkpoint_completion=checkpoint_completion,
+        spatial_checkpoint_completion=spatial_checkpoint_completion,
+    )
+    coverage_eligible = bool(eligibility["coverage_eligible"])
+    final_training_checkpoint = bool(
+        eligibility["final_training_checkpoint"]
+    )
+    final_acceptance_eligible = bool(
+        eligibility["final_acceptance_eligible"]
+    )
+    evaluation_status = str(eligibility["status"])
     aggregate_methods = {
         method: accumulator.finalize()
         for method, accumulator in accumulators.items()
@@ -1727,6 +1878,7 @@ def run(args: argparse.Namespace) -> int:
     report = {
         "schema_version": 1,
         "stage": stage_label,
+        "status": evaluation_status,
         "evaluator": {
             "git_hash": repository_git_hash(PROJECT_ROOT),
             "eval_py_sha256": sha256_file(Path(__file__).resolve()),
@@ -1757,16 +1909,24 @@ def run(args: argparse.Namespace) -> int:
                     and holdout_raw_lineage.get("formal_holdout")
                 )
             ),
-            "acceptance_eligible": (
-                full_selection
-                and not args.allow_non_holdout_smoke
-                and (
-                    stage == "spatial"
-                    or bool(
-                        holdout_raw_lineage
-                        and holdout_raw_lineage.get("formal_holdout")
-                    )
-                )
+            "coverage_eligible": coverage_eligible,
+            "coverage_eligible_definition": (
+                "Complete selected validation corpus and, for Stage B, "
+                "video-disjoint formal holdout lineage. This does not imply "
+                "that the training checkpoint is final."
+            ),
+            "final_training_checkpoint": final_training_checkpoint,
+            "final_acceptance_eligible": final_acceptance_eligible,
+            "final_acceptance_eligible_definition": (
+                "coverage_eligible AND canonical final training schedules "
+                "completed (Stage A 5000; Stage B 15000 with final Stage A). "
+                "Eligibility does not assert that metric thresholds passed."
+            ),
+            # Backward-compatible key, narrowed to the only safe meaning.
+            "acceptance_eligible": final_acceptance_eligible,
+            "acceptance_eligible_definition": (
+                "Backward-compatible alias of final_acceptance_eligible; use "
+                "coverage_eligible for intermediate full-holdout evaluations."
             ),
             "full_validation_selection": full_selection,
         },
@@ -1795,8 +1955,12 @@ def run(args: argparse.Namespace) -> int:
         "hr_crop": None if full_resolution else list(crop_size or ()),
         "parameter_count": parameter_count,
         "checkpoint": checkpoint_metadata,
+        "checkpoint_training_completion": checkpoint_completion,
         "checkpoint_lineage": checkpoint_lineage,
         "spatial_checkpoint": spatial_checkpoint_metadata,
+        "spatial_checkpoint_training_completion": (
+            spatial_checkpoint_completion
+        ),
         "spatial_checkpoint_lineage": spatial_checkpoint_lineage,
         "manifest_path": str(manifest_path),
         "cache_identities": {
@@ -1857,13 +2021,12 @@ def run(args: argparse.Namespace) -> int:
     print(
         json.dumps(
             {
-                "status": (
-                    "NON_HOLDOUT_SMOKE_PASS"
-                    if args.allow_non_holdout_smoke
-                    else "PASS"
-                ),
+                "status": evaluation_status,
                 "stage": stage_label,
                 "target_type": PSEUDO_GT_LABEL,
+                "coverage_eligible": coverage_eligible,
+                "final_training_checkpoint": final_training_checkpoint,
+                "final_acceptance_eligible": final_acceptance_eligible,
                 (
                     "records_evaluated"
                     if stage == "spatial"

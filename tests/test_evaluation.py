@@ -438,6 +438,107 @@ def test_formal_temporal_coverage_rejects_self_consistent_subset(tmp_path: Path)
         eval_cli._validate_formal_temporal_coverage(dataset)
 
 
+def test_checkpoint_completion_separates_intermediate_and_canonical_final() -> None:
+    temporal_config = {
+        "train": {
+            "steps": 15_000,
+            "steps_temporal": 15_000,
+            "steps_spatial": 5_000,
+        }
+    }
+    intermediate = eval_cli.checkpoint_training_completion(
+        {"step": 7_500, "training_config": temporal_config},
+        stage="temporal",
+    )
+    assert not intermediate["execution_complete"]
+    assert intermediate["canonical_schedule"]
+    assert not intermediate["final_training_checkpoint"]
+
+    final = eval_cli.checkpoint_training_completion(
+        {"step": 15_000, "training_config": temporal_config},
+        stage="temporal",
+    )
+    assert final["execution_complete"]
+    assert final["canonical_schedule"]
+    assert final["final_training_checkpoint"]
+
+    shortened_config = copy.deepcopy(temporal_config)
+    shortened_config["train"]["steps"] = 7_500
+    shortened = eval_cli.checkpoint_training_completion(
+        {"step": 7_500, "training_config": shortened_config},
+        stage="temporal",
+    )
+    assert shortened["execution_complete"]
+    assert not shortened["canonical_schedule"]
+    assert not shortened["final_training_checkpoint"]
+
+    spatial = eval_cli.checkpoint_training_completion(
+        {"step": 5_000, "training_config": temporal_config},
+        stage="spatial",
+    )
+    assert spatial["final_training_checkpoint"]
+
+    intermediate_eligibility = eval_cli.evaluation_eligibility_status(
+        stage="temporal",
+        full_selection=True,
+        allow_non_holdout_smoke=False,
+        formal_holdout=True,
+        checkpoint_completion=intermediate,
+        spatial_checkpoint_completion=spatial,
+    )
+    assert intermediate_eligibility == {
+        "coverage_eligible": True,
+        "final_training_checkpoint": False,
+        "final_acceptance_eligible": False,
+        "status": "INTERMEDIATE_CHECKPOINT_EVALUATION_COMPLETE",
+    }
+
+    final_eligibility = eval_cli.evaluation_eligibility_status(
+        stage="temporal",
+        full_selection=True,
+        allow_non_holdout_smoke=False,
+        formal_holdout=True,
+        checkpoint_completion=final,
+        spatial_checkpoint_completion=spatial,
+    )
+    assert final_eligibility["coverage_eligible"]
+    assert final_eligibility["final_training_checkpoint"]
+    assert final_eligibility["final_acceptance_eligible"]
+    assert final_eligibility["status"] == "FINAL_CHECKPOINT_EVALUATION_COMPLETE"
+
+    spatial_intermediate = eval_cli.checkpoint_training_completion(
+        {"step": 2_500, "training_config": temporal_config},
+        stage="spatial",
+    )
+    missing_final_stage_a = eval_cli.evaluation_eligibility_status(
+        stage="temporal",
+        full_selection=True,
+        allow_non_holdout_smoke=False,
+        formal_holdout=True,
+        checkpoint_completion=final,
+        spatial_checkpoint_completion=spatial_intermediate,
+    )
+    assert missing_final_stage_a["coverage_eligible"]
+    assert not missing_final_stage_a["final_training_checkpoint"]
+    assert not missing_final_stage_a["final_acceptance_eligible"]
+
+
+def test_checkpoint_completion_rejects_missing_or_boolean_steps() -> None:
+    with pytest.raises(ValueError, match="completion metadata"):
+        eval_cli.checkpoint_training_completion(
+            {"step": True, "training_config": {"train": {}}},
+            stage="temporal",
+        )
+    with pytest.raises(ValueError, match="steps_temporal"):
+        eval_cli.checkpoint_training_completion(
+            {
+                "step": 15_000,
+                "training_config": {"train": {"steps": 15_000}},
+            },
+            stage="temporal",
+        )
+
+
 def _raw_vggt_receipt(tmp_path: Path) -> tuple[Path, str]:
     root = tmp_path / "vggt"
     root.mkdir()
@@ -692,3 +793,10 @@ def test_stage_a_cli_writes_bilinear_and_t1_csv_rows(tmp_path: Path) -> None:
     assert rows[2].startswith("bilinear_clamp0,")
     assert rows[3].startswith("T1,")
     assert rows[4].startswith("T1_clamp0,")
+    report = json.loads((output / "metrics.json").read_text(encoding="utf-8"))
+    assert report["status"] == "INTERMEDIATE_CHECKPOINT_EVALUATION_COMPLETE"
+    assert report["claims"]["coverage_eligible"] is True
+    assert report["claims"]["final_training_checkpoint"] is False
+    assert report["claims"]["final_acceptance_eligible"] is False
+    assert report["claims"]["acceptance_eligible"] is False
+    assert report["checkpoint_training_completion"]["actual_step"] == 1
