@@ -1,0 +1,119 @@
+{
+  "schema_version": 1,
+  "component": "stage-b-intermediate-holdout-evaluation",
+  "status": "INTERMEDIATE_ALL_ENGINEERING_GATES_PASS_WITH_PHYSICAL_POSTPROCESS",
+  "claim_boundary": {
+    "final_training_result": false,
+    "paper_accuracy": false,
+    "paper_ground_truth": false,
+    "target": "trusted_hr_ffs_teacher_pseudo_gt",
+    "note": "This is a lineage-valid 7500-step checkpoint diagnostic. The declared 15000-step Stage-B run remains active. Raw output fails the physical sign gate; the declared clamp-min-zero variant passes it without epsilon filling."
+  },
+  "checkpoint": {
+    "path": "outputs/ffs_omega_tsr_x2/stage_b/step7500.pt",
+    "sha256": "1eee0863bf7e96efb22551d389466d499f219404fad12554fd315d5674fb26a5",
+    "step": 7500,
+    "training_git_hash": "3e0df0b543f5000d0bf8490740b5f34ad979e3b6"
+  },
+  "evaluator": {
+    "git_hash": "ea377a5ebc3b703199068562f0ff09c25a21280d",
+    "eval_py_sha256": "d3cbc5083c2e6933383886f99a71e882fd8781982982da27644b8c65dc699a08",
+    "evaluation_module_sha256": "9ce1551ba73585eb800b5f3749a44250a26a063f1b2eaea8c45f1b794504fa18",
+    "torch_version": "2.10.0+cu128",
+    "cuda_version": "12.8"
+  },
+  "coverage": {
+    "acceptance_eligible": true,
+    "formal_holdout": true,
+    "future_frames": false,
+    "manifest_records": 244,
+    "derived_endpoint_records": 240,
+    "evaluable_t3_windows": 238,
+    "evaluated_t3_windows": 238,
+    "endpoint_pose_valid": 177,
+    "endpoint_pose_rejected": 61,
+    "endpoint_static_prior_valid": 177,
+    "derived_receipt_sha256": "1e05c4e081620b9f634e9b3020779c6e4fdb7e21bf1df55365c3d4cde3d50620"
+  },
+  "metrics": {
+    "t1_paired_temporal_error_hr_px": 0.3677216777243525,
+    "t3_paired_temporal_error_hr_px": 0.31531317580119217,
+    "t3_vs_t1_temporal_relative_change_percent": -14.252219843956606,
+    "t1_vs_bilinear_low_confidence_epe_relative_change_percent": -10.59050302796077,
+    "t3_vs_bilinear_low_confidence_epe_relative_change_percent": 0.758947111162341,
+    "t3_vs_bilinear_invalid_region_completeness_relative_change_percent": 190.12101568072885,
+    "t3_vs_bilinear_trusted_region_epe_relative_change_percent": -1.1608363034452682,
+    "t3_vggt_vs_t3_epe_relative_change_percent": -9.03051220305855,
+    "t3_vggt_vs_bilinear_low_confidence_epe_relative_change_percent": -10.680467534853946,
+    "t3_vggt_vs_bilinear_invalid_region_completeness_relative_change_percent": 295.4196753726207,
+    "t3_vggt_vs_bilinear_trusted_region_epe_relative_change_percent": -4.832858659539515,
+    "t3_vggt_epe_hr_px": 0.15965524059088024,
+    "t3_vggt_boundary_epe_hr_px": 0.9704711747417881,
+    "t3_vggt_bad_1": 0.008332079456534901,
+    "t3_raw_nan_rate_percent": 0.0,
+    "t3_raw_negative_rate_percent": 5.63204896216299,
+    "t3_vggt_raw_negative_rate_percent": 5.118581449506886,
+    "t3_clamp0_negative_rate_percent": 0.0,
+    "t3_clamp0_zero_invalid_rate_percent": 5.63204896216299,
+    "t3_vggt_clamp0_negative_rate_percent": 0.0,
+    "t3_vggt_clamp0_zero_invalid_rate_percent": 5.118581449506886
+  },
+  "engineering_gates": {
+    "t1_low_confidence_epe_improves_at_least_10_percent": true,
+    "t3_temporal_error_improves_at_least_10_percent": true,
+    "invalid_region_completeness_improves_at_least_15_percent": true,
+    "trusted_region_error_degradation_at_most_2_percent": true,
+    "t3_vggt_low_confidence_epe_improves_at_least_10_percent": true,
+    "raw_nan_or_negative_rate_below_0_5_percent": false,
+    "physical_clamp0_nan_or_negative_rate_below_0_5_percent": true,
+    "physical_output_note": "clamp_min(0) removes negative values but preserves them as honest zero/invalid pixels; no epsilon fill is used"
+  },
+  "trajectory": {
+    "temporal_improvement_percent": {
+      "step2500": -10.561315662814508,
+      "step5000": -12.282528991375505,
+      "step7500": -14.252219843956606
+    },
+    "vggt_prior_epe_effect_percent": {
+      "step2500": -1.5365621439070787,
+      "step5000": -8.36401517646691,
+      "step7500": -9.03051220305855
+    },
+    "t3_raw_negative_rate_percent": {
+      "step2500": 4.7392174643294815,
+      "step5000": 1.819809344636292,
+      "step7500": 5.63204896216299
+    },
+    "interpretation": "Temporal and VGGT-prior effects continue to improve, while raw sign validity is non-monotonic and must remain a separately tracked gate."
+  },
+  "visualization_selection": [
+    {
+      "frame_id": 1254,
+      "class": "valid_geometry_and_history",
+      "history_valid_pixels": 237392
+    },
+    {
+      "frame_id": 1266,
+      "class": "pose_rejected_fail_closed",
+      "history_valid_pixels": 0
+    },
+    {
+      "frame_id": 1494,
+      "class": "valid_geometry_and_history",
+      "history_valid_pixels": 202042
+    },
+    {
+      "frame_id": 1506,
+      "class": "pose_rejected_fail_closed",
+      "history_valid_pixels": 0
+    }
+  ],
+  "artifacts": {
+    "metrics_json": "outputs/ffs_omega_tsr_x2/stage_b/eval_step7500_fixed/metrics.json",
+    "metrics_json_sha256": "7c0b3f524b8253ff36245d46c210d59a2fb3d437f1a59b47d35101878b8fdcc8",
+    "metrics_csv": "outputs/ffs_omega_tsr_x2/stage_b/eval_step7500_fixed/metrics.csv",
+    "metrics_csv_sha256": "5d20694a862cf69d8f0929471210a29e78546ce132a7c936d08ee74c8b7b6e1c",
+    "visualizations_written": 4,
+    "elapsed_seconds": 227.17926699299994
+  }
+}

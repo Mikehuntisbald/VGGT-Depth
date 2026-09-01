@@ -431,6 +431,20 @@ stratified visualization set now contains two valid-geometry/history examples
 and two explicit pose-rejected fail-closed examples. Evidence:
 `reports/m4/stage_b_eval_step5000.json`.
 
+At step 7,500, the paired temporal improvement reaches 14.2522%
+(0.367722 px T1 to 0.315313 px T3). The complete VGGT-on branch now crosses
+the low-confidence spatial gate as well: versus bilinear it improves
+low-confidence EPE by 10.6805%, invalid-region completeness by 295.42%, and
+trusted-region EPE by 4.8329%; the prior improves T3 overall EPE by 9.0305%.
+Thus every declared accuracy/completeness gate passes on all 238 held-out
+windows at this intermediate checkpoint. Raw output validity remains a
+separate non-pass: T3/VGGT-on negative rates are 5.6320%/5.1186%, showing a
+non-monotonic regression from step 5,000. The declared clamp-to-zero physical
+variants have zero NaN/negative outputs but retain those pixels as explicit
+zero/invalid values. Training continues because this is neither the final
+15,000-step result nor independent-GT evidence. Evidence:
+`reports/m4/stage_b_eval_step7500.json`.
+
 The training process was later found externally terminated after its last
 atomic checkpoint at step 7,000. The interrupted log contained complete but
 uncheckpointed records through step 7,144 and a partial JSON record for step
