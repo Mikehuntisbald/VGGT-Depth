@@ -3,6 +3,7 @@ from __future__ import annotations
 import copy
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 import torch
@@ -37,6 +38,11 @@ def test_epipolar_config_enforces_config_driven_plus_minus_two_search() -> None:
     OmegaConf.update(invalid, "model.epipolar_offsets_hr_px", [-1, 0, 1])
     with pytest.raises(ValueError, match=r"\[-2,\+2\]"):
         train_epipolar.validate_epipolar_config(invalid)
+
+    fp32 = copy.deepcopy(config)
+    OmegaConf.update(fp32, "train.precision", "fp32")
+    with pytest.raises(ValueError, match="precision=bf16"):
+        train_epipolar.validate_epipolar_config(fp32)
 
 
 def test_exact_frozen_stage_b_endpoint_predictor_cpu_shape(tmp_path: Path) -> None:
@@ -188,3 +194,108 @@ def test_formal_rectification_audit_is_bound_and_fail_closed(tmp_path: Path) -> 
             tampered_path,
             expected_train_manifest_sha256=expected_train_sha256,
         )
+
+
+def test_runtime_source_bundle_rejects_scoped_dirty_state(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        train_epipolar.subprocess,
+        "run",
+        lambda *args, **kwargs: SimpleNamespace(stdout=" M train_epipolar.py\n"),
+    )
+
+    with pytest.raises(RuntimeError, match="committed and clean"):
+        train_epipolar._runtime_source_bundle()
+
+
+def test_cpu_runtime_receipt_is_never_formal_bf16_eligible() -> None:
+    runtime = train_epipolar._training_runtime(
+        torch.device("cpu"), use_bf16=False
+    )
+
+    assert runtime["device_type"] == "cpu"
+    assert runtime["autocast_enabled"] is False
+    assert runtime["autocast_dtype"] is None
+    assert runtime["formal_cuda_bf16_eligible"] is False
+
+
+@pytest.mark.parametrize(
+    ("dry_run", "run_steps"),
+    [(True, None), (True, 10), (False, 1)],
+)
+def test_cpu_smoke_policy_allows_only_explicit_bounded_execution(
+    dry_run: bool, run_steps: int | None
+) -> None:
+    runtime = train_epipolar._training_runtime(
+        torch.device("cpu"), use_bf16=False
+    )
+    train_epipolar._validate_execution_mode(
+        torch.device("cpu"),
+        allow_cpu_smoke=True,
+        dry_run=dry_run,
+        run_steps=run_steps,
+        training_runtime=runtime,
+    )
+
+
+@pytest.mark.parametrize(
+    ("allow_cpu_smoke", "dry_run", "run_steps", "message"),
+    [
+        (False, True, None, "requires --allow-cpu-smoke"),
+        (True, False, None, "limited to dry-run or one step"),
+        (True, False, 2, "limited to dry-run or one step"),
+    ],
+)
+def test_cpu_smoke_policy_rejects_unapproved_or_unbounded_execution(
+    allow_cpu_smoke: bool,
+    dry_run: bool,
+    run_steps: int | None,
+    message: str,
+) -> None:
+    runtime = train_epipolar._training_runtime(
+        torch.device("cpu"), use_bf16=False
+    )
+    with pytest.raises(RuntimeError, match=message):
+        train_epipolar._validate_execution_mode(
+            torch.device("cpu"),
+            allow_cpu_smoke=allow_cpu_smoke,
+            dry_run=dry_run,
+            run_steps=run_steps,
+            training_runtime=runtime,
+        )
+
+
+def test_cuda_policy_fails_closed_when_runtime_is_not_bf16_eligible() -> None:
+    with pytest.raises(RuntimeError, match="native CUDA bf16"):
+        train_epipolar._validate_execution_mode(
+            torch.device("cuda:0"),
+            allow_cpu_smoke=False,
+            dry_run=False,
+            run_steps=None,
+            training_runtime={
+                "device_name": "test-device",
+                "formal_cuda_bf16_eligible": False,
+            },
+        )
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is unavailable")
+def test_cuda_runtime_receipt_binds_actual_device_and_native_bf16() -> None:
+    current_device = torch.cuda.current_device()
+    with torch.cuda.device(current_device):
+        native_bf16_supported = torch.cuda.is_bf16_supported(
+            including_emulation=False
+        )
+    runtime = train_epipolar._training_runtime(
+        torch.device("cuda"), use_bf16=True
+    )
+
+    assert runtime["device"] == f"cuda:{current_device}"
+    assert runtime["device_type"] == "cuda"
+    assert runtime["device_name"] == torch.cuda.get_device_name()
+    assert runtime["device_capability"] == list(torch.cuda.get_device_capability())
+    assert runtime["bf16_supported"] is native_bf16_supported
+    assert runtime["autocast_enabled"] is True
+    assert runtime["autocast_dtype"] == "torch.bfloat16"
+    assert runtime["formal_cuda_bf16_eligible"] is native_bf16_supported

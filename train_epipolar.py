@@ -122,6 +122,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--device", default="auto")
     parser.add_argument("--run-steps", type=int, help="bounded optimizer steps")
     parser.add_argument(
+        "--allow-cpu-smoke",
+        action="store_true",
+        help="allow only a dry-run or one-step CPU integration smoke",
+    )
+    parser.add_argument(
         "--dry-run",
         action="store_true",
         help="run one deterministic forward/loss without optimizer mutation",
@@ -183,6 +188,8 @@ def validate_epipolar_config(config: DictConfig) -> None:
         raise ValueError("Stage-C vertical epipolar geometry contract mismatch")
     if bool(config.train.compile_model):
         raise ValueError("torch.compile remains disabled for initial Stage C")
+    if str(config.train.precision).lower() != "bf16":
+        raise ValueError("formal Stage C requires train.precision=bf16")
     offsets = [float(value) for value in config.model.epipolar_offsets_hr_px]
     if (
         not offsets
@@ -437,6 +444,71 @@ def _resolve_device(value: str) -> torch.device:
     if device.type == "cuda" and not torch.cuda.is_available():
         raise RuntimeError(f"requested CUDA device is unavailable: {device}")
     return device
+
+
+def _training_runtime(device: torch.device, *, use_bf16: bool) -> dict[str, Any]:
+    cuda_device = device.type == "cuda"
+    if cuda_device:
+        device_index = (
+            torch.cuda.current_device() if device.index is None else int(device.index)
+        )
+        concrete_device = torch.device("cuda", device_index)
+        with torch.cuda.device(concrete_device):
+            bf16_supported = bool(
+                torch.cuda.is_bf16_supported(including_emulation=False)
+            )
+    else:
+        concrete_device = device
+        bf16_supported = False
+    autocast_enabled = bool(use_bf16)
+    return {
+        "device": str(concrete_device),
+        "device_type": device.type,
+        "device_name": (
+            torch.cuda.get_device_name(concrete_device) if cuda_device else None
+        ),
+        "device_capability": (
+            list(torch.cuda.get_device_capability(concrete_device))
+            if cuda_device
+            else None
+        ),
+        "torch_version": str(torch.__version__),
+        "cuda_version": torch.version.cuda,
+        "cuda_available": bool(torch.cuda.is_available()),
+        "bf16_supported": bf16_supported,
+        "autocast_enabled": autocast_enabled,
+        "autocast_dtype": "torch.bfloat16" if autocast_enabled else None,
+        "formal_cuda_bf16_eligible": bool(
+            cuda_device and bf16_supported and autocast_enabled
+        ),
+    }
+
+
+def _validate_execution_mode(
+    device: torch.device,
+    *,
+    allow_cpu_smoke: bool,
+    dry_run: bool,
+    run_steps: int | None,
+    training_runtime: Mapping[str, Any],
+) -> None:
+    """Fail closed unless this is native CUDA bf16 or a bounded CPU smoke."""
+
+    if device.type == "cpu":
+        if not allow_cpu_smoke:
+            raise RuntimeError(
+                "CPU Stage-C execution requires --allow-cpu-smoke and is never "
+                "formal-training eligible"
+            )
+        if not dry_run and run_steps != 1:
+            raise RuntimeError("--allow-cpu-smoke is limited to dry-run or one step")
+        return
+    if device.type != "cuda":
+        raise RuntimeError(f"unsupported Stage-C execution device: {device}")
+    if not bool(training_runtime.get("formal_cuda_bf16_eligible", False)):
+        raise RuntimeError(
+            f"formal Stage C requires native CUDA bf16 on {training_runtime.get('device_name')}"
+        )
 
 
 def _move_batch(batch: Mapping[str, Any], device: torch.device) -> dict[str, Any]:
@@ -848,6 +920,15 @@ def run(args: argparse.Namespace) -> int:
         merge=False,
     )
     device = _resolve_device(args.device)
+    use_bf16 = device.type == "cuda"
+    training_runtime = _training_runtime(device, use_bf16=use_bf16)
+    _validate_execution_mode(
+        device,
+        allow_cpu_smoke=bool(args.allow_cpu_smoke),
+        dry_run=bool(args.dry_run),
+        run_steps=args.run_steps,
+        training_runtime=training_runtime,
+    )
     base_model = build_model(config)
     base_parameter_count = base_model.trainable_parameter_count
     base_metadata = load_model_for_evaluation(
@@ -905,9 +986,6 @@ def run(args: argparse.Namespace) -> int:
         drop_last=True,
     )
     batches = _infinite_batches(loader, dataset, sampler)
-    if device.type == "cuda" and not torch.cuda.is_bf16_supported():
-        raise RuntimeError(f"BF16 is unavailable on {torch.cuda.get_device_name(device)}")
-    use_bf16 = device.type == "cuda" and str(config.train.precision).lower() == "bf16"
     first_batch = _move_batch(next(batches), device)
     stage.train()
     with torch.autocast(device_type=device.type, dtype=torch.bfloat16, enabled=use_bf16):
@@ -928,6 +1006,7 @@ def run(args: argparse.Namespace) -> int:
                     "geometry_contract": EPIPOLAR_GEOMETRY_CONTRACT,
                     "rectification_audit": rectification_audit,
                     "runtime_source_bundle": runtime_source_bundle,
+                    "training_runtime": training_runtime,
                     "supervision": PSEUDO_GT_SUPERVISION,
                     "loss": dry_loss.detached_scalars(),
                 },
@@ -1014,6 +1093,7 @@ def run(args: argparse.Namespace) -> int:
         "geometry_contract": EPIPOLAR_GEOMETRY_CONTRACT,
         "rectification_audit": rectification_audit,
         "runtime_source_bundle": runtime_source_bundle,
+        "training_runtime": training_runtime,
         "supervision": PSEUDO_GT_SUPERVISION,
         "parameter_count": stage.trainable_parameter_count,
         "trainable_refiner_parameter_count": stage.trainable_parameter_count,
