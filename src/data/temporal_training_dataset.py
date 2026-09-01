@@ -147,6 +147,12 @@ class TemporalTrainingSample:
 
         return self.temporal_pose_valid_sequence
 
+    @property
+    def gt_pose_sequence(self) -> Tensor | None:
+        """Compatibility alias for the manifest GT pose context tensor."""
+
+        return self.gt_extrinsics_camera_from_world_sequence
+
 
 def _positive_integer(value: int, name: str) -> int:
     if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
