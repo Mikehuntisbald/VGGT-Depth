@@ -8,6 +8,7 @@ import copy
 import hashlib
 import json
 import math
+import subprocess
 import sys
 import time
 from collections.abc import Iterator, Mapping, Sequence
@@ -93,6 +94,17 @@ PSEUDO_GT_SUPERVISION = {
     "paper_ground_truth": False,
     "paper_accuracy_claim": False,
 }
+
+STAGE_C_RUNTIME_GIT_SCOPES = (
+    "train_epipolar.py",
+    "train.py",
+    "eval.py",
+    "configs/epipolar_x2.yaml",
+    "configs/temporal_x2.yaml",
+    "configs/mvp_x2.yaml",
+    "pyproject.toml",
+    "src",
+)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -227,6 +239,69 @@ def _resolved_dict(config: DictConfig) -> dict[str, Any]:
     if not isinstance(value, dict):
         raise TypeError("resolved config must be a mapping")
     return value
+
+
+def _runtime_source_bundle() -> dict[str, Any]:
+    """Hash the committed Stage-C runtime and reject scoped dirty state."""
+
+    command = [
+        "git",
+        "status",
+        "--porcelain",
+        "--untracked-files=all",
+        "--",
+        *STAGE_C_RUNTIME_GIT_SCOPES,
+    ]
+    try:
+        status = subprocess.run(
+            command,
+            cwd=PROJECT_ROOT,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+    except (OSError, subprocess.CalledProcessError) as exc:
+        raise RuntimeError(f"cannot audit Stage-C runtime Git state: {exc}") from exc
+    dirty = status.stdout.strip()
+    if dirty:
+        raise RuntimeError(
+            "Stage-C runtime source paths must be committed and clean:\n" + dirty
+        )
+    git_head = repository_git_hash(PROJECT_ROOT)
+    if git_head == "unknown":
+        raise RuntimeError("Stage-C runtime source requires a Git commit identity")
+    files = [
+        PROJECT_ROOT / "train_epipolar.py",
+        PROJECT_ROOT / "train.py",
+        PROJECT_ROOT / "eval.py",
+        PROJECT_ROOT / "configs" / "epipolar_x2.yaml",
+        PROJECT_ROOT / "configs" / "temporal_x2.yaml",
+        PROJECT_ROOT / "configs" / "mvp_x2.yaml",
+        PROJECT_ROOT / "pyproject.toml",
+        *sorted((PROJECT_ROOT / "src").rglob("*.py")),
+    ]
+    file_records = [
+        {
+            "path": str(path.relative_to(PROJECT_ROOT)),
+            "sha256": sha256_file(path),
+        }
+        for path in files
+    ]
+    encoded = json.dumps(
+        {"git_head": git_head, "files": file_records},
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=True,
+        allow_nan=False,
+    ).encode("utf-8")
+    return {
+        "schema_version": 1,
+        "git_head": git_head,
+        "relevant_paths_clean": True,
+        "git_scopes": list(STAGE_C_RUNTIME_GIT_SCOPES),
+        "files": file_records,
+        "bundle_sha256": hashlib.sha256(encoded).hexdigest(),
+    }
 
 
 def _validated_rectification_audit(
@@ -735,6 +810,7 @@ def run(args: argparse.Namespace) -> int:
             OmegaConf.update(
                 config, name, str(value.expanduser().resolve()), merge=False
             )
+    runtime_source_bundle = _runtime_source_bundle()
     validate_epipolar_config(config)
     seed_everything(int(config.seed), deterministic=True)
     dataset, observation_identity, teacher_identity = _build_temporal_dataset(config)
@@ -851,6 +927,7 @@ def run(args: argparse.Namespace) -> int:
                     "raw_lineage": raw_lineage,
                     "geometry_contract": EPIPOLAR_GEOMETRY_CONTRACT,
                     "rectification_audit": rectification_audit,
+                    "runtime_source_bundle": runtime_source_bundle,
                     "supervision": PSEUDO_GT_SUPERVISION,
                     "loss": dry_loss.detached_scalars(),
                 },
@@ -936,6 +1013,7 @@ def run(args: argparse.Namespace) -> int:
         "raw_lineage": raw_lineage,
         "geometry_contract": EPIPOLAR_GEOMETRY_CONTRACT,
         "rectification_audit": rectification_audit,
+        "runtime_source_bundle": runtime_source_bundle,
         "supervision": PSEUDO_GT_SUPERVISION,
         "parameter_count": stage.trainable_parameter_count,
         "trainable_refiner_parameter_count": stage.trainable_parameter_count,
