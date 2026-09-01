@@ -226,6 +226,7 @@ def test_runtime_source_bundle_hashes_stage_c_evaluator(
     paths = [record["path"] for record in bundle["files"]]
 
     assert "eval_epipolar.py" in paths
+    assert paths == list(train_epipolar.stage_c_runtime_relative_paths())
     assert len(paths) == 52
 
 

@@ -117,6 +117,7 @@ STAGE_C_RUNTIME_GIT_SCOPES = (
     "pyproject.toml",
     "src",
 )
+STAGE_C_RUNTIME_ROOT_FILES = STAGE_C_RUNTIME_GIT_SCOPES[:-1]
 
 STAGE_C_CHECKPOINT_SCHEMA_VERSION = 1
 STAGE_C_COMPONENT = "ffs-omega-tsr-epipolar-stage-c"
@@ -293,6 +294,20 @@ def _resolved_dict(config: DictConfig) -> dict[str, Any]:
     return value
 
 
+def stage_c_runtime_relative_paths(
+    project_root: Path = PROJECT_ROOT,
+) -> tuple[str, ...]:
+    """Canonical ordered Stage-C producer/evaluator source paths."""
+
+    return (
+        *STAGE_C_RUNTIME_ROOT_FILES,
+        *(
+            str(path.relative_to(project_root))
+            for path in sorted((project_root / "src").rglob("*.py"))
+        ),
+    )
+
+
 def _runtime_source_bundle() -> dict[str, Any]:
     """Hash the committed Stage-C runtime and reject scoped dirty state."""
 
@@ -322,17 +337,7 @@ def _runtime_source_bundle() -> dict[str, Any]:
     git_head = repository_git_hash(PROJECT_ROOT)
     if git_head == "unknown":
         raise RuntimeError("Stage-C runtime source requires a Git commit identity")
-    files = [
-        PROJECT_ROOT / "train_epipolar.py",
-        PROJECT_ROOT / "eval_epipolar.py",
-        PROJECT_ROOT / "train.py",
-        PROJECT_ROOT / "eval.py",
-        PROJECT_ROOT / "configs" / "epipolar_x2.yaml",
-        PROJECT_ROOT / "configs" / "temporal_x2.yaml",
-        PROJECT_ROOT / "configs" / "mvp_x2.yaml",
-        PROJECT_ROOT / "pyproject.toml",
-        *sorted((PROJECT_ROOT / "src").rglob("*.py")),
-    ]
+    files = [PROJECT_ROOT / path for path in stage_c_runtime_relative_paths()]
     file_records = [
         {
             "path": str(path.relative_to(PROJECT_ROOT)),

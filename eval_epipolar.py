@@ -75,6 +75,7 @@ from train_epipolar import (  # noqa: E402
     _validated_rectification_audit,
     predict_frozen_stage_b_endpoint,
     resolve_epipolar_config,
+    stage_c_runtime_relative_paths,
     validate_epipolar_config,
 )
 from utils.checkpoint import CheckpointMismatchError, repository_git_hash  # noqa: E402
@@ -1776,16 +1777,7 @@ def validate_runtime_source_bundle(
     if scopes != list(expected_scopes):
         raise CheckpointMismatchError("Stage-C runtime Git scopes are malformed")
     if expected_paths is None:
-        expected_paths = (
-            "train_epipolar.py",
-            "train.py",
-            "eval.py",
-            "configs/epipolar_x2.yaml",
-            "configs/temporal_x2.yaml",
-            "configs/mvp_x2.yaml",
-            "pyproject.toml",
-            *(str(path.relative_to(root)) for path in sorted((root / "src").rglob("*.py"))),
-        )
+        expected_paths = stage_c_runtime_relative_paths(root)
     encoded = json.dumps(
         {"git_head": checkpoint_git_hash, "files": records},
         sort_keys=True,
