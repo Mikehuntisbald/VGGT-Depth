@@ -388,6 +388,23 @@ masks. A one-window smoke produced finite paired metrics but is explicitly
 same validation cache; its -4.14% number is not an acceptance result. Evidence:
 `reports/m4/stage_b_eval_smoke.json`.
 
+The first formal intermediate checkpoint at step 2,500 was then evaluated on
+all 238 held-out causal windows with the refreshed raw-to-derived receipt.
+Paired HR temporal disparity error fell from 0.369828 px for independently run
+T1 to 0.330770 px for history-only T3, a 10.5613% improvement and the first
+crossing of the internal temporal gate. On the same endpoints, the retained T1
+spatial baseline improves low-confidence EPE by 10.5905%; T3 improves invalid
+region completeness by 194.53% and improves, rather than degrades, trusted
+region EPE by 2.229%. Enabling the quality-gated VGGT prior improves T3 overall
+EPE by another 1.5366%, but its low-confidence EPE improvement versus bilinear
+is 8.1068% at this intermediate point.
+
+This is not the final Stage-B result: the declared 15,000-step run remains
+active. Raw T3 also still emits 4.7392% negative disparity. The declared
+`clamp_min(0)` physical variant has zero NaN/negative outputs but retains those
+pixels honestly as 4.7392% zero/invalid, with no epsilon fill. Evidence and
+artifact hashes: `reports/m4/stage_b_eval_step2500.json`.
+
 ## Tests
 
 ```text

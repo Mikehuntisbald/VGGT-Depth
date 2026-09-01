@@ -1,0 +1,70 @@
+{
+  "schema_version": 1,
+  "component": "stage-b-intermediate-holdout-evaluation",
+  "status": "INTERMEDIATE_TEMPORAL_GATE_PASS",
+  "claim_boundary": {
+    "final_training_result": false,
+    "paper_accuracy": false,
+    "paper_ground_truth": false,
+    "target": "trusted_hr_ffs_teacher_pseudo_gt",
+    "note": "This is a lineage-valid 2500-step checkpoint diagnostic. The declared 15000-step Stage-B run remains active."
+  },
+  "checkpoint": {
+    "path": "/tmp/ffs_omega_tsr_stage_b_step2500.pt",
+    "sha256": "b0f9d94bf4ac7e105e7f500d16f167087d837f8d559a749938c822692cb012b2",
+    "step": 2500,
+    "training_git_hash": "3e0df0b543f5000d0bf8490740b5f34ad979e3b6"
+  },
+  "evaluator": {
+    "git_hash": "a36e3e8102eea941c90f26ee66c07e320e0d7482",
+    "eval_py_sha256": "d7844055c611fa431175df96cd12d12fd9b3282279a8658c4ced529456459a83",
+    "evaluation_module_sha256": "f9fa88519ce03888685625e9003ac2274808659f9182cb379aa9a0c4be585f64",
+    "torch_version": "2.10.0+cu128",
+    "cuda_version": "12.8"
+  },
+  "coverage": {
+    "acceptance_eligible": true,
+    "formal_holdout": true,
+    "future_frames": false,
+    "manifest_records": 244,
+    "derived_endpoint_records": 240,
+    "evaluable_t3_windows": 238,
+    "evaluated_t3_windows": 238,
+    "endpoint_pose_valid": 177,
+    "endpoint_pose_rejected": 61,
+    "endpoint_static_prior_valid": 177,
+    "derived_receipt_sha256": "1e05c4e081620b9f634e9b3020779c6e4fdb7e21bf1df55365c3d4cde3d50620"
+  },
+  "metrics": {
+    "t1_paired_temporal_error_hr_px": 0.36982841832632257,
+    "t3_paired_temporal_error_hr_px": 0.3307696716560855,
+    "t3_vs_t1_temporal_relative_change_percent": -10.561315662814508,
+    "t1_vs_bilinear_low_confidence_epe_relative_change_percent": -10.59050302796077,
+    "t3_vs_bilinear_low_confidence_epe_relative_change_percent": -6.508594260260478,
+    "t3_vs_bilinear_invalid_region_completeness_relative_change_percent": 194.5311424531017,
+    "t3_vs_bilinear_trusted_region_epe_relative_change_percent": -2.22896384498892,
+    "t3_vggt_vs_t3_epe_relative_change_percent": -1.5365621439070787,
+    "t3_vggt_vs_bilinear_low_confidence_epe_relative_change_percent": -8.106750733755238,
+    "t3_raw_nan_rate_percent": 0.0,
+    "t3_raw_negative_rate_percent": 4.7392174643294815,
+    "t3_clamp0_negative_rate_percent": 0.0,
+    "t3_clamp0_zero_invalid_rate_percent": 4.739218889053017
+  },
+  "engineering_gates": {
+    "t1_low_confidence_epe_improves_at_least_10_percent": true,
+    "t3_temporal_error_improves_at_least_10_percent": true,
+    "invalid_region_completeness_improves_at_least_15_percent": true,
+    "trusted_region_error_degradation_at_most_2_percent": true,
+    "raw_nan_or_negative_rate_below_0_5_percent": false,
+    "physical_clamp0_nan_or_negative_rate_below_0_5_percent": true,
+    "physical_output_note": "clamp_min(0) removes negative values but preserves them as honest zero/invalid pixels; no epsilon fill is used"
+  },
+  "artifacts": {
+    "metrics_json": "outputs/ffs_omega_tsr_x2/stage_b/eval_step2500_fixed/metrics.json",
+    "metrics_json_sha256": "08881b78c42f760b2423f26d74b60d94eda973efcfbdade688ee75743ef588e5",
+    "metrics_csv": "outputs/ffs_omega_tsr_x2/stage_b/eval_step2500_fixed/metrics.csv",
+    "metrics_csv_sha256": "538d3882ae69f788e8a50cab1ea43230213b6153d3b58782ec512642fa537280",
+    "visualizations_written": 4,
+    "elapsed_seconds": 206.11379950199625
+  }
+}
