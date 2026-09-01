@@ -1,9 +1,10 @@
 """Pinhole-camera intrinsics with explicit pixel-coordinate operations.
 
-The project uses the simple pixel scaling convention required by the data
-contract: resizing an image by ``(scale_x, scale_y)`` multiplies the
-corresponding focal length and principal point by the same factor. No
-half-pixel offset is introduced here.
+``resize_intrinsics`` is the immutable legacy v1/v2 convention: it multiplies
+the first two rows without a half-pixel offset.  New image tensors resized by
+PyTorch with ``align_corners=False`` must instead use
+``resize_intrinsics_align_corners_false``.  Keeping the two operations named
+and separate prevents old cache/checkpoint geometry from changing silently.
 """
 
 from __future__ import annotations
@@ -143,6 +144,103 @@ def resize_intrinsics(
     resized = _copy_intrinsics_matrix(intrinsics_3x3)
     resized[0, :] *= scale_x_float
     resized[1, :] *= scale_y_float
+    return resized
+
+
+def resize_intrinsics_align_corners_false(
+    intrinsics_3x3: Any,
+    scale_x: Real,
+    scale_y: Real | None = None,
+) -> Any:
+    """Resize intrinsics with PyTorch ``align_corners=False`` pixel centres.
+
+    For a source-to-target image scale ``(scale_x, scale_y)``, PyTorch maps a
+    target integer pixel centre back to source coordinates as
+
+    ``u_src = (u_dst + 0.5) / scale_x - 0.5``.
+
+    Consequently focal length/skew scale normally, while principal points use
+    ``c_dst = (c_src + 0.5) * scale - 0.5``.  The function accepts one matrix
+    ``[3,3]`` or a batch ``[...,3,3]`` and preserves tensor device/dtype (or
+    NumPy dtype for floating arrays).  It is intentionally separate from the
+    legacy :func:`resize_intrinsics` contract.
+
+    Args:
+        intrinsics_3x3: Floating Torch tensor or numeric NumPy-like value with
+            shape ``[...,3,3]`` and conventional homogeneous last row.
+        scale_x: Target-width/source-width scale, strictly positive.
+        scale_y: Target-height/source-height scale. Defaults to ``scale_x``.
+
+    Returns:
+        A resized copy from the same tensor/array family as the input.
+    """
+
+    scale_x_float = _require_positive_real(scale_x, "scale_x")
+    scale_y_float = (
+        scale_x_float
+        if scale_y is None
+        else _require_positive_real(scale_y, "scale_y")
+    )
+
+    if torch is not None and isinstance(intrinsics_3x3, torch.Tensor):
+        if intrinsics_3x3.ndim < 2 or tuple(intrinsics_3x3.shape[-2:]) != (3, 3):
+            raise ValueError(
+                "intrinsics_3x3 must have shape [...,3,3], got "
+                f"{tuple(intrinsics_3x3.shape)}"
+            )
+        resized = (
+            intrinsics_3x3.clone()
+            if intrinsics_3x3.is_floating_point()
+            else intrinsics_3x3.to(dtype=torch.float64)
+        )
+        if not bool(torch.isfinite(resized).all().item()):
+            raise ValueError("intrinsics_3x3 must contain only finite values")
+        if not bool(((resized[..., 0, 0] > 0) & (resized[..., 1, 1] > 0)).all()):
+            raise ValueError("intrinsics_3x3 focal lengths must be positive")
+        expected_last_row = resized.new_tensor((0.0, 0.0, 1.0))
+        if not bool(
+            torch.isclose(
+                resized[..., 2, :],
+                expected_last_row.expand_as(resized[..., 2, :]),
+                atol=1e-8,
+                rtol=0.0,
+            ).all()
+        ):
+            raise ValueError(
+                "intrinsics_3x3 must use homogeneous last row [0, 0, 1]"
+            )
+    else:
+        array = np.asarray(intrinsics_3x3)
+        if array.ndim < 2 or array.shape[-2:] != (3, 3):
+            raise ValueError(
+                f"intrinsics_3x3 must have shape [...,3,3], got {array.shape}"
+            )
+        if not np.issubdtype(array.dtype, np.number):
+            raise TypeError("intrinsics_3x3 must be numeric")
+        resized = array.astype(
+            array.dtype if np.issubdtype(array.dtype, np.floating) else np.float64,
+            copy=True,
+        )
+        if not np.isfinite(resized).all():
+            raise ValueError("intrinsics_3x3 must contain only finite values")
+        if not np.all((resized[..., 0, 0] > 0) & (resized[..., 1, 1] > 0)):
+            raise ValueError("intrinsics_3x3 focal lengths must be positive")
+        if not np.allclose(
+            resized[..., 2, :],
+            np.asarray((0.0, 0.0, 1.0), dtype=resized.dtype),
+            atol=1e-8,
+            rtol=0.0,
+        ):
+            raise ValueError(
+                "intrinsics_3x3 must use homogeneous last row [0, 0, 1]"
+            )
+
+    # Scale the full image rows so skew follows the usual affine resize, then
+    # add the pixel-centre translation to the principal-point entries.
+    resized[..., 0, :] *= scale_x_float
+    resized[..., 1, :] *= scale_y_float
+    resized[..., 0, 2] += 0.5 * scale_x_float - 0.5
+    resized[..., 1, 2] += 0.5 * scale_y_float - 0.5
     return resized
 
 

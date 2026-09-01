@@ -22,6 +22,8 @@ from __future__ import annotations
 import torch
 from torch import Tensor, nn
 
+from geometry.camera import resize_intrinsics_align_corners_false
+
 from .rgb_encoder import ConvNormAct
 
 
@@ -119,14 +121,16 @@ def dense_unit_rays_from_K_hr(
     height_lr: int,
     width_lr: int,
     spatial_scale: int = 2,
+    align_corners_false_pixel_centers: bool = False,
 ) -> Tensor:
     """Build FP32 left-camera unit rays on the LR model grid.
 
     Args:
         K_left_hr_px: Cropped HR pinhole intrinsics ``[B,3,3]`` in pixels.
         height_lr, width_lr: LR geometry-grid dimensions.
-        spatial_scale: HR/LR spatial scale.  The repository convention scales
-            the first two rows of ``K`` without a half-pixel offset.
+        spatial_scale: HR/LR spatial scale.
+        align_corners_false_pixel_centers: Opt-in corrected v3.1 contract.
+            ``False`` retains the earlier ``K_hr/spatial_scale`` behavior.
 
     Returns:
         FP32 unit ray directions ``[B,3,H,W]`` on the input device.
@@ -150,6 +154,8 @@ def dense_unit_rays_from_K_hr(
         or spatial_scale <= 0
     ):
         raise ValueError("spatial_scale must be a positive integer")
+    if not isinstance(align_corners_false_pixel_centers, bool):
+        raise TypeError("align_corners_false_pixel_centers must be a bool")
 
     with torch.autocast(device_type=K_left_hr_px.device.type, enabled=False):
         intrinsics_hr = K_left_hr_px.detach()
@@ -171,10 +177,17 @@ def dense_unit_rays_from_K_hr(
         ):
             raise ValueError("K_left_hr_px must end with row [0,0,1]")
 
-        intrinsics_lr = intrinsics_hr.clone()
-        intrinsics_lr[:, 0, :] /= float(spatial_scale)
-        intrinsics_lr[:, 1, :] /= float(spatial_scale)
-        intrinsics_lr[:, 2] = intrinsics_hr[:, 2]
+        if align_corners_false_pixel_centers:
+            intrinsics_lr = resize_intrinsics_align_corners_false(
+                intrinsics_hr,
+                scale_x=1.0 / float(spatial_scale),
+                scale_y=1.0 / float(spatial_scale),
+            )
+        else:
+            intrinsics_lr = intrinsics_hr.clone()
+            intrinsics_lr[:, 0, :] /= float(spatial_scale)
+            intrinsics_lr[:, 1, :] /= float(spatial_scale)
+            intrinsics_lr[:, 2] = intrinsics_hr[:, 2]
 
         v_grid, u_grid = torch.meshgrid(
             torch.arange(height_lr, dtype=torch.float32, device=intrinsics_hr.device),
@@ -203,6 +216,7 @@ class CalibrationConditionerV3(nn.Module):
         use_rays: bool = True,
         use_stereo_pose: bool = True,
         use_temporal_pose: bool = True,
+        align_corners_false_pixel_centers: bool = False,
     ) -> None:
         super().__init__()
         if (
@@ -216,6 +230,10 @@ class CalibrationConditionerV3(nn.Module):
         self.use_stereo_pose = _validate_bool(use_stereo_pose, "use_stereo_pose")
         self.use_temporal_pose = _validate_bool(
             use_temporal_pose, "use_temporal_pose"
+        )
+        self.align_corners_false_pixel_centers = _validate_bool(
+            align_corners_false_pixel_centers,
+            "align_corners_false_pixel_centers",
         )
 
         # All branches are instantiated irrespective of switches.  This keeps
@@ -443,6 +461,9 @@ class CalibrationConditionerV3(nn.Module):
                 height_lr=height_lr,
                 width_lr=width_lr,
                 spatial_scale=self.spatial_scale,
+                align_corners_false_pixel_centers=(
+                    self.align_corners_false_pixel_centers
+                ),
             )
             ray_feature = self.ray_encoder(rays_fp32.to(dtype=target_dtype))
             fused = fused + ray_feature

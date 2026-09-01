@@ -70,11 +70,15 @@ def _calibration_inputs(
 
 def test_dense_unit_rays_are_fp32_unit_length_and_crop_equivariant() -> None:
     K_full = torch.tensor(
-        [[[8.0, 0.0, 4.0], [0.0, 8.0, 4.0], [0.0, 0.0, 1.0]]],
+        [[[8.0, 0.0, 4.5], [0.0, 8.0, 4.5], [0.0, 0.0, 1.0]]],
         dtype=torch.float32,
     )
     full = dense_unit_rays_from_K_hr(
-        K_full, height_lr=4, width_lr=4, spatial_scale=2
+        K_full,
+        height_lr=4,
+        width_lr=4,
+        spatial_scale=2,
+        align_corners_false_pixel_centers=True,
     )
     assert full.dtype == torch.float32
     torch.testing.assert_close(
@@ -82,25 +86,72 @@ def test_dense_unit_rays_are_fp32_unit_length_and_crop_equivariant() -> None:
     )
     torch.testing.assert_close(full[0, :, 2, 2], torch.tensor([0.0, 0.0, 1.0]))
 
-    # Crop the HR image at (2,2): the cropped LR origin corresponds to (1,1)
-    # in the full LR grid under the repository's no-half-pixel convention.
+    # Crop the HR image at (2,2): an aligned crop commutes exactly with the
+    # align_corners=False resize and therefore shifts the LR grid by (1,1).
     K_crop = K_full.clone()
     K_crop[:, 0, 2] -= 2.0
     K_crop[:, 1, 2] -= 2.0
     cropped = dense_unit_rays_from_K_hr(
-        K_crop, height_lr=2, width_lr=2, spatial_scale=2
+        K_crop,
+        height_lr=2,
+        width_lr=2,
+        spatial_scale=2,
+        align_corners_false_pixel_centers=True,
     )
     torch.testing.assert_close(cropped, full[:, :, 1:3, 1:3])
 
-    # Resizing an image/intrinsics pair by 2 preserves rays at corresponding
-    # no-half-pixel coordinates.
-    K_resized = K_full.clone()
-    K_resized[:, 0, :] *= 2.0
-    K_resized[:, 1, :] *= 2.0
+    # An x3 align_corners=False image resize maps old integer LR centres to
+    # new integer coordinates 3*u+1. (An x2 resize maps them to half pixels.)
+    from geometry.camera import resize_intrinsics_align_corners_false
+
+    K_resized = resize_intrinsics_align_corners_false(K_full, 3.0, 3.0)
     resized = dense_unit_rays_from_K_hr(
-        K_resized, height_lr=8, width_lr=8, spatial_scale=2
+        K_resized,
+        height_lr=12,
+        width_lr=12,
+        spatial_scale=2,
+        align_corners_false_pixel_centers=True,
     )
-    torch.testing.assert_close(resized[:, :, ::2, ::2], full)
+    torch.testing.assert_close(resized[:, :, 1::3, 1::3], full)
+
+
+def test_dense_unit_rays_x4_uses_align_corners_false_principal_point() -> None:
+    # (c_hr+0.5)/4-0.5 = 1, so LR pixel (u=1,v=1) is the optical axis.
+    K_hr = torch.tensor(
+        [[[16.0, 0.0, 5.5], [0.0, 20.0, 5.5], [0.0, 0.0, 1.0]]],
+        dtype=torch.float32,
+    )
+    rays = dense_unit_rays_from_K_hr(
+        K_hr,
+        height_lr=3,
+        width_lr=3,
+        spatial_scale=4,
+        align_corners_false_pixel_centers=True,
+    )
+    torch.testing.assert_close(
+        rays[0, :, 1, 1], torch.tensor([0.0, 0.0, 1.0])
+    )
+
+
+def test_dense_ray_pixel_center_opt_in_preserves_legacy_default() -> None:
+    K_hr = torch.tensor(
+        [[[8.0, 0.0, 4.0], [0.0, 8.0, 4.0], [0.0, 0.0, 1.0]]],
+        dtype=torch.float32,
+    )
+    legacy = dense_unit_rays_from_K_hr(
+        K_hr, height_lr=4, width_lr=4, spatial_scale=2
+    )
+    corrected = dense_unit_rays_from_K_hr(
+        K_hr,
+        height_lr=4,
+        width_lr=4,
+        spatial_scale=2,
+        align_corners_false_pixel_centers=True,
+    )
+    torch.testing.assert_close(
+        legacy[0, :, 2, 2], torch.tensor([0.0, 0.0, 1.0])
+    )
+    assert not torch.equal(corrected, legacy)
 
 
 def test_conditioner_is_zero_initialized_and_has_no_metric_scale_path() -> None:

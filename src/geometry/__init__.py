@@ -4,6 +4,7 @@ from .camera import (
     PinholeIntrinsics,
     crop_intrinsics,
     resize_intrinsics,
+    resize_intrinsics_align_corners_false,
     validate_intrinsics,
 )
 from .calibration_context import (
@@ -92,6 +93,7 @@ __all__ = [
     "metric_scale_vggt_geometry",
     "relative_camera_transform",
     "resize_intrinsics",
+    "resize_intrinsics_align_corners_false",
     "robust_scale_only_irls",
     "valid_depth_mask",
     "valid_disparity_mask",
