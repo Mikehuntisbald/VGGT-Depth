@@ -1,0 +1,67 @@
+{
+  "schema_version": 1,
+  "component": "stage-c-epipolar-integration-smoke",
+  "status": "NON_HOLDOUT_INTEGRATION_PASS",
+  "claim_boundary": {
+    "acceptance_eligible": false,
+    "formal_holdout": false,
+    "paper_accuracy": false,
+    "paper_ground_truth": false,
+    "reason": "The one-step Stage-B base checkpoint was trained on the same validation cache. This receipt proves execution, freezing, lineage checks, checkpoint schema and deterministic refiner updates only."
+  },
+  "source": {
+    "git_hash": "b92c0a1e5960fb82d1be3c2c140d26ec12acc4df",
+    "base_checkpoint": "/tmp/ffs_omega_tsr_stage_b_smoke.Isxf9q/final.pt",
+    "base_checkpoint_sha256": "23c3b03f6a4414ecfbf236a20fe3ae7278687bdc6c06d9751248e417f10807d0",
+    "base_parameter_count": 1619882,
+    "base_parameters_frozen": true,
+    "trainable_refiner_parameter_count": 69905
+  },
+  "execution": {
+    "device": "cpu",
+    "optimizer_steps": 1,
+    "crop_hr_hw": [32, 64],
+    "crop_mode": "fixed",
+    "candidate_offsets_hr_px": [-2, -1, 0, 1, 2],
+    "correction_limit_hr_px": 2.0,
+    "valid_supervision_pixels": 1649,
+    "loss_total": 0.04222511500120163,
+    "loss_disparity": 0.04222511500120163,
+    "loss_correction_regularizer": 0.0,
+    "optimizer_learning_rate_after_step": 8.000000000000001e-7,
+    "scheduler_last_epoch": 1,
+    "configured_warmup_steps": 500,
+    "configured_total_steps": 5000
+  },
+  "supervision": {
+    "type": "trusted_hr_ffs_teacher_pseudo_gt",
+    "purpose": "engineering supervision for Stage-C integration",
+    "paper_ground_truth": false,
+    "paper_accuracy_claim": false
+  },
+  "checkpoint_contract": {
+    "required_fields_present": [
+      "model",
+      "optimizer",
+      "scheduler",
+      "scaler",
+      "step",
+      "config",
+      "git_hash"
+    ],
+    "model_component": "hr_epipolar_refiner",
+    "model_state_tensor_count": 18
+  },
+  "determinism": {
+    "same_seed_runs": 2,
+    "model_tensors_compared": 18,
+    "bit_exact_model_state": true,
+    "bit_exact_loss": true
+  },
+  "artifacts": {
+    "first_checkpoint": "/tmp/ffs_omega_tsr_stage_c_epipolar_smoke_v5/final.pt",
+    "first_checkpoint_sha256": "5f58e2d49c35a85971ff5e1a14c4b89816c737c1638873b00b90de849cb85f10",
+    "second_checkpoint": "/tmp/ffs_omega_tsr_stage_c_epipolar_smoke_v6/final.pt",
+    "second_checkpoint_sha256": "adf18c3f5f07e182499516931243d4292f6b9ef6923b123c0a778936df777903"
+  }
+}

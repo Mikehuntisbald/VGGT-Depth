@@ -405,6 +405,17 @@ active. Raw T3 also still emits 4.7392% negative disparity. The declared
 pixels honestly as 4.7392% zero/invalid, with no epsilon fill. Evidence and
 artifact hashes: `reports/m4/stage_b_eval_step2500.json`.
 
+Stage-C now has a separate training entrypoint that runs the full frozen
+VGGT-on Stage-B endpoint through the exact three-step causal unroll, loads the
+rectified right endpoint with the identical HR crop, and optimizes only the
+69,905-parameter local epipolar refiner. A non-holdout CPU integration smoke
+used 1,649 trusted teacher pixels, produced finite loss 0.0422251, saved every
+required model/optimizer/scheduler/scaler/config/Git field, and reproduced all
+18 refiner tensors bit-for-bit across two same-seed runs. This is execution
+evidence only because its one-step Stage-B base was trained on the validation
+cache; formal Stage-C training waits for the completed Stage-B checkpoint.
+Evidence: `reports/m6/stage_c_integration_smoke.json`.
+
 ## Tests
 
 ```text
