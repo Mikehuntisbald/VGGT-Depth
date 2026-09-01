@@ -40,6 +40,10 @@ from data.collate import (  # noqa: E402
     collate_training_samples,
 )
 from data.manifest import load_manifest  # noqa: E402
+from data.spring import (  # noqa: E402
+    SPRING_GT_COMPONENT,
+    SPRING_GT_TARGET_TYPE,
+)
 from data.stereo_calibration import (  # noqa: E402
     RectifiedCalibrationIndex,
     load_rectified_calibration_sidecar,
@@ -237,6 +241,59 @@ MEASUREMENT_OWNERSHIP_V31_PROTOCOL = (
 TEMPORAL_CANDIDATE_FUSION_V31_PROTOCOL = (
     "current_conditioned_age_phase_diverse_v3_1"
 )
+SPRING_SUPERVISION_PROTOCOL = "spring_v2_real_disparity_ground_truth_v1"
+
+
+@dataclass(frozen=True, slots=True)
+class SupervisionTarget:
+    """Cache and claim identity for the spatial/temporal target tensors."""
+
+    target_type: str = "trusted_hr_ffs_teacher_pseudo_gt"
+    cache_component: str = "ffs-teacher"
+    paper_ground_truth: bool = False
+    synthetic_ground_truth: bool = False
+
+
+def supervision_target_from_config(
+    config: Mapping[str, Any] | DictConfig,
+) -> SupervisionTarget:
+    """Parse opt-in real-GT supervision while preserving legacy configs."""
+
+    section = config.get("supervision")
+    if section is None:
+        return SupervisionTarget()
+    if not isinstance(section, Mapping) and not isinstance(section, DictConfig):
+        raise ValueError("supervision must be a mapping")
+    required = {
+        "enabled",
+        "protocol_version",
+        "target_type",
+        "teacher_cache_component",
+        "paper_ground_truth",
+        "synthetic_ground_truth",
+    }
+    if set(section.keys()) != required:
+        raise ValueError(
+            "supervision fields differ: "
+            f"expected={sorted(required)}, got={sorted(section.keys())}"
+        )
+    if section["enabled"] is not True:
+        raise ValueError("an explicit supervision section must set enabled=true")
+    if section["protocol_version"] != SPRING_SUPERVISION_PROTOCOL:
+        raise ValueError("unsupported supervision protocol_version")
+    if (
+        section["target_type"] != SPRING_GT_TARGET_TYPE
+        or section["teacher_cache_component"] != SPRING_GT_COMPONENT
+        or section["paper_ground_truth"] is not True
+        or section["synthetic_ground_truth"] is not True
+    ):
+        raise ValueError("Spring supervision identity differs")
+    return SupervisionTarget(
+        target_type=SPRING_GT_TARGET_TYPE,
+        cache_component=SPRING_GT_COMPONENT,
+        paper_ground_truth=True,
+        synthetic_ground_truth=True,
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -773,6 +830,7 @@ def loss_weights_from_config(config: Mapping[str, Any] | DictConfig) -> LossWeig
 
 
 def _validate_common_training_config(config: DictConfig, *, total_steps: int) -> None:
+    supervision_target_from_config(config)
     physical_v2 = physical_output_v2_from_config(config)
     temporal_history = temporal_history_v2_from_config(config)
     temporal_residual = temporal_residual_v2_from_config(config)
@@ -1112,9 +1170,10 @@ def build_dataset_and_identities(
         expected_component="ffs-observation",
         manifest_path=manifest_path,
     )
+    supervision = supervision_target_from_config(config)
     teacher_identity = load_receipt_identity(
         teacher_root,
-        expected_component="ffs-teacher",
+        expected_component=supervision.cache_component,
         manifest_path=manifest_path,
     )
     calibration_index = _calibration_index_from_config(
@@ -1152,9 +1211,10 @@ def build_temporal_dataset_and_identities(
         expected_component="ffs-observation",
         manifest_path=manifest_path,
     )
+    supervision = supervision_target_from_config(config)
     teacher_identity = load_receipt_identity(
         teacher_root,
-        expected_component="ffs-teacher",
+        expected_component=supervision.cache_component,
         manifest_path=manifest_path,
     )
     calibration_index = _calibration_index_from_config(

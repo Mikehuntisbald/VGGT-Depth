@@ -1,0 +1,16 @@
+experiment: ffs_omega_tsr_spring_v2_spatial_x2_v3_1
+defaults_from: configs/mvp_x2_v3_1.yaml
+
+# Paths remain CLI-owned so train/validation manifests and their cache roots
+# cannot be silently mixed. Spring RGB is 1920x1080; disparity GT is stored at
+# 3840x2160 but its values are already in Full-HD image pixels.
+data:
+  source_dataset: Spring-v2
+
+supervision:
+  enabled: true
+  protocol_version: spring_v2_real_disparity_ground_truth_v1
+  target_type: spring_v2_disp1_ground_truth
+  teacher_cache_component: spring-ground-truth
+  paper_ground_truth: true
+  synthetic_ground_truth: true

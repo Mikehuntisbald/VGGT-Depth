@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Evaluate Stage-A T=1 and Stage-B causal T=3 disparity reconstruction.
 
-Targets are explicitly trusted HR FFS teacher pseudo-GT. Stage B scores only
-the endpoint of strict three-frame causal windows and reports temporal/VGGT
-ablations without claiming epipolar refinement, paper GT, or paper accuracy.
+Legacy runs use trusted HR FFS pseudo-GT.  An explicit Spring supervision
+contract instead uses rendered Spring v2 disparity ground truth.  Stage B
+scores only strict causal-window endpoints.
 """
 
 from __future__ import annotations
@@ -93,6 +93,7 @@ from train import (  # noqa: E402
     calibration_model_kwargs_temporal,
     load_receipt_identity,
     physical_output_v2_from_config,
+    supervision_target_from_config,
     temporal_history_v2_from_config,
     temporal_candidate_fusion_v3_1_from_config,
     temporal_residual_v2_from_config,
@@ -144,8 +145,8 @@ FORMAL_STAGE_B_TRAINING_STEPS = 15_000
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description=(
-            "Evaluate bilinear/T1 or causal T3/VGGT methods against trusted HR "
-            "FFS teacher pseudo-GT."
+            "Evaluate bilinear/T1 or causal T3/VGGT methods against the "
+            "configured trusted HR supervision target."
         )
     )
     parser.add_argument("--config", type=Path, required=True, help="YAML config path")
@@ -363,6 +364,7 @@ def _fixed_display_range(value: Any, name: str) -> tuple[float, float]:
 def validate_evaluation_config(config: DictConfig) -> str:
     """Validate x2 deterministic evaluation and return ``spatial``/``temporal``."""
 
+    supervision_target_from_config(config)
     history_v2 = temporal_history_v2_from_config(config)
     residual_v2 = temporal_residual_v2_from_config(config)
     calibration_v3 = calibration_conditioning_v3_from_config(config)
@@ -2093,6 +2095,7 @@ def build_temporal_flicker_panel(
     disparity_range_hr_px: tuple[float, float],
     error_range_hr_px: tuple[float, float],
     uncertainty_range: tuple[float, float],
+    target_display_label: str = "pseudo-GT",
 ) -> np.ndarray:
     """Build one non-metric six-panel temporal frame on CPU as uint8.
 
@@ -2149,7 +2152,7 @@ def build_temporal_flicker_panel(
                 maximum=error_range_hr_px[1],
             ),
             label=(
-                "|T3 + VGGT - pseudo-GT| "
+                f"|T3 + VGGT - {target_display_label}| "
                 f"[{error_range_hr_px[0]:g},{error_range_hr_px[1]:g}] px"
             ),
             colorbar_range=error_range_hr_px,
@@ -2217,6 +2220,7 @@ class TemporalFlickerVideoCollector:
         disparity_range_hr_px: tuple[float, float],
         error_range_hr_px: tuple[float, float],
         uncertainty_range: tuple[float, float],
+        target_display_label: str = "pseudo-GT",
     ) -> None:
         self.root = root
         self.enabled = enabled
@@ -2224,6 +2228,7 @@ class TemporalFlickerVideoCollector:
         self.disparity_range_hr_px = disparity_range_hr_px
         self.error_range_hr_px = error_range_hr_px
         self.uncertainty_range = uncertainty_range
+        self.target_display_label = target_display_label
         self._states: dict[str, _TemporalFlickerSequenceState] = {}
         self._not_available_reason: str | None = None
 
@@ -2294,6 +2299,7 @@ class TemporalFlickerVideoCollector:
                 disparity_range_hr_px=self.disparity_range_hr_px,
                 error_range_hr_px=self.error_range_hr_px,
                 uncertainty_range=self.uncertainty_range,
+                target_display_label=self.target_display_label,
             )
             if state is None:
                 self.root.mkdir(parents=True, exist_ok=True)
@@ -2407,6 +2413,7 @@ def _save_visualization(
     vggt_off_output_hr_px: Tensor | None = None,
     no_vggt_output_hr_px: Tensor | None = None,
     prediction_filename: str = "t1_disparity_hr_px.png",
+    target_filename: str = "teacher_pseudo_gt_hr_px.png",
 ) -> None:
     sample_root = root / sample_name
     target_mask = target_trusted_mask.to(dtype=torch.bool)
@@ -2423,7 +2430,7 @@ def _save_visualization(
     for filename, value, mask in (
         ("bilinear_ffs_hr_px.png", baseline_hr_px, None),
         (prediction_filename, output_hr_px, None),
-        ("teacher_pseudo_gt_hr_px.png", target_hr_px, target_mask),
+        (target_filename, target_hr_px, target_mask),
         ("absolute_error_hr_px.png", absolute_error, target_mask),
         ("uncertainty_variance.png", uncertainty_hr, None),
     ):
@@ -2650,6 +2657,8 @@ class FailureSampleCollector:
         *,
         checkpoint: Mapping[str, Any],
         evaluator: Mapping[str, Any],
+        target_type: str = PSEUDO_GT_LABEL,
+        paper_ground_truth: bool = False,
     ) -> dict[str, Any]:
         """Write selection JSON and reuse the normal visualization bundle writer."""
 
@@ -2698,6 +2707,11 @@ class FailureSampleCollector:
                     vggt_off_output_hr_px=tensors["vggt_off_output_hr_px"],
                     no_vggt_output_hr_px=tensors["no_vggt_output_hr_px"],
                     prediction_filename="t3_vggt_disparity_hr_px.png",
+                    target_filename=(
+                        "ground_truth_hr_px.png"
+                        if paper_ground_truth
+                        else "teacher_pseudo_gt_hr_px.png"
+                    ),
                 )
                 selected.append(
                     {
@@ -2724,9 +2738,9 @@ class FailureSampleCollector:
                 "criterion": criterion,
                 "definition": definition,
                 "target": {
-                    "type": PSEUDO_GT_LABEL,
-                    "paper_gt": False,
-                    "paper_accuracy": False,
+                    "type": target_type,
+                    "paper_gt": paper_ground_truth,
+                    "paper_accuracy": paper_ground_truth,
                 },
                 "selection_order": (
                     "descending per-sample metric value; ties ascending sequence_id, "
@@ -2861,15 +2875,20 @@ def _t3_failure_payload(
     }
 
 
-def _temporal_metric_contract(*, temporal_metric_v2: bool) -> dict[str, Any]:
+def _temporal_metric_contract(
+    *,
+    temporal_metric_v2: bool,
+    target_type: str = PSEUDO_GT_LABEL,
+    paper_ground_truth: bool = False,
+) -> dict[str, Any]:
     """Return the machine-readable definition of the primary temporal metric."""
 
     if temporal_metric_v2:
         return {
             "protocol_version": "teacher_gt_temporal_residual_v2",
             "primary": True,
-            "reference": "trusted_hr_ffs_teacher_pseudo_gt",
-            "paper_gt": False,
+            "reference": target_type,
+            "paper_gt": paper_ground_truth,
             "unit": "HR_pixel_disparity",
             "formula": (
                 "mean(abs((d_hat_t-W(d_hat_t-1))-(d_star_t-W(d_star_t-1))))"
@@ -2915,6 +2934,8 @@ def _write_csv(
     path: Path,
     methods: dict[str, dict[str, Any]],
     comparisons: dict[str, Any],
+    *,
+    target_type: str = PSEUDO_GT_LABEL,
 ) -> None:
     metric_names = sorted(
         {
@@ -2944,7 +2965,7 @@ def _write_csv(
         for method_name, method in methods.items():
             row: dict[str, Any] = {
                 "method": method_name,
-                "target_type": PSEUDO_GT_LABEL,
+                "target_type": target_type,
                 "point_to_plane": "NOT_AVAILABLE",
             }
             for name in metric_names:
@@ -3551,6 +3572,14 @@ def run(args: argparse.Namespace) -> int:
     config = resolve_evaluation_config(args.config, args.overrides)
     _update_cli_values(config, args)
     stage = validate_evaluation_config(config)
+    supervision = supervision_target_from_config(config)
+    target_type = supervision.target_type
+    paper_ground_truth = supervision.paper_ground_truth
+    target_visualization_filename = (
+        "ground_truth_hr_px.png"
+        if paper_ground_truth
+        else "teacher_pseudo_gt_hr_px.png"
+    )
     temporal_metric_v2 = temporal_residual_v2_from_config(config).enabled
     physical_metric_v2 = physical_output_v2_from_config(config).enabled
     calibration_metric_v3 = calibration_conditioning_v3_from_config(config).enabled
@@ -3572,7 +3601,7 @@ def run(args: argparse.Namespace) -> int:
                 {
                     "status": "DRY_RUN",
                     "stage": stage_label,
-                    "target_type": PSEUDO_GT_LABEL,
+                    "target_type": target_type,
                     "parameter_count": parameter_count,
                     "crop_mode": str(config.eval.crop_mode),
                     "causal_endpoint_only": stage == "temporal",
@@ -3615,7 +3644,7 @@ def run(args: argparse.Namespace) -> int:
     )
     teacher_identity = load_receipt_identity(
         teacher_root,
-        expected_component="ffs-teacher",
+        expected_component=supervision.cache_component,
         manifest_path=manifest_path,
     )
     calibration_index = _calibration_index_from_config(
@@ -3857,17 +3886,24 @@ def run(args: argparse.Namespace) -> int:
                 config.eval.temporal_flicker_uncertainty_range,
                 "eval.temporal_flicker_uncertainty_range",
             ),
+            target_display_label=("Spring GT" if paper_ground_truth else "pseudo-GT"),
         )
     failure_sample_collector: FailureSampleCollector | None = None
     if int(config.eval.failure_samples_per_criterion) > 0:
+        failure_criteria = (
+            TEMPORAL_RESIDUAL_V2_FAILURE_SAMPLE_CRITERIA
+            if temporal_metric_v2
+            else FAILURE_SAMPLE_CRITERIA
+        )
+        if paper_ground_truth:
+            failure_criteria = {
+                name: definition.replace("teacher pseudo-GT", "Spring GT")
+                for name, definition in failure_criteria.items()
+            }
         failure_sample_collector = FailureSampleCollector(
             samples_per_criterion=int(config.eval.failure_samples_per_criterion),
             cpu_limit_bytes=int(config.eval.failure_samples_cpu_limit_bytes),
-            criteria=(
-                TEMPORAL_RESIDUAL_V2_FAILURE_SAMPLE_CRITERIA
-                if temporal_metric_v2
-                else FAILURE_SAMPLE_CRITERIA
-            ),
+            criteria=failure_criteria,
         )
     endpoint_pose_valid_count = 0
     endpoint_static_prior_valid_count = 0
@@ -4612,6 +4648,7 @@ def run(args: argparse.Namespace) -> int:
                         if stage == "spatial"
                         else "t3_vggt_disparity_hr_px.png"
                     ),
+                    target_filename=target_visualization_filename,
                 )
                 visualization_records.append(
                     {
@@ -4693,6 +4730,8 @@ def run(args: argparse.Namespace) -> int:
             output_dir / "failures",
             checkpoint=checkpoint_metadata,
             evaluator=evaluator_provenance,
+            target_type=target_type,
+            paper_ground_truth=paper_ground_truth,
         )
     )
     elapsed_seconds = time.perf_counter() - started
@@ -4817,18 +4856,26 @@ def run(args: argparse.Namespace) -> int:
             **evaluator_provenance,
         },
         "target": {
-            "type": PSEUDO_GT_LABEL,
-            "paper_accuracy": False,
+            "type": target_type,
+            "paper_accuracy": paper_ground_truth,
+            "paper_gt": paper_ground_truth,
+            "synthetic_ground_truth": supervision.synthetic_ground_truth,
             "warning": (
-                "Metrics use trusted output from the same FFS family as pseudo-GT; "
-                "they are engineering validation only."
+                "Spring metrics use rendered synthetic ground truth sampled from "
+                "the 4K dsp5 grid onto the Full-HD RGB grid without disparity "
+                "value scaling."
+                if paper_ground_truth
+                else "Metrics use trusted output from the same FFS family as "
+                "pseudo-GT; they are engineering validation only."
             ),
         },
         "temporal_metric_contract": (
             None
             if stage != "temporal"
             else _temporal_metric_contract(
-                temporal_metric_v2=temporal_metric_v2
+                temporal_metric_v2=temporal_metric_v2,
+                target_type=target_type,
+                paper_ground_truth=paper_ground_truth,
             )
         ),
         "explicit_validity_completion_contract": (
@@ -4836,8 +4883,8 @@ def run(args: argparse.Namespace) -> int:
             if not physical_metric_v2
             else {
                 "protocol_version": "explicit_valid_completion_nonnegative_v2",
-                "reference": "HR FFS teacher pseudo-validity",
-                "paper_gt": False,
+                "reference": target_type,
+                "paper_gt": paper_ground_truth,
                 "valid_metrics": ["precision", "recall", "f1", "brier"],
                 "completion_domain": "current FFS invalid/hole pixels",
                 "completion_metrics": ["precision", "recall", "f1", "brier"],
@@ -4850,8 +4897,8 @@ def run(args: argparse.Namespace) -> int:
             }
         ),
         "claims": {
-            "paper_accuracy": False,
-            "paper_gt": False,
+            "paper_accuracy": paper_ground_truth,
+            "paper_gt": paper_ground_truth,
             "epipolar_refinement": False,
             "temporal_future_frames": False,
             "teacher_temporal_residual_metric": (
@@ -4967,7 +5014,7 @@ def run(args: argparse.Namespace) -> int:
                     (
                         "HR z-buffer visible AND static AND non-collision AND "
                         "geometry-consistent AND valid prediction-history AND "
-                        "current/warped trusted teacher"
+                        "current/warped trusted teacher-or-GT reference"
                     )
                     if temporal_metric_v2
                     else (
@@ -5007,13 +5054,18 @@ def run(args: argparse.Namespace) -> int:
         json.dumps(report, indent=2, sort_keys=True, allow_nan=False) + "\n",
         encoding="utf-8",
     )
-    _write_csv(output_dir / "metrics.csv", finalized, comparisons)
+    _write_csv(
+        output_dir / "metrics.csv",
+        finalized,
+        comparisons,
+        target_type=target_type,
+    )
     print(
         json.dumps(
             {
                 "status": evaluation_status,
                 "stage": stage_label,
-                "target_type": PSEUDO_GT_LABEL,
+                "target_type": target_type,
                 "coverage_eligible": coverage_eligible,
                 "final_training_checkpoint": final_training_checkpoint,
                 "final_acceptance_eligible": final_acceptance_eligible,

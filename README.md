@@ -277,6 +277,28 @@ baseline, and PLY counts. It neither computes nor claims formal accuracy; the
 unchanged frozen evaluator remains the sole owner of its formal metrics, and
 point-to-plane stays `NOT_AVAILABLE`.
 
+## Spring v2 stereo support
+
+The opt-in Spring path uses real rendered disparity ground truth instead of an
+FFS pseudo-teacher. `tools/build_spring_manifest.py` validates official
+1920x1080 left/right coverage, per-frame `[fx,fy,cx,cy]` intrinsics, the 0.065 m
+orthoparallel baseline, sequence isolation and `disp1_left` coverage. It also
+writes the manifest-bound structural pixel audit consumed by the existing
+rectified-rig sidecar builder.
+
+Spring stores disparity at 3840x2160, but values are expressed in 1920x1080
+image pixels. `tools/cache_spring_gt.py` therefore uses exactly
+`dsp5[::2,::2]` without value scaling, marks zero sky and NaN/Inf invalid, and
+writes a distinct `spring-ground-truth` cache identity. Legacy FFS teacher
+caches cannot be relabelled as Spring GT. Training/evaluation configs are
+`configs/spring_mvp_x2_v3_1.yaml` and
+`configs/spring_temporal_x2_v3_1.yaml`.
+
+The implementation uses the left camera as the model reference, keeps stored
+positive disparity magnitude as this project's `x_left-x_right` convention,
+supports per-frame focal-length changes, and reports Spring as synthetic paper
+GT rather than same-family pseudo-GT.
+
 ## Start here
 
 Read [`CODEX_TASK.md`](CODEX_TASK.md), then follow [`RUNBOOK.md`](RUNBOOK.md).

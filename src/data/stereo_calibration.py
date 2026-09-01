@@ -28,6 +28,7 @@ from torch import Tensor
 
 from .cache_dataset import CacheMismatchError, canonical_json_sha256, sha256_file
 from .manifest import ManifestRecord, iter_manifest
+from .spring import SPRING_INTRINSICS_FORMAT, read_spring_intrinsics
 
 
 RECTIFIED_CALIBRATION_SIDECAR_SCHEMA_VERSION = 1
@@ -333,39 +334,92 @@ def _rectified_calibration_payload(
         raise CacheMismatchError(
             f"stereo metadata SHA-256 mismatch for {metadata_path}"
         )
-    try:
-        metadata = yaml.safe_load(metadata_path.read_text(encoding="utf-8"))
-    except (OSError, yaml.YAMLError) as exc:
-        raise CacheMismatchError(f"cannot parse stereo metadata {metadata_path}") from exc
-    if not isinstance(metadata, Mapping) or metadata.get("rectified") is not True:
-        raise CacheMismatchError("stereo metadata does not assert rectified=true")
-    try:
-        left_info = metadata["left_rect_camera_info"]
-        right_info = metadata["right_rect_camera_info"]
-        left_frame = str(metadata["left_frame_id"])
-        right_frame = str(metadata["right_frame_id"])
-    except (KeyError, TypeError) as exc:
-        raise CacheMismatchError("rectified metadata camera fields are missing") from exc
-    if not isinstance(left_info, Mapping) or not isinstance(right_info, Mapping):
-        raise CacheMismatchError("rectified camera info is malformed")
-    rotation_left = _flat_rotation(
-        left_info.get("r"), name="left rectification rotation"
-    )
-    rotation_right = _flat_rotation(
-        right_info.get("r"), name="right rectification rotation"
-    )
-    metadata_k_left = _flat_matrix(
-        left_info.get("k"), name="metadata left rectified K", rows=3, columns=3
-    )
-    metadata_k_right = _flat_matrix(
-        right_info.get("k"), name="metadata right rectified K", rows=3, columns=3
-    )
-    metadata_p_left = _flat_matrix(
-        left_info.get("p"), name="metadata left rectified P", rows=3, columns=4
-    )
-    metadata_p_right = _flat_matrix(
-        right_info.get("p"), name="metadata right rectified P", rows=3, columns=4
-    )
+    metadata_format = extras.get("calibration_metadata_format")
+    if metadata_format == SPRING_INTRINSICS_FORMAT:
+        row_index = extras.get("calibration_metadata_row")
+        if (
+            isinstance(row_index, bool)
+            or not isinstance(row_index, int)
+            or row_index < 0
+        ):
+            raise CacheMismatchError("Spring calibration metadata row is malformed")
+        try:
+            spring_intrinsics = read_spring_intrinsics(metadata_path)
+        except (FileNotFoundError, ValueError) as exc:
+            raise CacheMismatchError(
+                f"cannot parse Spring stereo metadata {metadata_path}"
+            ) from exc
+        if row_index >= spring_intrinsics.shape[0]:
+            raise CacheMismatchError("Spring calibration metadata row is out of range")
+        fx, fy, cx, cy = (
+            float(value) for value in spring_intrinsics[row_index]
+        )
+        metadata_k_left = np.asarray(
+            ((fx, 0.0, cx), (0.0, fy, cy), (0.0, 0.0, 1.0)),
+            dtype=np.float64,
+        )
+        metadata_k_right = metadata_k_left.copy()
+        metadata_p_left = np.concatenate(
+            (metadata_k_left, np.zeros((3, 1), dtype=np.float64)), axis=1
+        )
+        metadata_p_right = metadata_p_left.copy()
+        metadata_p_right[0, 3] = -fx * baseline
+        rotation_left = np.eye(3, dtype=np.float64)
+        rotation_right = np.eye(3, dtype=np.float64)
+        left_frame = "spring_left"
+        right_frame = "spring_right"
+        metadata_baseline = baseline
+    else:
+        try:
+            metadata = yaml.safe_load(metadata_path.read_text(encoding="utf-8"))
+        except (OSError, yaml.YAMLError) as exc:
+            raise CacheMismatchError(
+                f"cannot parse stereo metadata {metadata_path}"
+            ) from exc
+        if not isinstance(metadata, Mapping) or metadata.get("rectified") is not True:
+            raise CacheMismatchError("stereo metadata does not assert rectified=true")
+        try:
+            left_info = metadata["left_rect_camera_info"]
+            right_info = metadata["right_rect_camera_info"]
+            left_frame = str(metadata["left_frame_id"])
+            right_frame = str(metadata["right_frame_id"])
+        except (KeyError, TypeError) as exc:
+            raise CacheMismatchError(
+                "rectified metadata camera fields are missing"
+            ) from exc
+        if not isinstance(left_info, Mapping) or not isinstance(right_info, Mapping):
+            raise CacheMismatchError("rectified camera info is malformed")
+        rotation_left = _flat_rotation(
+            left_info.get("r"), name="left rectification rotation"
+        )
+        rotation_right = _flat_rotation(
+            right_info.get("r"), name="right rectification rotation"
+        )
+        metadata_k_left = _flat_matrix(
+            left_info.get("k"),
+            name="metadata left rectified K",
+            rows=3,
+            columns=3,
+        )
+        metadata_k_right = _flat_matrix(
+            right_info.get("k"),
+            name="metadata right rectified K",
+            rows=3,
+            columns=3,
+        )
+        metadata_p_left = _flat_matrix(
+            left_info.get("p"),
+            name="metadata left rectified P",
+            rows=3,
+            columns=4,
+        )
+        metadata_p_right = _flat_matrix(
+            right_info.get("p"),
+            name="metadata right rectified P",
+            rows=3,
+            columns=4,
+        )
+        metadata_baseline = metadata.get("stereo_baseline_m")
     for name, metadata_value, manifest_value in (
         ("left rectified K", metadata_k_left, k_left),
         ("right rectified K", metadata_k_right, k_right),
@@ -374,7 +428,6 @@ def _rectified_calibration_payload(
     ):
         if not np.allclose(metadata_value, manifest_value, atol=1e-9, rtol=0.0):
             raise CacheMismatchError(f"metadata/manifest {name} mismatch")
-    metadata_baseline = metadata.get("stereo_baseline_m")
     if (
         isinstance(metadata_baseline, bool)
         or not isinstance(metadata_baseline, (int, float))

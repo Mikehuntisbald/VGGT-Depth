@@ -852,7 +852,7 @@ Current v3.1 decision boundary:
 
 ```text
 conda run --no-capture-output -n env-tsr python -m pytest -q
-610 passed in 25.11s
+615 passed in 54.56s
 ```
 
 The current suite includes receipt/cache identity, manifest/crop/intrinsics,
@@ -876,9 +876,20 @@ cross-checks. V3 coverage adds 3031-record sidecar/audit failures, hard-rig and
 dual-K/B transport, source-calibrated hidden gradients, dense rays and
 factorized poses, parameter-matched no-op conditioning, per-record decision
 metrics, runtime/VRAM gates, temporal-pose variation receipts, and resumable
-single-runner orchestration.
+single-runner orchestration. Spring coverage additionally exercises exact
+`.dsp5` image-grid sampling and invalid handling, per-frame K/rig sidecar
+construction, real-GT cache identity, supervision relabelling rejection, and
+legacy-config compatibility.
 
 ## Current open work
+
+Spring v2 stereo integration is implemented on the independent
+`spring-support` lineage. It has no training or accuracy result yet. The
+reader/builder/cache contracts distinguish rendered Spring GT from FFS
+pseudo-GT, retain official Full-HD disparity units when sampling the 4K grid,
+support per-frame K and the 0.065 m baseline, and preserve sequence-disjoint
+holdout construction. Download, MD5 verification and extraction are external
+data-preparation state and are not claimed complete by this code receipt.
 
 | Blocker | Required resolution |
 |---|---|

@@ -1,6 +1,6 @@
+h5py>=3.10
 numpy<2
 omegaconf>=2.3
 Pillow>=10
 PyYAML>=6
 pytest>=8
-

@@ -806,6 +806,88 @@ deltas. These are
 required interpretation receipts; a T3 gain without candidate diversity is
 not evidence of subpixel temporal complementarity.
 
+## 17. Prepare and use Spring v2 stereo ground truth
+
+The extracted root must contain `train/` and `test/`. Build a deterministic
+sequence-disjoint validation split from the lexicographically last four
+official train sequences; the exact held-out IDs are recorded in both summary
+receipts.
+
+```bash
+export SPRING_ROOT=/home/haoyi/datasets/Spring/dataset
+export SPRING_CACHE=/home/haoyi/ffs_omega_cache/spring_v2
+
+python tools/build_spring_manifest.py \
+  --dataset-root "$SPRING_ROOT" --split train \
+  --holdout-last-sequences 4 --partition training \
+  --output "$SPRING_CACHE/manifests/train.jsonl"
+
+python tools/build_spring_manifest.py \
+  --dataset-root "$SPRING_ROOT" --split train \
+  --holdout-last-sequences 4 --partition validation \
+  --output "$SPRING_CACHE/manifests/val.jsonl"
+
+python tools/build_spring_manifest.py \
+  --dataset-root "$SPRING_ROOT" --split test \
+  --output "$SPRING_CACHE/manifests/test.jsonl"
+```
+
+Build the existing v3 rig sidecars from the Spring structural audits. Spring
+is officially rendered as rectified orthoparallel stereo; this audit proves
+file/P/K structure and does not fabricate a feature-matching residual.
+
+```bash
+for split in train val; do
+  python tools/build_stereo_calibration.py \
+    --manifest "$SPRING_CACHE/manifests/$split.jsonl" \
+    --pixel-audit "$SPRING_CACHE/manifests/$split.pixel_audit.json" \
+    --output "$SPRING_CACHE/calibration/$split.jsonl"
+done
+```
+
+Cache real GT separately from FFS observations. The GT tool reads HDF5 key
+`disparity`, samples `[::2,::2]`, never rescales values, and writes component
+`spring-ground-truth`. Do not point a Spring config at an `ffs-teacher` cache.
+
+```bash
+for split in train val; do
+  python tools/cache_spring_gt.py \
+    --manifest "$SPRING_CACHE/manifests/$split.jsonl" \
+    --output "$SPRING_CACHE/ground_truth/$split"
+
+  conda run --no-capture-output -n env-ffs python tools/cache_ffs.py \
+    --manifest "$SPRING_CACHE/manifests/$split.jsonl" \
+    --output "$SPRING_CACHE/ffs/$split" \
+    --checkpoint "$FFS_FAST_CKPT" --checkpoint-label 20-30-48 \
+    --role observation --scale 2 --iterations 4 \
+    --max-disp 192 --volume-backend pytorch1 --right-left-check
+done
+```
+
+Before fixing `--max-disp`, inspect the cached Spring GT receipt's
+`maximum_disparity_lr_px_at_x2` and raise to the next supported FFS tier if it
+exceeds 192. Generate
+causal VGGT and calibrated derived caches with the same `cache_vggt.py` and
+`derive_geometry_manifest.py` commands used by v3.1, using the Spring manifests
+and sidecars above.
+
+Stage A then uses:
+
+```bash
+python train.py --config configs/spring_mvp_x2_v3_1.yaml \
+  --manifest "$SPRING_CACHE/manifests/train.jsonl" \
+  --observation-cache-root "$SPRING_CACHE/ffs/train/observation" \
+  --teacher-cache-root "$SPRING_CACHE/ground_truth/train" \
+  --calibration-sidecar "$SPRING_CACHE/calibration/train.jsonl" \
+  --output-dir outputs/spring_v2_stage_a
+```
+
+Use `configs/spring_temporal_x2_v3_1.yaml` for Stage B after building VGGT and
+derived geometry. Evaluation on the held-out manifest reports target type
+`spring_v2_disp1_ground_truth`, with `paper_gt=true` and
+`synthetic_ground_truth=true`. The public Spring test split has no downloadable
+GT and is not used for local acceptance metrics.
+
 ## M0 environment/backbone tool status and exit codes
 
 | Status | Exit | Meaning |

@@ -752,6 +752,56 @@ def test_v31_checkpoint_lineage_requires_evaluation_config() -> None:
         )
 
 
+def test_spring_supervision_checkpoint_lineage_is_exact() -> None:
+    config = _temporal_v31_checkpoint_config()
+    config["supervision"] = {
+        "enabled": True,
+        "protocol_version": train.SPRING_SUPERVISION_PROTOCOL,
+        "target_type": "spring_v2_disp1_ground_truth",
+        "teacher_cache_component": "spring-ground-truth",
+        "paper_ground_truth": True,
+        "synthetic_ground_truth": True,
+    }
+    data = config["data"]
+    assert isinstance(data, dict)
+    teacher_identity = _cache_identity_dict("spring-ground-truth")
+    data["teacher_cache_identity"] = teacher_identity
+    current_derived = {
+        "component": "vggt-ffs-derived-geometry-calibrated-stereo-v2-batch",
+        "config": {"algorithm": "strict"},
+    }
+    current = copy.deepcopy(config)
+    result = validate_checkpoint_lineage(
+        {"training_config": config},
+        required_stage="temporal",
+        observation_cache_identity=_cache_identity_dict("ffs-observation"),
+        teacher_cache_identity=teacher_identity,
+        derived_cache_lineage=current_derived,
+        evaluation_config=current,
+    )
+    assert result["teacher_cache_identity"]["component"] == (
+        "spring-ground-truth"
+    )
+
+    supervision = current["supervision"]
+    assert isinstance(supervision, dict)
+    supervision["paper_ground_truth"] = False
+    with pytest.raises(
+        CheckpointMismatchError,
+        match="evaluation supervision config differs",
+    ):
+        validate_checkpoint_lineage(
+            {"training_config": config},
+            required_stage="temporal",
+            observation_cache_identity=_cache_identity_dict(
+                "ffs-observation"
+            ),
+            teacher_cache_identity=teacher_identity,
+            derived_cache_lineage=current_derived,
+            evaluation_config=current,
+        )
+
+
 def _valid_temporal_causality_batch() -> dict[str, object]:
     frame_ids = [10, 20, 30]
     timestamps = [1.0, 2.0, 3.0]
