@@ -47,6 +47,12 @@ from .zbuffer_reproject import (
     zbuffer_reproject,
 )
 from .history_confidence import HistoryConfidenceResult, history_confidence
+from .topk_splat import (
+    TopKSplatResult,
+    merge_topk_splat_results,
+    topk_z_aware_splat,
+    topk_z_aware_splat_v2,
+)
 
 __all__ = [
     "PinholeIntrinsics",
@@ -60,6 +66,7 @@ __all__ = [
     "ScaleOnlyEstimate",
     "VGGTAlignmentResult",
     "WarpResult",
+    "TopKSplatResult",
     "align_vggt_depth_to_ffs_disparity",
     "adjacent_left_photometric_reprojection",
     "assess_pose_quality",
@@ -75,6 +82,7 @@ __all__ = [
     "ffs_trusted_mask",
     "hr_disparity_to_lr_pixels",
     "history_confidence",
+    "merge_topk_splat_results",
     "lr_disparity_to_hr_pixels",
     "metric_scale_vggt_geometry",
     "relative_camera_transform",
@@ -84,5 +92,7 @@ __all__ = [
     "valid_disparity_mask",
     "validate_intrinsics",
     "validate_raw_cache_pair",
+    "topk_z_aware_splat",
+    "topk_z_aware_splat_v2",
     "zbuffer_reproject",
 ]

@@ -1,0 +1,1054 @@
+"""Opt-in top-K depth-aware forward splatting for causal history transport.
+
+This module deliberately does not replace :mod:`geometry.zbuffer_reproject`.
+The canonical MVP keeps its single z-buffer winner while experiments can use
+the v2 interface here. Both implementations use camera-from-world poses and
+forward splatting; neither uses ``grid_sample``.
+
+The default projection distributes every continuous point over its four
+bilinear target neighbours.  A named ``nearest`` compatibility footprint is
+available only for strict regression against the canonical MVP.
+
+The source grid may be HR (disparity and phase are HR-pixel quantities) or LR
+(for example, a ConvGRU hidden-state grid).  In the latter case callers pass
+the calibrated LR intrinsics while disparity remains in HR-pixel units.
+"""
+
+from __future__ import annotations
+
+from collections.abc import Sequence
+from dataclasses import dataclass
+from numbers import Real
+
+import torch
+from torch import Tensor
+
+from .zbuffer_reproject import (
+    WarpResult,
+    _batched_homogeneous_extrinsics,
+    _batched_intrinsics,
+    _image_tensor,
+    _validate_rotation,
+)
+
+
+@dataclass(frozen=True, slots=True)
+class TopKSplatResult:
+    """Top-K source candidates rasterised on the current target grid.
+
+    The candidate axis is ordered by increasing current-camera depth.  Exactly
+    tied depths use the flattened source index as a deterministic tie-break.
+    Invalid candidate slots are zero-filled (``source_linear_index`` is -1)
+    and must be selected with ``valid_mask``.
+
+    Attributes:
+        disparity_hr_px: Candidate disparity in HR pixels, ``[B,K,H,W]``.
+        depth_m: Candidate current-camera Z in metres, ``[B,K,H,W]``.
+        confidence: Propagated source confidence, ``[B,K,H,W]``.
+        temporal_age_frames: Propagated non-negative age, ``[B,K,H,W]``.
+        valid_mask: Geometrically valid retained candidates, ``[B,K,H,W]``.
+        visibility_mask: Traditional z-buffer visibility.  Only valid rank 0
+            is true, shape ``[B,K,H,W]``.
+        collision_mask: Whether more than one source landed at this target,
+            broadcast over retained candidates, ``[B,K,H,W]``.
+        source_visibility_mask: Propagated source visibility, ``[B,K,H,W]``.
+        source_collision_mask: Propagated source collision flag, ``[B,K,H,W]``.
+        footprint_weight: Bilinear footprint coefficient in ``(0,1]`` for
+            each retained candidate, ``[B,K,H,W]``.
+        projected_uv_grid_px: Continuous coordinate in *target-grid pixels*,
+            ``[B,K,2,H,W]`` in ``(u,v)`` order.
+        fractional_offset_grid_px: Continuous coordinate minus its selected
+            integer target, ``[B,K,2,H,W]``.
+        source_uv_grid_px: Integer source-grid coordinate represented in the
+            compute dtype, ``[B,K,2,H,W]``.
+        source_sequence_index: Source-result index after multi-age merging,
+            integer ``[B,K,H,W]``; -1 is invalid.  A direct splat uses zero.
+        source_linear_index: Stable flattened pixel index, ``[B,K,H,W]``; -1
+            is invalid.  It includes the batch offset.
+        candidate_count: Number of valid sources landing at each target before
+            top-K truncation, integer ``[B,1,H,W]``.
+        z_aware_weights: Explicit normalised fusion weights, ``[B,K,H,W]``.
+            They are proportional to bilinear footprint, confidence, source
+            visibility,
+            ``exp(-(z-z_nearest)/depth_temperature_m)``, age decay, and an
+            optional propagated-collision penalty.  An invalid/all-zero set
+            returns all-zero weights rather than a uniform fallback.
+        aggregate_valid_mask: Weight denominator was finite and positive,
+            boolean ``[B,1,H,W]``.
+        weighted_disparity_hr_px: Weighted disparity, ``[B,1,H,W]``.
+        weighted_depth_m: Weighted depth, ``[B,1,H,W]``.
+        weighted_confidence: Weighted source confidence, ``[B,1,H,W]``.
+        weighted_fractional_offset_grid_px: Weighted phase in grid pixels,
+            ``[B,2,H,W]``.
+        weighted_temporal_age_frames: Weighted age, ``[B,1,H,W]``.
+        warped_hidden_feature: Optional per-candidate forward-splatted feature,
+            ``[B,K,C,H,W]``.  Passing an LR ConvGRU state and LR intrinsics
+            therefore warps hidden state to the current LR grid.
+        weighted_hidden_feature: Optional weighted feature, ``[B,C,H,W]``.
+    """
+
+    disparity_hr_px: Tensor
+    depth_m: Tensor
+    confidence: Tensor
+    temporal_age_frames: Tensor
+    valid_mask: Tensor
+    visibility_mask: Tensor
+    collision_mask: Tensor
+    source_visibility_mask: Tensor
+    source_collision_mask: Tensor
+    footprint_weight: Tensor
+    projected_uv_grid_px: Tensor
+    fractional_offset_grid_px: Tensor
+    source_uv_grid_px: Tensor
+    source_sequence_index: Tensor
+    source_linear_index: Tensor
+    candidate_count: Tensor
+    z_aware_weights: Tensor
+    aggregate_valid_mask: Tensor
+    weighted_disparity_hr_px: Tensor
+    weighted_depth_m: Tensor
+    weighted_confidence: Tensor
+    weighted_fractional_offset_grid_px: Tensor
+    weighted_temporal_age_frames: Tensor
+    warped_hidden_feature: Tensor | None
+    weighted_hidden_feature: Tensor | None
+
+    @property
+    def top_k(self) -> int:
+        """Number of retained slots per target pixel."""
+
+        return int(self.disparity_hr_px.shape[1])
+
+    def as_single_winner(self) -> WarpResult:
+        """Convert a ``K=1`` result to the canonical :class:`WarpResult`.
+
+        This adapter is useful for ``splat_footprint="nearest"`` numerical
+        regression tests and lets an
+        opt-in caller stage the transport upgrade without changing downstream
+        single-winner code.  It rejects ``K != 1`` rather than dropping data.
+        """
+
+        if self.top_k != 1:
+            raise ValueError(f"as_single_winner requires K=1, got K={self.top_k}")
+        return WarpResult(
+            disparity_hr_px=self.disparity_hr_px,
+            depth_m=self.depth_m,
+            confidence=self.confidence,
+            valid_mask=self.valid_mask,
+            visibility_mask=self.visibility_mask,
+            collision_mask=self.collision_mask,
+            projected_uv=self.projected_uv_grid_px[:, 0],
+            fractional_offset=self.fractional_offset_grid_px[:, 0],
+            source_uv=self.source_uv_grid_px[:, 0],
+        )
+
+
+def _optional_mask(
+    value: Tensor | None,
+    *,
+    name: str,
+    reference: Tensor,
+    default: bool,
+) -> Tensor:
+    if value is None:
+        return torch.full_like(reference, default, dtype=torch.bool)
+    if not isinstance(value, Tensor):
+        raise TypeError(f"{name} must be a torch.Tensor")
+    if value.ndim == 3:
+        value = value.unsqueeze(1)
+    if value.shape != reference.shape:
+        raise ValueError(
+            f"{name} must have shape {tuple(reference.shape)}, got {tuple(value.shape)}"
+        )
+    if value.device != reference.device:
+        raise ValueError(f"{name} must share the image tensor device")
+    return value.detach().to(dtype=torch.bool)
+
+
+def _temporal_age_field(
+    value: Tensor | Real,
+    *,
+    reference: Tensor,
+    dtype: torch.dtype,
+) -> Tensor:
+    batch_size = reference.shape[0]
+    if isinstance(value, bool) or not isinstance(value, (Tensor, Real)):
+        raise TypeError("temporal_age_frames must be a real scalar or tensor")
+    if isinstance(value, Tensor):
+        if not value.is_floating_point() and value.dtype not in {
+            torch.uint8,
+            torch.int8,
+            torch.int16,
+            torch.int32,
+            torch.int64,
+        }:
+            raise TypeError("temporal_age_frames tensor must be real-valued")
+        if value.device != reference.device:
+            raise ValueError("temporal_age_frames must share the image tensor device")
+        detached = value.detach().to(dtype=dtype)
+        if detached.ndim == 0:
+            result = detached.expand_as(reference)
+        elif detached.shape == (batch_size,):
+            result = detached.reshape(batch_size, 1, 1, 1).expand_as(reference)
+        elif detached.shape == (batch_size, 1, 1, 1):
+            result = detached.expand_as(reference)
+        elif detached.shape == reference.shape:
+            result = detached
+        else:
+            raise ValueError(
+                "temporal_age_frames must be scalar, [B], [B,1,1,1], or "
+                f"{tuple(reference.shape)}, got {tuple(detached.shape)}"
+            )
+    else:
+        scalar_age = float(value)
+        if not torch.isfinite(torch.tensor(scalar_age)) or scalar_age < 0:
+            raise ValueError("scalar temporal_age_frames must be finite and non-negative")
+        result = torch.full_like(reference, scalar_age, dtype=dtype)
+    return result
+
+
+def _positive_finite_scalar(value: Real, name: str) -> float:
+    if isinstance(value, bool) or not isinstance(value, Real):
+        raise TypeError(f"{name} must be a real scalar")
+    result = float(value)
+    if not torch.isfinite(torch.tensor(result)) or result <= 0:
+        raise ValueError(f"{name} must be finite and > 0")
+    return result
+
+
+def topk_z_aware_splat(
+    previous_disparity_hr_px: Tensor,
+    previous_depth_m: Tensor,
+    previous_confidence: Tensor,
+    intrinsics_grid_3x3: Tensor,
+    extrinsics_previous_camera_from_world: Tensor,
+    extrinsics_current_camera_from_world: Tensor,
+    *,
+    top_k: int = 4,
+    temporal_age_frames: Tensor | Real = 1.0,
+    previous_hidden_feature: Tensor | None = None,
+    source_valid_mask: Tensor | None = None,
+    source_visibility_mask: Tensor | None = None,
+    source_collision_mask: Tensor | None = None,
+    splat_footprint: str = "bilinear",
+    minimum_depth_m: float = 1e-6,
+    depth_temperature_m: float = 0.25,
+    age_temperature_frames: float = 3.0,
+    source_collision_penalty: float = 0.5,
+) -> TopKSplatResult:
+    """Forward-splat disparity and optional hidden features with top-K depth.
+
+    Args:
+        previous_disparity_hr_px: Rectified disparity sampled on the source
+            grid but expressed in HR pixels, ``[B,1,H,W]``.
+        previous_depth_m: Previous-camera Z depth in metres, ``[B,1,H,W]``.
+        previous_confidence: Source confidence, ``[B,1,H,W]``.  Negative
+            confidence remains geometrically inspectable for K=1 compatibility
+            but receives zero fusion weight.
+        intrinsics_grid_3x3: Calibrated intrinsics in source/target *grid pixel*
+            coordinates, ``[3,3]`` or ``[B,3,3]``.  Use LR intrinsics when
+            transporting an LR hidden state.
+        extrinsics_previous_camera_from_world: Previous camera-from-world pose.
+        extrinsics_current_camera_from_world: Current camera-from-world pose.
+        top_k: Positive number of candidates retained per target pixel.
+        temporal_age_frames: Non-negative scalar, ``[B]``, ``[B,1,1,1]``, or
+            per-source ``[B,1,H,W]`` age.
+        previous_hidden_feature: Optional source feature ``[B,C,H,W]``.  It is
+            gathered by the same forward-splat winners, never ``grid_sample``.
+        source_valid_mask: Optional fail-closed source mask ``[B,1,H,W]``.
+        source_visibility_mask: Optional propagated visibility mask.
+        source_collision_mask: Optional propagated collision mask.
+        splat_footprint: ``"bilinear"`` (default) distributes the source over
+            four continuous-projection neighbours. ``"nearest"`` is the
+            explicit legacy-regression path.
+        minimum_depth_m: Strict positive current-camera Z threshold.
+        depth_temperature_m: Positive exponential depth-decay temperature.
+        age_temperature_frames: Positive exponential age-decay temperature.
+        source_collision_penalty: Finite factor in ``[0,1]`` applied to a
+            candidate carrying a previous collision flag.
+
+    Returns:
+        :class:`TopKSplatResult` on the current grid. Geometry, masks, and
+        winner indices are detached. Hidden-feature gather and weighted
+        aggregation retain gradients with respect to feature values (never
+        with respect to projection/index selection). Non-finite disparity,
+        depth, confidence, age, projection, or feature vectors are invalidated
+        before target indexing.
+    """
+
+    if isinstance(top_k, bool) or not isinstance(top_k, int) or top_k <= 0:
+        raise ValueError("top_k must be a positive integer")
+    if splat_footprint not in {"bilinear", "nearest"}:
+        raise ValueError("splat_footprint must be 'bilinear' or 'nearest'")
+    minimum_depth = _positive_finite_scalar(minimum_depth_m, "minimum_depth_m")
+    depth_temperature = _positive_finite_scalar(
+        depth_temperature_m, "depth_temperature_m"
+    )
+    age_temperature = _positive_finite_scalar(
+        age_temperature_frames, "age_temperature_frames"
+    )
+    if (
+        isinstance(source_collision_penalty, bool)
+        or not isinstance(source_collision_penalty, Real)
+        or not torch.isfinite(torch.tensor(float(source_collision_penalty)))
+        or not 0.0 <= float(source_collision_penalty) <= 1.0
+    ):
+        raise ValueError("source_collision_penalty must be finite and in [0,1]")
+    collision_penalty = float(source_collision_penalty)
+
+    disparity_input = _image_tensor(
+        previous_disparity_hr_px, "previous_disparity_hr_px"
+    )
+    depth_input = _image_tensor(previous_depth_m, "previous_depth_m")
+    confidence_input = _image_tensor(previous_confidence, "previous_confidence")
+    if depth_input.shape != disparity_input.shape:
+        raise ValueError("previous_depth_m shape must match previous_disparity_hr_px")
+    if confidence_input.shape != disparity_input.shape:
+        raise ValueError(
+            "previous_confidence shape must match previous_disparity_hr_px"
+        )
+    if (
+        depth_input.device != disparity_input.device
+        or confidence_input.device != disparity_input.device
+    ):
+        raise ValueError("all image tensors must share a device")
+
+    batch_size, _, height, width = disparity_input.shape
+    if batch_size <= 0 or height <= 0 or width <= 0:
+        raise ValueError("image tensors must have positive B, H, and W dimensions")
+    device = disparity_input.device
+    compute_dtype = torch.promote_types(disparity_input.dtype, depth_input.dtype)
+    if compute_dtype in {torch.float16, torch.bfloat16}:
+        compute_dtype = torch.float32
+    disparity = disparity_input.to(dtype=compute_dtype)
+    depth = depth_input.to(dtype=compute_dtype)
+    confidence = confidence_input.to(dtype=compute_dtype)
+    age = _temporal_age_field(
+        temporal_age_frames, reference=disparity_input, dtype=compute_dtype
+    )
+    explicit_valid = _optional_mask(
+        source_valid_mask,
+        name="source_valid_mask",
+        reference=disparity_input,
+        default=True,
+    )
+    source_visibility = _optional_mask(
+        source_visibility_mask,
+        name="source_visibility_mask",
+        reference=disparity_input,
+        default=True,
+    )
+    source_collision = _optional_mask(
+        source_collision_mask,
+        name="source_collision_mask",
+        reference=disparity_input,
+        default=False,
+    )
+
+    hidden_feature: Tensor | None = None
+    hidden_channels = 0
+    if previous_hidden_feature is not None:
+        if not isinstance(previous_hidden_feature, Tensor):
+            raise TypeError("previous_hidden_feature must be a torch.Tensor")
+        if (
+            previous_hidden_feature.ndim != 4
+            or previous_hidden_feature.shape[0] != batch_size
+            or previous_hidden_feature.shape[-2:] != (height, width)
+            or previous_hidden_feature.shape[1] <= 0
+        ):
+            raise ValueError(
+                "previous_hidden_feature must have shape [B,C,H,W] aligned "
+                f"with the geometry grid, got {tuple(previous_hidden_feature.shape)}"
+            )
+        if (
+            not previous_hidden_feature.is_floating_point()
+            or previous_hidden_feature.is_complex()
+        ):
+            raise TypeError("previous_hidden_feature must be real floating point")
+        if previous_hidden_feature.device != device:
+            raise ValueError(
+                "previous_hidden_feature must share the image tensor device"
+            )
+        # Geometry and winner selection are intentionally detached, but a
+        # gathered recurrent feature remains differentiable with respect to
+        # its values.  This permits truncated-BPTT callers to choose whether
+        # to detach the hidden state before entering this transport.
+        hidden_feature = previous_hidden_feature
+        hidden_channels = int(hidden_feature.shape[1])
+
+    intrinsics = _batched_intrinsics(
+        intrinsics_grid_3x3,
+        batch_size=batch_size,
+        dtype=compute_dtype,
+        device=device,
+    )
+    previous_extrinsics = _batched_homogeneous_extrinsics(
+        extrinsics_previous_camera_from_world,
+        name="extrinsics_previous_camera_from_world",
+        batch_size=batch_size,
+        dtype=compute_dtype,
+        device=device,
+    )
+    current_extrinsics = _batched_homogeneous_extrinsics(
+        extrinsics_current_camera_from_world,
+        name="extrinsics_current_camera_from_world",
+        batch_size=batch_size,
+        dtype=compute_dtype,
+        device=device,
+    )
+    _validate_rotation(previous_extrinsics[:, :3, :3], "previous extrinsics")
+    _validate_rotation(current_extrinsics[:, :3, :3], "current extrinsics")
+    transform_current_previous = current_extrinsics @ torch.linalg.inv(
+        previous_extrinsics
+    )
+
+    grid_v, grid_u = torch.meshgrid(
+        torch.arange(height, dtype=compute_dtype, device=device),
+        torch.arange(width, dtype=compute_dtype, device=device),
+        indexing="ij",
+    )
+    grid_u = grid_u.reshape(1, -1).expand(batch_size, -1)
+    grid_v = grid_v.reshape(1, -1).expand(batch_size, -1)
+    pixels_per_image = height * width
+    output_size = batch_size * pixels_per_image
+    disparity_flat = disparity[:, 0].reshape(batch_size, -1)
+    depth_flat = depth[:, 0].reshape(batch_size, -1)
+    confidence_flat = confidence[:, 0].reshape(batch_size, -1)
+    age_flat = age[:, 0].reshape(batch_size, -1)
+
+    fx = intrinsics[:, 0, 0:1]
+    fy = intrinsics[:, 1, 1:2]
+    cx = intrinsics[:, 0, 2:3]
+    cy = intrinsics[:, 1, 2:3]
+    point_previous = torch.stack(
+        (
+            (grid_u - cx) * depth_flat / fx,
+            (grid_v - cy) * depth_flat / fy,
+            depth_flat,
+            torch.ones_like(depth_flat),
+        ),
+        dim=1,
+    )
+    point_current = transform_current_previous @ point_previous
+    x_current = point_current[:, 0]
+    y_current = point_current[:, 1]
+    z_current = point_current[:, 2]
+    projected_u = fx * x_current / z_current + cx
+    projected_v = fy * y_current / z_current + cy
+
+    feature_finite = torch.ones(
+        (batch_size, pixels_per_image), dtype=torch.bool, device=device
+    )
+    if hidden_feature is not None:
+        feature_finite = torch.isfinite(hidden_feature).all(dim=1).reshape(
+            batch_size, pixels_per_image
+        )
+    source_valid = (
+        explicit_valid[:, 0].reshape(batch_size, -1)
+        & torch.isfinite(disparity_flat)
+        & (disparity_flat > 0)
+        & torch.isfinite(depth_flat)
+        & (depth_flat > 0)
+        & torch.isfinite(confidence_flat)
+        & torch.isfinite(age_flat)
+        & (age_flat >= 0)
+        & feature_finite
+        & torch.isfinite(projected_u)
+        & torch.isfinite(projected_v)
+        & torch.isfinite(z_current)
+        & (z_current > minimum_depth)
+    )
+    # Never convert NaN/Inf projected coordinates directly to integer indices.
+    safe_projected_u = torch.where(
+        torch.isfinite(projected_u), projected_u, torch.zeros_like(projected_u)
+    )
+    safe_projected_v = torch.where(
+        torch.isfinite(projected_v), projected_v, torch.zeros_like(projected_v)
+    )
+    if splat_footprint == "bilinear":
+        target_u_floor = torch.floor(safe_projected_u).to(dtype=torch.long)
+        target_v_floor = torch.floor(safe_projected_v).to(dtype=torch.long)
+        target_u = torch.stack(
+            (
+                target_u_floor,
+                target_u_floor + 1,
+                target_u_floor,
+                target_u_floor + 1,
+            ),
+            dim=-1,
+        )
+        target_v = torch.stack(
+            (
+                target_v_floor,
+                target_v_floor,
+                target_v_floor + 1,
+                target_v_floor + 1,
+            ),
+            dim=-1,
+        )
+        phase_u = safe_projected_u - target_u_floor.to(dtype=compute_dtype)
+        phase_v = safe_projected_v - target_v_floor.to(dtype=compute_dtype)
+        footprint = torch.stack(
+            (
+                (1.0 - phase_u) * (1.0 - phase_v),
+                phase_u * (1.0 - phase_v),
+                (1.0 - phase_u) * phase_v,
+                phase_u * phase_v,
+            ),
+            dim=-1,
+        )
+    else:
+        target_u = (
+            torch.floor(safe_projected_u + 0.5)
+            .to(dtype=torch.long)
+            .unsqueeze(-1)
+        )
+        target_v = (
+            torch.floor(safe_projected_v + 0.5)
+            .to(dtype=torch.long)
+            .unsqueeze(-1)
+        )
+        footprint = torch.ones_like(target_u, dtype=compute_dtype)
+    contribution_valid = source_valid.unsqueeze(-1) & (
+        (target_u >= 0)
+        & (target_u < width)
+        & (target_v >= 0)
+        & (target_v < height)
+        & torch.isfinite(footprint)
+        & (footprint > 0)
+    )
+
+    source_linear = torch.arange(
+        output_size, dtype=torch.long, device=device
+    ).reshape(batch_size, pixels_per_image)
+    batch_offset = (
+        torch.arange(batch_size, dtype=torch.long, device=device).unsqueeze(1)
+        * pixels_per_image
+    )
+    target_linear = batch_offset.unsqueeze(-1) + target_v * width + target_u
+    expanded_source_linear = source_linear.unsqueeze(-1).expand_as(target_linear)
+    expanded_current_depth = z_current.unsqueeze(-1).expand_as(footprint)
+    valid_source_linear = expanded_source_linear[contribution_valid]
+    valid_target_linear = target_linear[contribution_valid]
+    valid_current_depth = expanded_current_depth[contribution_valid]
+
+    candidate_count_flat = torch.zeros(
+        output_size, dtype=torch.int64, device=device
+    )
+    if valid_target_linear.numel() > 0:
+        candidate_count_flat.scatter_add_(
+            0,
+            valid_target_linear,
+            torch.ones_like(valid_target_linear, dtype=torch.int64),
+        )
+
+    # Boolean indexing above preserves flattened source order.  Stable depth
+    # sorting therefore also provides the source-index tie-break.  A second
+    # stable target sort groups pixels without perturbing their depth ordering.
+    retained_source = torch.full(
+        (output_size, top_k), -1, dtype=torch.long, device=device
+    )
+    if valid_target_linear.numel() > 0:
+        depth_order = torch.argsort(valid_current_depth, stable=True)
+        target_after_depth = valid_target_linear[depth_order]
+        source_after_depth = valid_source_linear[depth_order]
+        target_order = torch.argsort(target_after_depth, stable=True)
+        grouped_target = target_after_depth[target_order]
+        grouped_source = source_after_depth[target_order]
+        positions = torch.arange(
+            grouped_target.numel(), dtype=torch.long, device=device
+        )
+        new_group = torch.ones_like(grouped_target, dtype=torch.bool)
+        new_group[1:] = grouped_target[1:] != grouped_target[:-1]
+        group_start = torch.cummax(
+            torch.where(new_group, positions, torch.zeros_like(positions)), dim=0
+        ).values
+        rank_in_target = positions - group_start
+        retained = rank_in_target < top_k
+        retained_source[
+            grouped_target[retained], rank_in_target[retained]
+        ] = grouped_source[retained]
+
+    valid_slots_flat = retained_source >= 0
+    safe_source = retained_source.clamp_min(0)
+    source_batch = torch.div(safe_source, pixels_per_image, rounding_mode="floor")
+    source_pixel = safe_source % pixels_per_image
+
+    def gather_scalar(flattened_by_batch: Tensor) -> Tensor:
+        gathered = flattened_by_batch[source_batch, source_pixel]
+        return torch.where(valid_slots_flat, gathered, torch.zeros_like(gathered))
+
+    gathered_previous_depth = gather_scalar(depth_flat)
+    gathered_current_depth = gather_scalar(z_current)
+    gathered_previous_disparity = gather_scalar(disparity_flat)
+    gathered_disparity = torch.where(
+        valid_slots_flat,
+        gathered_previous_disparity
+        * gathered_previous_depth
+        / gathered_current_depth.clamp_min(minimum_depth),
+        torch.zeros_like(gathered_previous_disparity),
+    )
+    gathered_confidence = gather_scalar(confidence_flat)
+    gathered_age = gather_scalar(age_flat)
+    gathered_projected_u = gather_scalar(projected_u)
+    gathered_projected_v = gather_scalar(projected_v)
+    gathered_source_visibility = gather_scalar(
+        source_visibility[:, 0].reshape(batch_size, -1).to(compute_dtype)
+    ).to(dtype=torch.bool)
+    gathered_source_collision = gather_scalar(
+        source_collision[:, 0].reshape(batch_size, -1).to(compute_dtype)
+    ).to(dtype=torch.bool)
+
+    target_pixel = torch.arange(
+        output_size, dtype=torch.long, device=device
+    ).unsqueeze(1).expand(-1, top_k)
+    target_pixel_in_image = target_pixel % pixels_per_image
+    target_u_for_slot = target_pixel_in_image % width
+    target_v_for_slot = torch.div(
+        target_pixel_in_image, width, rounding_mode="floor"
+    )
+    fractional_u = torch.where(
+        valid_slots_flat,
+        gathered_projected_u - target_u_for_slot.to(compute_dtype),
+        torch.zeros_like(gathered_projected_u),
+    )
+    fractional_v = torch.where(
+        valid_slots_flat,
+        gathered_projected_v - target_v_for_slot.to(compute_dtype),
+        torch.zeros_like(gathered_projected_v),
+    )
+    source_u = torch.where(
+        valid_slots_flat,
+        (source_pixel % width).to(compute_dtype),
+        torch.zeros_like(gathered_projected_u),
+    )
+    source_v = torch.where(
+        valid_slots_flat,
+        torch.div(source_pixel, width, rounding_mode="floor").to(compute_dtype),
+        torch.zeros_like(gathered_projected_v),
+    )
+    if splat_footprint == "bilinear":
+        gathered_footprint = torch.where(
+            valid_slots_flat,
+            (1.0 - fractional_u.abs()).clamp_min(0.0)
+            * (1.0 - fractional_v.abs()).clamp_min(0.0),
+            torch.zeros_like(fractional_u),
+        )
+    else:
+        gathered_footprint = valid_slots_flat.to(dtype=compute_dtype)
+
+    target_collision_flat = (
+        candidate_count_flat.unsqueeze(1).expand(-1, top_k) > 1
+    ) & valid_slots_flat
+    rank = torch.arange(top_k, device=device).reshape(1, top_k)
+    visibility_flat = valid_slots_flat & (rank == 0)
+
+    nearest_depth = gathered_current_depth[:, :1]
+    depth_delta = torch.where(
+        valid_slots_flat,
+        (gathered_current_depth - nearest_depth).clamp_min(0.0),
+        torch.zeros_like(gathered_current_depth),
+    )
+    depth_factor = torch.exp(-depth_delta / depth_temperature)
+    age_factor = torch.exp(-gathered_age / age_temperature)
+    confidence_factor = gathered_confidence.clamp(0.0, 1.0)
+    propagated_collision_factor = torch.where(
+        gathered_source_collision,
+        torch.full_like(gathered_confidence, collision_penalty),
+        torch.ones_like(gathered_confidence),
+    )
+    unnormalised_weight = torch.where(
+        valid_slots_flat & gathered_source_visibility,
+        confidence_factor
+        * gathered_footprint
+        * depth_factor
+        * age_factor
+        * propagated_collision_factor,
+        torch.zeros_like(gathered_confidence),
+    )
+    unnormalised_weight = torch.nan_to_num(
+        unnormalised_weight, nan=0.0, posinf=0.0, neginf=0.0
+    )
+    weight_denominator = unnormalised_weight.sum(dim=1, keepdim=True)
+    aggregate_valid_flat = torch.isfinite(weight_denominator) & (
+        weight_denominator > 0
+    )
+    z_aware_weight = torch.where(
+        aggregate_valid_flat,
+        unnormalised_weight / weight_denominator.clamp_min(
+            torch.finfo(compute_dtype).tiny
+        ),
+        torch.zeros_like(unnormalised_weight),
+    )
+    weighted_disparity = (z_aware_weight * gathered_disparity).sum(
+        dim=1, keepdim=True
+    )
+    weighted_depth = (z_aware_weight * gathered_current_depth).sum(
+        dim=1, keepdim=True
+    )
+    weighted_confidence = (z_aware_weight * gathered_confidence).sum(
+        dim=1, keepdim=True
+    )
+    weighted_fractional = torch.stack(
+        (
+            (z_aware_weight * fractional_u).sum(dim=1),
+            (z_aware_weight * fractional_v).sum(dim=1),
+        ),
+        dim=1,
+    )
+    weighted_age = (z_aware_weight * gathered_age).sum(dim=1, keepdim=True)
+
+    warped_hidden: Tensor | None = None
+    weighted_hidden: Tensor | None = None
+    if hidden_feature is not None:
+        feature_by_source = hidden_feature.permute(0, 2, 3, 1).reshape(
+            output_size, hidden_channels
+        )
+        warped_hidden_flat = feature_by_source[safe_source]
+        warped_hidden_flat = torch.where(
+            valid_slots_flat.unsqueeze(-1),
+            warped_hidden_flat,
+            torch.zeros_like(warped_hidden_flat),
+        )
+        weighted_hidden_flat = (
+            z_aware_weight.unsqueeze(-1)
+            * warped_hidden_flat.to(dtype=compute_dtype)
+        ).sum(dim=1)
+        warped_hidden = warped_hidden_flat.reshape(
+            batch_size, height, width, top_k, hidden_channels
+        ).permute(0, 3, 4, 1, 2).to(dtype=hidden_feature.dtype)
+        weighted_hidden = weighted_hidden_flat.reshape(
+            batch_size, height, width, hidden_channels
+        ).permute(0, 3, 1, 2).to(dtype=hidden_feature.dtype)
+
+    vector_shape = (batch_size, height, width, top_k, 2)
+
+    def scalar_image(value: Tensor, *, dtype: torch.dtype | None = None) -> Tensor:
+        result = value.reshape(batch_size, height, width, top_k).permute(
+            0, 3, 1, 2
+        )
+        return result if dtype is None else result.to(dtype=dtype)
+
+    projected_uv = torch.stack(
+        (gathered_projected_u, gathered_projected_v), dim=-1
+    )
+    fractional = torch.stack((fractional_u, fractional_v), dim=-1)
+    source_uv = torch.stack((source_u, source_v), dim=-1)
+
+    return TopKSplatResult(
+        disparity_hr_px=scalar_image(
+            gathered_disparity, dtype=previous_disparity_hr_px.dtype
+        ),
+        depth_m=scalar_image(gathered_current_depth, dtype=previous_depth_m.dtype),
+        confidence=scalar_image(
+            gathered_confidence, dtype=previous_confidence.dtype
+        ),
+        temporal_age_frames=scalar_image(gathered_age),
+        valid_mask=scalar_image(valid_slots_flat),
+        visibility_mask=scalar_image(visibility_flat),
+        collision_mask=scalar_image(target_collision_flat),
+        source_visibility_mask=scalar_image(gathered_source_visibility),
+        source_collision_mask=scalar_image(gathered_source_collision),
+        footprint_weight=scalar_image(gathered_footprint),
+        projected_uv_grid_px=projected_uv.reshape(vector_shape).permute(
+            0, 3, 4, 1, 2
+        ),
+        fractional_offset_grid_px=fractional.reshape(vector_shape).permute(
+            0, 3, 4, 1, 2
+        ),
+        source_uv_grid_px=source_uv.reshape(vector_shape).permute(0, 3, 4, 1, 2),
+        source_sequence_index=scalar_image(
+            torch.where(
+                valid_slots_flat,
+                torch.zeros_like(retained_source),
+                torch.full_like(retained_source, -1),
+            )
+        ),
+        source_linear_index=scalar_image(retained_source),
+        candidate_count=candidate_count_flat.reshape(batch_size, 1, height, width),
+        z_aware_weights=scalar_image(z_aware_weight),
+        aggregate_valid_mask=aggregate_valid_flat.reshape(
+            batch_size, 1, height, width
+        ),
+        weighted_disparity_hr_px=weighted_disparity.reshape(
+            batch_size, 1, height, width
+        ).to(dtype=previous_disparity_hr_px.dtype),
+        weighted_depth_m=weighted_depth.reshape(
+            batch_size, 1, height, width
+        ).to(dtype=previous_depth_m.dtype),
+        weighted_confidence=weighted_confidence.reshape(
+            batch_size, 1, height, width
+        ).to(dtype=previous_confidence.dtype),
+        weighted_fractional_offset_grid_px=weighted_fractional.reshape(
+            batch_size, 2, height, width
+        ),
+        weighted_temporal_age_frames=weighted_age.reshape(
+            batch_size, 1, height, width
+        ),
+        warped_hidden_feature=warped_hidden,
+        weighted_hidden_feature=weighted_hidden,
+    )
+
+
+def _check_merge_result_shapes(results: Sequence[TopKSplatResult], top_k: int) -> None:
+    if not results:
+        raise ValueError("results must contain at least one TopKSplatResult")
+    first = results[0]
+    if not isinstance(first, TopKSplatResult):
+        raise TypeError("results must contain only TopKSplatResult values")
+    batch, _, height, width = first.disparity_hr_px.shape
+    feature_channels = (
+        None
+        if first.warped_hidden_feature is None
+        else int(first.warped_hidden_feature.shape[2])
+    )
+    reference_device = first.disparity_hr_px.device
+    for result_index, result in enumerate(results):
+        if not isinstance(result, TopKSplatResult):
+            raise TypeError("results must contain only TopKSplatResult values")
+        if result.top_k < top_k:
+            raise ValueError(
+                f"result {result_index} retains K={result.top_k}, smaller than "
+                f"requested merged K={top_k}"
+            )
+        if (
+            result.disparity_hr_px.shape[0] != batch
+            or result.disparity_hr_px.shape[-2:] != (height, width)
+        ):
+            raise ValueError("all results must share B,H,W")
+        if result.disparity_hr_px.device != reference_device:
+            raise ValueError("all results must share one device")
+        result_channels = (
+            None
+            if result.warped_hidden_feature is None
+            else int(result.warped_hidden_feature.shape[2])
+        )
+        if result_channels != feature_channels:
+            raise ValueError(
+                "all results must either omit hidden features or share one channel count"
+            )
+
+
+def merge_topk_splat_results(
+    results: Sequence[TopKSplatResult],
+    *,
+    top_k: int,
+    depth_temperature_m: float = 0.25,
+    age_temperature_frames: float = 3.0,
+    source_collision_penalty: float = 0.5,
+) -> TopKSplatResult:
+    """Merge independently splatted history ages into one target-grid top-K.
+
+    ``results`` is ordered from the preferred source to the less preferred
+    source for exact depth ties (normally age 1, then age 2, ...).  Each input
+    must have retained at least the requested output ``top_k``: the global top
+    K of a union is then guaranteed to be present in the union of each source's
+    local top K.  Candidate ordering is stable by
+    ``(current depth, result input order, source pixel index)``.
+
+    Geometry/index tensors stay detached because each input splat detached
+    them.  If candidate hidden features require gradients, the gather and
+    weighted sum performed here preserve those gradients.
+    """
+
+    if isinstance(top_k, bool) or not isinstance(top_k, int) or top_k <= 0:
+        raise ValueError("top_k must be a positive integer")
+    depth_temperature = _positive_finite_scalar(
+        depth_temperature_m, "depth_temperature_m"
+    )
+    age_temperature = _positive_finite_scalar(
+        age_temperature_frames, "age_temperature_frames"
+    )
+    if (
+        isinstance(source_collision_penalty, bool)
+        or not isinstance(source_collision_penalty, Real)
+        or not torch.isfinite(torch.tensor(float(source_collision_penalty)))
+        or not 0.0 <= float(source_collision_penalty) <= 1.0
+    ):
+        raise ValueError("source_collision_penalty must be finite and in [0,1]")
+    collision_penalty = float(source_collision_penalty)
+    _check_merge_result_shapes(results, top_k)
+
+    first = results[0]
+    batch, _, height, width = first.disparity_hr_px.shape
+    device = first.disparity_hr_px.device
+    compute_dtype = first.z_aware_weights.dtype
+    if compute_dtype in {torch.float16, torch.bfloat16}:
+        compute_dtype = torch.float32
+
+    # Concatenation order is result order, then already depth/source-stable
+    # candidate rank. Stable depth argsort preserves that deterministic tie key.
+    def cat(field: str) -> Tensor:
+        return torch.cat([getattr(result, field) for result in results], dim=1)
+
+    union_valid = cat("valid_mask")
+    union_depth = cat("depth_m").to(dtype=compute_dtype)
+    sortable_depth = torch.where(
+        union_valid,
+        union_depth,
+        torch.full_like(union_depth, torch.inf),
+    )
+    union_order = torch.argsort(sortable_depth, dim=1, stable=True)[:, :top_k]
+
+    def gather_scalar(field: str) -> Tensor:
+        union = cat(field)
+        return torch.gather(union, 1, union_order)
+
+    def gather_vector(field: str) -> Tensor:
+        union = cat(field)
+        return torch.gather(
+            union,
+            1,
+            union_order.unsqueeze(2).expand(-1, -1, union.shape[2], -1, -1),
+        )
+
+    merged_valid = gather_scalar("valid_mask")
+    merged_disparity = gather_scalar("disparity_hr_px")
+    merged_depth = gather_scalar("depth_m")
+    merged_confidence = gather_scalar("confidence")
+    merged_age = gather_scalar("temporal_age_frames")
+    merged_source_visibility = gather_scalar("source_visibility_mask")
+    merged_source_collision = gather_scalar("source_collision_mask")
+    merged_footprint = gather_scalar("footprint_weight")
+    merged_projected_uv = gather_vector("projected_uv_grid_px")
+    merged_fractional = gather_vector("fractional_offset_grid_px")
+    merged_source_uv = gather_vector("source_uv_grid_px")
+    merged_source_linear = gather_scalar("source_linear_index")
+
+    union_sequence_index = torch.cat(
+        [
+            torch.where(
+                result.valid_mask,
+                torch.full_like(result.source_linear_index, result_index),
+                torch.full_like(result.source_linear_index, -1),
+            )
+            for result_index, result in enumerate(results)
+        ],
+        dim=1,
+    )
+    merged_sequence_index = torch.gather(union_sequence_index, 1, union_order)
+    merged_sequence_index = torch.where(
+        merged_valid,
+        merged_sequence_index,
+        torch.full_like(merged_sequence_index, -1),
+    )
+
+    total_candidate_count = torch.stack(
+        [result.candidate_count for result in results], dim=0
+    ).sum(dim=0)
+    merged_collision = merged_valid & (total_candidate_count > 1)
+    rank = torch.arange(top_k, device=device).reshape(1, top_k, 1, 1)
+    merged_visibility = merged_valid & (rank == 0)
+
+    nearest_depth = merged_depth[:, :1].to(dtype=compute_dtype)
+    depth_delta = torch.where(
+        merged_valid,
+        (merged_depth.to(dtype=compute_dtype) - nearest_depth).clamp_min(0.0),
+        torch.zeros_like(merged_depth, dtype=compute_dtype),
+    )
+    confidence_factor = merged_confidence.to(dtype=compute_dtype).clamp(0.0, 1.0)
+    depth_factor = torch.exp(-depth_delta / depth_temperature)
+    age_factor = torch.exp(
+        -merged_age.to(dtype=compute_dtype) / age_temperature
+    )
+    collision_factor = torch.where(
+        merged_source_collision,
+        torch.full_like(confidence_factor, collision_penalty),
+        torch.ones_like(confidence_factor),
+    )
+    unnormalised = torch.where(
+        merged_valid & merged_source_visibility,
+        confidence_factor
+        * merged_footprint.to(dtype=compute_dtype)
+        * depth_factor
+        * age_factor
+        * collision_factor,
+        torch.zeros_like(confidence_factor),
+    )
+    unnormalised = torch.nan_to_num(
+        unnormalised, nan=0.0, posinf=0.0, neginf=0.0
+    )
+    denominator = unnormalised.sum(dim=1, keepdim=True)
+    aggregate_valid = torch.isfinite(denominator) & (denominator > 0)
+    weights = torch.where(
+        aggregate_valid,
+        unnormalised / denominator.clamp_min(torch.finfo(compute_dtype).tiny),
+        torch.zeros_like(unnormalised),
+    )
+    weighted_disparity = (
+        weights * merged_disparity.to(dtype=compute_dtype)
+    ).sum(dim=1, keepdim=True).to(dtype=merged_disparity.dtype)
+    weighted_depth = (weights * merged_depth.to(dtype=compute_dtype)).sum(
+        dim=1, keepdim=True
+    ).to(dtype=merged_depth.dtype)
+    weighted_confidence = (
+        weights * merged_confidence.to(dtype=compute_dtype)
+    ).sum(dim=1, keepdim=True).to(dtype=merged_confidence.dtype)
+    weighted_fractional = (
+        weights.unsqueeze(2) * merged_fractional.to(dtype=compute_dtype)
+    ).sum(dim=1)
+    weighted_age = (
+        weights * merged_age.to(dtype=compute_dtype)
+    ).sum(dim=1, keepdim=True)
+
+    merged_hidden: Tensor | None = None
+    weighted_hidden: Tensor | None = None
+    if first.warped_hidden_feature is not None:
+        union_hidden = torch.cat(
+            [
+                result.warped_hidden_feature
+                for result in results
+                if result.warped_hidden_feature is not None
+            ],
+            dim=1,
+        )
+        merged_hidden = torch.gather(
+            union_hidden,
+            1,
+            union_order.unsqueeze(2).expand(
+                -1, -1, union_hidden.shape[2], -1, -1
+            ),
+        )
+        weighted_hidden = (
+            weights.unsqueeze(2) * merged_hidden.to(dtype=compute_dtype)
+        ).sum(dim=1).to(dtype=merged_hidden.dtype)
+
+    return TopKSplatResult(
+        disparity_hr_px=merged_disparity,
+        depth_m=merged_depth,
+        confidence=merged_confidence,
+        temporal_age_frames=merged_age,
+        valid_mask=merged_valid,
+        visibility_mask=merged_visibility,
+        collision_mask=merged_collision,
+        source_visibility_mask=merged_source_visibility,
+        source_collision_mask=merged_source_collision,
+        footprint_weight=merged_footprint,
+        projected_uv_grid_px=merged_projected_uv,
+        fractional_offset_grid_px=merged_fractional,
+        source_uv_grid_px=merged_source_uv,
+        source_sequence_index=merged_sequence_index,
+        source_linear_index=merged_source_linear,
+        candidate_count=total_candidate_count,
+        z_aware_weights=weights,
+        aggregate_valid_mask=aggregate_valid,
+        weighted_disparity_hr_px=weighted_disparity,
+        weighted_depth_m=weighted_depth,
+        weighted_confidence=weighted_confidence,
+        weighted_fractional_offset_grid_px=weighted_fractional,
+        weighted_temporal_age_frames=weighted_age,
+        warped_hidden_feature=merged_hidden,
+        weighted_hidden_feature=weighted_hidden,
+    )
+
+
+# Explicit v2 name for config-driven callers.
+topk_z_aware_splat_v2 = topk_z_aware_splat
+
+
+__all__ = [
+    "TopKSplatResult",
+    "merge_topk_splat_results",
+    "topk_z_aware_splat",
+    "topk_z_aware_splat_v2",
+]
