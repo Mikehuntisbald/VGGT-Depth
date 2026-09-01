@@ -12,12 +12,14 @@ import argparse
 import copy
 import csv
 import json
+import math
 import os
 import re
 import subprocess
 import sys
 import time
 from contextlib import contextmanager, nullcontext
+from collections.abc import Callable, Mapping
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
@@ -105,6 +107,10 @@ EVALUATION_DEFAULTS: dict[str, Any] = {
         "temporal_flicker_disparity_range_hr_px": [0.0, 384.0],
         "temporal_flicker_error_range_hr_px": [0.0, 20.0],
         "temporal_flicker_uncertainty_range": [0.0, 10.0],
+        # Default-off worst-case bundle extraction.  CPU tensor retention is
+        # bounded globally across every criterion while evaluation is running.
+        "failure_samples_per_criterion": 0,
+        "failure_samples_cpu_limit_bytes": 536_870_912,
         "low_confidence_threshold": 0.8,
         "boundary_gradient_threshold_px": 1.0,
         "boundary_radius_px": 1,
@@ -184,6 +190,14 @@ def build_parser() -> argparse.ArgumentParser:
         "--temporal-flicker-video-fps",
         type=int,
         help="frames per second for opt-in temporal flicker MP4s",
+    )
+    parser.add_argument(
+        "--failure-samples-per-criterion",
+        type=int,
+        help=(
+            "opt in to deterministic T3 failure bundles per criterion; "
+            "0 keeps the evaluator's normal visualization path unchanged"
+        ),
     )
     parser.add_argument(
         "--crop-mode",
@@ -277,6 +291,7 @@ def _update_cli_values(config: DictConfig, args: argparse.Namespace) -> None:
         "eval.visualization_samples": args.visualization_samples,
         "eval.temporal_flicker_video": args.temporal_flicker_video,
         "eval.temporal_flicker_video_fps": args.temporal_flicker_video_fps,
+        "eval.failure_samples_per_criterion": args.failure_samples_per_criterion,
         "eval.crop_mode": args.crop_mode,
         "eval.fixed_crop_origin_hr_xy": args.crop_origin,
     }
@@ -376,6 +391,16 @@ def validate_evaluation_config(config: DictConfig) -> str:
         config.eval.temporal_flicker_video_fps,
         "eval.temporal_flicker_video_fps",
     )
+    failure_samples = _nonnegative_int(
+        config.eval.failure_samples_per_criterion,
+        "eval.failure_samples_per_criterion",
+    )
+    _positive_int(
+        config.eval.failure_samples_cpu_limit_bytes,
+        "eval.failure_samples_cpu_limit_bytes",
+    )
+    if failure_samples and stage != "temporal":
+        raise ValueError("failure sample bundles require causal T=3 evaluation")
     _fixed_display_range(
         config.eval.temporal_flicker_disparity_range_hr_px,
         "eval.temporal_flicker_disparity_range_hr_px",
@@ -1571,6 +1596,348 @@ def _save_visualization(
         )
 
 
+FAILURE_SAMPLE_CRITERIA: dict[str, str] = {
+    "raw_negative_rate": (
+        "T3_VGGT raw-output finite-negative rate over every endpoint HR pixel"
+    ),
+    "low_confidence_epe_px": (
+        "T3_VGGT EPE on trusted teacher pseudo-GT pixels where FFS confidence "
+        "is below eval.low_confidence_threshold"
+    ),
+    "boundary_epe_px": (
+        "T3_VGGT EPE on trusted teacher pseudo-GT disparity-boundary pixels"
+    ),
+    "strict_temporal_error_px": (
+        "T3_VGGT EPE against z-buffer history on the strict visible/static/"
+        "non-collision/geometry-consistent/valid-history domain"
+    ),
+}
+
+
+@dataclass(slots=True)
+class _FailureSampleCandidate:
+    criterion: str
+    metric: MetricResult
+    sequence_id: str
+    frame_id: int
+    manifest_index: int
+    timestamp: float
+    tensors_cpu: dict[str, Tensor]
+    tensor_bytes: int
+
+    @property
+    def sort_key(self) -> tuple[float, str, int, int]:
+        # Ascending tuple order implements descending score, then the required
+        # stable sequence/frame/manifest-index tie break.
+        return (-float(self.metric.value), self.sequence_id, self.frame_id, self.manifest_index)
+
+
+def _metric_result_dict(metric: MetricResult) -> dict[str, float | int | bool]:
+    if not metric.valid or not math.isfinite(metric.value) or not math.isfinite(metric.numerator):
+        raise ValueError("failure bundles require a finite valid per-sample metric")
+    return {
+        "value": float(metric.value),
+        "numerator": float(metric.numerator),
+        "count": int(metric.count),
+        "valid": True,
+    }
+
+
+def _safe_failure_sample_stem(
+    *, rank: int, sequence_id: str, frame_id: int, manifest_index: int
+) -> str:
+    sequence_stem = re.sub(r"[^A-Za-z0-9._-]+", "_", sequence_id).strip("._")
+    if not sequence_stem:
+        raise ValueError("failure sample sequence_id has no safe filename stem")
+    return f"{rank:04d}_{sequence_stem}_{frame_id}_{manifest_index}"
+
+
+class FailureSampleCollector:
+    """Keep only current deterministic top-k T3 failure payloads on CPU."""
+
+    def __init__(self, *, samples_per_criterion: int, cpu_limit_bytes: int) -> None:
+        if samples_per_criterion <= 0:
+            raise ValueError("samples_per_criterion must be positive")
+        if cpu_limit_bytes <= 0:
+            raise ValueError("cpu_limit_bytes must be positive")
+        self.samples_per_criterion = samples_per_criterion
+        self.cpu_limit_bytes = cpu_limit_bytes
+        self.cpu_bytes_retained = 0
+        self._candidates: dict[str, list[_FailureSampleCandidate]] = {
+            criterion: [] for criterion in FAILURE_SAMPLE_CRITERIA
+        }
+
+    @staticmethod
+    def _payload_bytes(payload: Mapping[str, Tensor]) -> int:
+        total = 0
+        for name, tensor in payload.items():
+            if not isinstance(tensor, Tensor):
+                raise TypeError(f"failure payload {name!r} must be a tensor")
+            total += tensor.numel() * tensor.element_size()
+        return total
+
+    @staticmethod
+    def _detach_payload_to_cpu(payload: Mapping[str, Tensor]) -> dict[str, Tensor]:
+        return {
+            name: tensor.detach().to(device="cpu", copy=True).contiguous()
+            for name, tensor in payload.items()
+        }
+
+    def consider(
+        self,
+        criterion: str,
+        metric: MetricResult,
+        *,
+        sequence_id: str,
+        frame_id: int,
+        manifest_index: int,
+        timestamp: float,
+        payload_factory: Callable[[], Mapping[str, Tensor]],
+    ) -> None:
+        """Retain this sample only when it enters the current top-k list."""
+
+        if criterion not in self._candidates:
+            raise ValueError(f"unknown failure criterion {criterion!r}")
+        if (
+            not metric.valid
+            or metric.count <= 0
+            or not math.isfinite(metric.value)
+            or not math.isfinite(metric.numerator)
+        ):
+            return
+        provisional_key = (-float(metric.value), sequence_id, frame_id, manifest_index)
+        candidates = self._candidates[criterion]
+        if len(candidates) >= self.samples_per_criterion and provisional_key >= candidates[-1].sort_key:
+            return
+
+        payload = payload_factory()
+        payload_bytes = self._payload_bytes(payload)
+        evicted: _FailureSampleCandidate | None = None
+        if len(candidates) >= self.samples_per_criterion:
+            evicted = candidates.pop()
+            self.cpu_bytes_retained -= evicted.tensor_bytes
+        if self.cpu_bytes_retained + payload_bytes > self.cpu_limit_bytes:
+            if evicted is not None:
+                candidates.append(evicted)
+                candidates.sort(key=lambda candidate: candidate.sort_key)
+                self.cpu_bytes_retained += evicted.tensor_bytes
+            raise MemoryError(
+                "failure sample CPU tensor limit exceeded: requested "
+                f"{payload_bytes} bytes with {self.cpu_bytes_retained} retained, "
+                f"limit={self.cpu_limit_bytes}"
+            )
+        candidate = _FailureSampleCandidate(
+            criterion=criterion,
+            metric=metric,
+            sequence_id=sequence_id,
+            frame_id=frame_id,
+            manifest_index=manifest_index,
+            timestamp=timestamp,
+            tensors_cpu=self._detach_payload_to_cpu(payload),
+            tensor_bytes=payload_bytes,
+        )
+        candidates.append(candidate)
+        candidates.sort(key=lambda item: item.sort_key)
+        self.cpu_bytes_retained += payload_bytes
+
+    def write(
+        self,
+        root: Path,
+        *,
+        checkpoint: Mapping[str, Any],
+        evaluator: Mapping[str, Any],
+    ) -> dict[str, Any]:
+        """Write selection JSON and reuse the normal visualization bundle writer."""
+
+        checkpoint_receipt = {
+            key: checkpoint[key]
+            for key in ("path", "checkpoint_sha256", "step", "git_hash")
+        }
+        evaluator_receipt = {
+            key: evaluator[key]
+            for key in ("git_hash", "eval_py_sha256", "evaluation_module_sha256")
+        }
+        report: dict[str, Any] = {
+            "status": "COMPLETE",
+            "samples_per_criterion": self.samples_per_criterion,
+            "cpu_limit_bytes": self.cpu_limit_bytes,
+            "cpu_bytes_retained": self.cpu_bytes_retained,
+            "criteria": {},
+        }
+        for criterion, definition in FAILURE_SAMPLE_CRITERIA.items():
+            criterion_root = root / criterion
+            selected: list[dict[str, Any]] = []
+            for rank, candidate in enumerate(self._candidates[criterion], start=1):
+                bundle_name = _safe_failure_sample_stem(
+                    rank=rank,
+                    sequence_id=candidate.sequence_id,
+                    frame_id=candidate.frame_id,
+                    manifest_index=candidate.manifest_index,
+                )
+                tensors = candidate.tensors_cpu
+                _save_visualization(
+                    criterion_root,
+                    sample_name=bundle_name,
+                    rgb_hr=tensors["rgb_hr"],
+                    K_hr_px=tensors["K_hr_px"],
+                    baseline_m=tensors["baseline_m"],
+                    baseline_hr_px=tensors["baseline_hr_px"],
+                    output_hr_px=tensors["output_hr_px"],
+                    target_hr_px=tensors["target_hr_px"],
+                    target_trusted_mask=tensors["target_trusted_mask"],
+                    source_weights_lr=tensors["source_weights_lr"],
+                    uncertainty_hr=tensors["uncertainty_hr"],
+                    vggt_disparity_hr_px=tensors["vggt_disparity_hr_px"],
+                    vggt_valid_mask_hr=tensors["vggt_valid_mask_hr"],
+                    history_disparity_hr_px=tensors["history_disparity_hr_px"],
+                    history_valid_mask_hr=tensors["history_valid_mask_hr"],
+                    vggt_off_output_hr_px=tensors["vggt_off_output_hr_px"],
+                    no_vggt_output_hr_px=tensors["no_vggt_output_hr_px"],
+                    prediction_filename="t3_vggt_disparity_hr_px.png",
+                )
+                selected.append(
+                    {
+                        "rank": rank,
+                        "sequence_id": candidate.sequence_id,
+                        "frame_id": candidate.frame_id,
+                        "manifest_index": candidate.manifest_index,
+                        "timestamp": candidate.timestamp,
+                        "metric": _metric_result_dict(candidate.metric),
+                        "checkpoint_sha256": checkpoint_receipt["checkpoint_sha256"],
+                        "evaluator_eval_py_sha256": evaluator_receipt[
+                            "eval_py_sha256"
+                        ],
+                        "evaluator_evaluation_module_sha256": evaluator_receipt[
+                            "evaluation_module_sha256"
+                        ],
+                        "tensor_bytes": candidate.tensor_bytes,
+                        "bundle_directory": str((criterion_root / bundle_name).resolve()),
+                    }
+                )
+            selection = {
+                "schema_version": 1,
+                "status": "COMPLETE",
+                "criterion": criterion,
+                "definition": definition,
+                "target": {
+                    "type": PSEUDO_GT_LABEL,
+                    "paper_gt": False,
+                    "paper_accuracy": False,
+                },
+                "selection_order": (
+                    "descending per-sample metric value; ties ascending sequence_id, "
+                    "frame_id, manifest_index"
+                ),
+                "requested_samples": self.samples_per_criterion,
+                "selected_samples": len(selected),
+                "checkpoint": checkpoint_receipt,
+                "evaluator": evaluator_receipt,
+                "selected": selected,
+            }
+            criterion_root.mkdir(parents=True, exist_ok=True)
+            (criterion_root / "selection.json").write_text(
+                json.dumps(selection, indent=2, sort_keys=True, allow_nan=False) + "\n",
+                encoding="utf-8",
+            )
+            report["criteria"][criterion] = {
+                "selection_json": str((criterion_root / "selection.json").resolve()),
+                "selected_samples": len(selected),
+            }
+        return report
+
+
+def _t3_failure_sample_metrics(
+    *,
+    prediction_hr_px: Tensor,
+    target_hr_px: Tensor,
+    target_trusted_mask: Tensor,
+    ffs_confidence_hr: Tensor,
+    ffs_valid_mask_hr: Tensor,
+    ffs_trusted_mask_hr: Tensor,
+    history_hr_px: Tensor,
+    strict_temporal_safe_mask: Tensor,
+    low_confidence_threshold: float,
+    boundary_gradient_threshold_px: float,
+    boundary_radius_px: int,
+) -> dict[str, MetricResult]:
+    """Compute the four D-025 failure scores for exactly one T3 endpoint."""
+
+    spatial = compute_sample_metrics(
+        prediction_hr_px,
+        target_hr_px,
+        target_trusted_mask=target_trusted_mask,
+        ffs_confidence_hr=ffs_confidence_hr,
+        ffs_valid_mask_hr=ffs_valid_mask_hr,
+        ffs_trusted_mask_hr=ffs_trusted_mask_hr,
+        low_confidence_threshold=low_confidence_threshold,
+        boundary_gradient_threshold_px=boundary_gradient_threshold_px,
+        boundary_radius_px=boundary_radius_px,
+    )
+    return {
+        "raw_negative_rate": spatial["output_negative_rate"],
+        "low_confidence_epe_px": spatial["low_confidence_epe_px"],
+        "boundary_epe_px": spatial["boundary_epe_px"],
+        "strict_temporal_error_px": temporal_disparity_error(
+            prediction_hr_px,
+            history_hr_px,
+            safe_mask=strict_temporal_safe_mask,
+        ),
+    }
+
+
+def _t3_failure_payload(
+    *,
+    batch: Mapping[str, Any],
+    item_index: int,
+    output_size_hw: tuple[int, int],
+    endpoint_rgb: Tensor,
+    endpoint_K_hr: Tensor,
+    endpoint_baseline_m: Tensor,
+    baseline_hr_px: Tensor,
+    target_hr_px: Tensor,
+    target_trusted_mask: Tensor,
+    temporal_predictions: TemporalEndpointPredictions,
+) -> dict[str, Tensor]:
+    """Return only one selected sample's visualization tensors on their device."""
+
+    vggt_lr = batch["disparity_vggt_hr_px_sequence"][item_index : item_index + 1, 2]
+    vggt_valid_lr = batch["valid_vggt_sequence"][item_index : item_index + 1, 2]
+    vggt_hr = functional.interpolate(
+        vggt_lr,
+        size=output_size_hw,
+        mode="bilinear",
+        align_corners=False,
+    )[0]
+    vggt_valid_hr = functional.interpolate(
+        vggt_valid_lr.float(), size=output_size_hw, mode="nearest"
+    )[0].bool()
+    return {
+        "rgb_hr": endpoint_rgb[item_index],
+        "K_hr_px": endpoint_K_hr[item_index],
+        "baseline_m": endpoint_baseline_m[item_index],
+        "baseline_hr_px": baseline_hr_px[item_index].float(),
+        "output_hr_px": temporal_predictions.vggt_on.disparity_hr_px[item_index].float(),
+        "target_hr_px": target_hr_px[item_index].float(),
+        "target_trusted_mask": target_trusted_mask[item_index],
+        "source_weights_lr": temporal_predictions.vggt_on.source_weights[item_index].float(),
+        "uncertainty_hr": temporal_predictions.vggt_on.uncertainty[item_index].float(),
+        "vggt_disparity_hr_px": vggt_hr.float(),
+        "vggt_valid_mask_hr": vggt_valid_hr,
+        "history_disparity_hr_px": (
+            temporal_predictions.shared_transport.disparity_history_loss_hr_px[item_index]
+        ).float(),
+        "history_valid_mask_hr": temporal_predictions.shared_transport.valid_history_hr[
+            item_index
+        ],
+        "vggt_off_output_hr_px": temporal_predictions.source_mask_off.disparity_hr_px[
+            item_index
+        ].float(),
+        "no_vggt_output_hr_px": temporal_predictions.no_vggt.disparity_hr_px[
+            item_index
+        ].float(),
+    }
+
+
 def _write_csv(
     path: Path,
     methods: dict[str, dict[str, Any]],
@@ -2331,6 +2698,12 @@ def run(args: argparse.Namespace) -> int:
                 "eval.temporal_flicker_uncertainty_range",
             ),
         )
+    failure_sample_collector: FailureSampleCollector | None = None
+    if int(config.eval.failure_samples_per_criterion) > 0:
+        failure_sample_collector = FailureSampleCollector(
+            samples_per_criterion=int(config.eval.failure_samples_per_criterion),
+            cpu_limit_bytes=int(config.eval.failure_samples_cpu_limit_bytes),
+        )
     endpoint_pose_valid_count = 0
     endpoint_static_prior_valid_count = 0
     t3_vggt_sign_health = (
@@ -2571,6 +2944,61 @@ def run(args: argparse.Namespace) -> int:
                     )
                 accumulators[method_name].update(sample_metrics)
 
+            if failure_sample_collector is not None:
+                assert stage == "temporal"
+                assert temporal_visualization is not None
+                for item_index in range(target.shape[0]):
+                    failure_metrics = _t3_failure_sample_metrics(
+                        prediction_hr_px=raw_predictions["T3_VGGT"][
+                            item_index : item_index + 1
+                        ],
+                        target_hr_px=target[item_index : item_index + 1].float(),
+                        target_trusted_mask=target_trusted[item_index : item_index + 1],
+                        ffs_confidence_hr=confidence_hr[item_index : item_index + 1].float(),
+                        ffs_valid_mask_hr=valid_hr[item_index : item_index + 1],
+                        ffs_trusted_mask_hr=trusted_hr[item_index : item_index + 1],
+                        history_hr_px=(
+                            temporal_visualization.shared_transport.disparity_history_loss_hr_px[
+                                item_index : item_index + 1
+                            ]
+                        ),
+                        strict_temporal_safe_mask=t3_safe[item_index : item_index + 1],
+                        low_confidence_threshold=float(config.eval.low_confidence_threshold),
+                        boundary_gradient_threshold_px=float(
+                            config.eval.boundary_gradient_threshold_px
+                        ),
+                        boundary_radius_px=int(config.eval.boundary_radius_px),
+                    )
+                    sequence_id = str(batch["sequence_id"][item_index])
+                    frame_id = int(batch["frame_ids"][item_index, 2].item())
+                    manifest_index = int(
+                        batch["manifest_indices"][item_index, 2].item()
+                    )
+                    timestamp = float(batch["timestamps"][item_index, 2].item())
+                    for criterion, metric in failure_metrics.items():
+                        failure_sample_collector.consider(
+                            criterion,
+                            metric,
+                            sequence_id=sequence_id,
+                            frame_id=frame_id,
+                            manifest_index=manifest_index,
+                            timestamp=timestamp,
+                            payload_factory=(
+                                lambda item_index=item_index: _t3_failure_payload(
+                                    batch=batch,
+                                    item_index=item_index,
+                                    output_size_hw=output_size,
+                                    endpoint_rgb=endpoint_rgb,
+                                    endpoint_K_hr=endpoint_K_hr,
+                                    endpoint_baseline_m=endpoint_baseline_m,
+                                    baseline_hr_px=baseline,
+                                    target_hr_px=target,
+                                    target_trusted_mask=target_trusted,
+                                    temporal_predictions=temporal_visualization,
+                                )
+                            ),
+                        )
+
             if stage == "temporal" and temporal_flicker_collector is not None:
                 assert temporal_visualization is not None
                 for item_index in range(target.shape[0]):
@@ -2744,6 +3172,24 @@ def run(args: argparse.Namespace) -> int:
                 allow_nan=False,
             )
         )
+    evaluator_provenance = {
+        "git_hash": repository_git_hash(PROJECT_ROOT),
+        "eval_py_sha256": sha256_file(Path(__file__).resolve()),
+        "evaluation_module_sha256": sha256_file(
+            (SRC_ROOT / "evaluation.py").resolve()
+        ),
+        "torch_version": str(torch.__version__),
+        "cuda_version": torch.version.cuda,
+    }
+    failure_sample_report = (
+        None
+        if failure_sample_collector is None
+        else failure_sample_collector.write(
+            output_dir / "failures",
+            checkpoint=checkpoint_metadata,
+            evaluator=evaluator_provenance,
+        )
+    )
     elapsed_seconds = time.perf_counter() - started
     full_selection = start_index == 0 and sample_count == len(dataset)
     checkpoint_completion = checkpoint_training_completion(
@@ -2841,13 +3287,7 @@ def run(args: argparse.Namespace) -> int:
         "stage": stage_label,
         "status": evaluation_status,
         "evaluator": {
-            "git_hash": repository_git_hash(PROJECT_ROOT),
-            "eval_py_sha256": sha256_file(Path(__file__).resolve()),
-            "evaluation_module_sha256": sha256_file(
-                (SRC_ROOT / "evaluation.py").resolve()
-            ),
-            "torch_version": str(torch.__version__),
-            "cuda_version": torch.version.cuda,
+            **evaluator_provenance,
         },
         "target": {
             "type": PSEUDO_GT_LABEL,
@@ -2921,6 +3361,11 @@ def run(args: argparse.Namespace) -> int:
             {}
             if temporal_flicker_report is None
             else {"temporal_flicker_video": temporal_flicker_report}
+        ),
+        **(
+            {}
+            if failure_sample_report is None
+            else {"failure_sample_bundles": failure_sample_report}
         ),
         "elapsed_seconds": elapsed_seconds,
         "device": str(device),

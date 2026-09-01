@@ -120,6 +120,130 @@ def test_compute_sample_metrics_uses_trusted_pseudo_gt_domains() -> None:
     assert metrics["invalid_region_completeness"].count == 0
 
 
+def _failure_payload() -> dict[str, torch.Tensor]:
+    scalar = torch.ones((1, 2, 2), dtype=torch.float32)
+    return {
+        "rgb_hr": torch.full((3, 2, 2), 0.5),
+        "K_hr_px": torch.eye(3),
+        "baseline_m": torch.tensor(0.1),
+        "baseline_hr_px": scalar.clone(),
+        "output_hr_px": scalar.clone(),
+        "target_hr_px": scalar.clone(),
+        "target_trusted_mask": torch.ones_like(scalar, dtype=torch.bool),
+        "source_weights_lr": torch.full((3, 1, 1), 1.0 / 3.0),
+        "uncertainty_hr": scalar.clone(),
+        "vggt_disparity_hr_px": scalar.clone(),
+        "vggt_valid_mask_hr": torch.ones_like(scalar, dtype=torch.bool),
+        "history_disparity_hr_px": scalar.clone(),
+        "history_valid_mask_hr": torch.ones_like(scalar, dtype=torch.bool),
+        "vggt_off_output_hr_px": scalar.clone(),
+        "no_vggt_output_hr_px": scalar.clone(),
+    }
+
+
+def test_t3_failure_metrics_are_per_sample_and_keep_metric_receipts() -> None:
+    target = torch.tensor([[[[10.0, 20.0]]]])
+    prediction = torch.tensor([[[[-1.0, 25.0]]]])
+    metrics = eval_cli._t3_failure_sample_metrics(
+        prediction_hr_px=prediction,
+        target_hr_px=target,
+        target_trusted_mask=torch.ones_like(target, dtype=torch.bool),
+        ffs_confidence_hr=torch.zeros_like(target),
+        ffs_valid_mask_hr=torch.ones_like(target, dtype=torch.bool),
+        ffs_trusted_mask_hr=torch.ones_like(target, dtype=torch.bool),
+        history_hr_px=torch.tensor([[[[9.0, 22.0]]]]),
+        strict_temporal_safe_mask=torch.tensor([[[[True, False]]]]),
+        low_confidence_threshold=0.8,
+        boundary_gradient_threshold_px=1.0,
+        boundary_radius_px=0,
+    )
+    assert metrics["raw_negative_rate"] == MetricResult(0.5, 1.0, 2, True)
+    assert metrics["low_confidence_epe_px"] == MetricResult(8.0, 16.0, 2, True)
+    assert metrics["boundary_epe_px"] == MetricResult(8.0, 16.0, 2, True)
+    assert metrics["strict_temporal_error_px"] == MetricResult(10.0, 10.0, 1, True)
+
+
+def test_failure_collector_uses_stable_ties_writes_selection_and_bounds_cpu(
+    tmp_path: Path,
+) -> None:
+    collector = eval_cli.FailureSampleCollector(
+        samples_per_criterion=2, cpu_limit_bytes=100_000
+    )
+    payload_factory_calls = 0
+
+    def counted_payload_factory() -> dict[str, torch.Tensor]:
+        nonlocal payload_factory_calls
+        payload_factory_calls += 1
+        return _failure_payload()
+
+    for sequence_id, frame_id, manifest_index in (
+        ("seq-z", 10, 8),
+        ("seq-a", 20, 9),
+        ("seq-low", 30, 10),
+    ):
+        collector.consider(
+            "raw_negative_rate",
+            MetricResult(
+                value=0.5 if sequence_id != "seq-low" else 0.25,
+                numerator=2.0 if sequence_id != "seq-low" else 1.0,
+                count=4,
+                valid=True,
+            ),
+            sequence_id=sequence_id,
+            frame_id=frame_id,
+            manifest_index=manifest_index,
+            timestamp=float(frame_id),
+            payload_factory=counted_payload_factory,
+        )
+    # The low-scoring third item never enters top-k, so its visualization
+    # tensors are not copied to CPU.
+    assert payload_factory_calls == 2
+    report = collector.write(
+        tmp_path / "failures",
+        checkpoint={
+            "path": "/checkpoint.pt",
+            "checkpoint_sha256": "c" * 64,
+            "step": 15_000,
+            "git_hash": "a" * 40,
+        },
+        evaluator={
+            "git_hash": "b" * 40,
+            "eval_py_sha256": "d" * 64,
+            "evaluation_module_sha256": "e" * 64,
+        },
+    )
+    assert report["criteria"]["raw_negative_rate"]["selected_samples"] == 2
+    selection_path = tmp_path / "failures" / "raw_negative_rate" / "selection.json"
+    selection = json.loads(selection_path.read_text(encoding="utf-8"))
+    assert [item["sequence_id"] for item in selection["selected"]] == ["seq-a", "seq-z"]
+    assert all(
+        set(item["metric"]) == {"value", "numerator", "count", "valid"}
+        for item in selection["selected"]
+    )
+    assert all(item["checkpoint_sha256"] == "c" * 64 for item in selection["selected"])
+    assert all(
+        item["evaluator_eval_py_sha256"] == "d" * 64
+        and item["evaluator_evaluation_module_sha256"] == "e" * 64
+        for item in selection["selected"]
+    )
+    assert (tmp_path / "failures" / "raw_negative_rate" / "0001_seq-a_20_9").is_dir()
+    assert (tmp_path / "failures" / "boundary_epe_px" / "selection.json").is_file()
+
+    bounded = eval_cli.FailureSampleCollector(
+        samples_per_criterion=1, cpu_limit_bytes=1
+    )
+    with pytest.raises(MemoryError, match="CPU tensor limit"):
+        bounded.consider(
+            "raw_negative_rate",
+            MetricResult(1.0, 1.0, 1, True),
+            sequence_id="seq",
+            frame_id=1,
+            manifest_index=1,
+            timestamp=1.0,
+            payload_factory=_failure_payload,
+        )
+
+
 def test_comparison_is_derived_from_dataset_aggregates() -> None:
     baseline = {
         "trusted_region_epe_px": AggregateMetric(1.0, 10.0, 10, True),
@@ -778,6 +902,7 @@ def test_temporal_flicker_config_is_opt_in_and_rejects_spatial_evaluation() -> N
         Path(__file__).parents[1] / "configs/temporal_x2.yaml"
     )
     assert temporal.eval.temporal_flicker_video is False
+    assert temporal.eval.failure_samples_per_criterion == 0
     assert eval_cli.validate_evaluation_config(temporal) == "temporal"
 
     spatial = eval_cli.resolve_evaluation_config(
@@ -785,6 +910,11 @@ def test_temporal_flicker_config_is_opt_in_and_rejects_spatial_evaluation() -> N
     )
     OmegaConf.update(spatial, "eval.temporal_flicker_video", True)
     with pytest.raises(ValueError, match="requires causal T=3"):
+        eval_cli.validate_evaluation_config(spatial)
+
+    OmegaConf.update(spatial, "eval.temporal_flicker_video", False)
+    OmegaConf.update(spatial, "eval.failure_samples_per_criterion", 1)
+    with pytest.raises(ValueError, match="failure sample bundles require causal T=3"):
         eval_cli.validate_evaluation_config(spatial)
 
 
@@ -1213,6 +1343,8 @@ def test_stage_a_cli_writes_bilinear_and_t1_csv_rows(tmp_path: Path) -> None:
     assert rows[4].startswith("T1_clamp0,")
     report = json.loads((output / "metrics.json").read_text(encoding="utf-8"))
     assert report["status"] == "INTERMEDIATE_CHECKPOINT_EVALUATION_COMPLETE"
+    assert "failure_sample_bundles" not in report
+    assert not (output / "failures").exists()
     assert report["claims"]["coverage_eligible"] is True
     assert report["claims"]["final_training_checkpoint"] is False
     assert report["claims"]["final_acceptance_eligible"] is False

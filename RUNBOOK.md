@@ -515,6 +515,31 @@ unchanged metrics and explicitly writes `temporal_flicker_video.status=NOT_AVAIL
 in `metrics.json`; incomplete temporary files and encoder processes are cleaned
 up on failures or interruptions.
 
+### Optional T3 failure-sample bundles
+
+For a separate diagnostic evaluation run, `--failure-samples-per-criterion N`
+selects the deterministic per-window top-N worst raw `T3_VGGT` samples for raw
+negative rate, low-confidence pseudo-GT EPE, boundary pseudo-GT EPE, and strict
+temporal error. This never ranks from aggregate metrics. Ties are ordered by
+sequence ID, endpoint frame ID, then manifest index.
+
+```bash
+python eval.py ... --failure-samples-per-criterion 4
+```
+
+This option is causal T=3 only and disabled by default. While evaluating, only
+a candidate which enters the current top-N for a criterion is detached to CPU;
+the total retained visualization tensors are capped by
+`eval.failure_samples_cpu_limit_bytes` (512 MiB by default). If the cap is too
+small the evaluator fails explicitly rather than retaining an unbounded set.
+After completion it writes `failures/<criterion>/<rank>_<sequence>_<frame>_<manifest>/`
+using the normal visualization bundle and a strict
+`failures/<criterion>/selection.json`. Each selection record contains its
+per-sample `numerator`, `count`, and `value`, identifiers, checkpoint hash, and
+evaluator hashes. The target remains trusted FFS teacher pseudo-GT; these files
+are diagnostic engineering evidence, never paper ground truth or paper
+accuracy.
+
 ## M0 environment/backbone tool status and exit codes
 
 | Status | Exit | Meaning |
