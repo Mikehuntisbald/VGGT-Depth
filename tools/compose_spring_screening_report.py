@@ -319,6 +319,18 @@ def main() -> int:
                 "records_evaluated": report.get("records_evaluated", report.get("metrics", {}).get("frames")),
                 "windows_evaluated": report.get("windows_evaluated"),
                 "evaluation_status": report.get("status"),
+                "evaluation_crop_mode": report.get(
+                    "crop_mode",
+                    report.get("crop_contract", {}).get("evaluation_crop_mode")
+                    if isinstance(report.get("crop_contract"), Mapping)
+                    else None,
+                ),
+                "evaluation_hr_crop": report.get(
+                    "hr_crop",
+                    report.get("fixed_hr_crop")
+                    if isinstance(report.get("fixed_hr_crop"), list)
+                    else None,
+                ),
                 "metrics": primary,
                 "auxiliary": auxiliary,
                 "raw_metrics_path": str((args.s0 if name == "S0" else args.arm_root / name / "eval" / "metrics.json").resolve()),
@@ -436,6 +448,7 @@ def main() -> int:
             ),
             "S6 uses tools/train_spring_epipolar.py and tools/eval_spring_epipolar.py; any produced result remains bounded screening-only and cannot replace canonical Stage-C evidence.",
             "S6 native Spring fields are an explicitly marked exact-zero-correction reuse of the fixed-crop S5 base side-channel; the S6 pseudo-GT evaluator itself remains the direct Stage-C receipt.",
+            "Crop comparability: S0-S5 native rows use full-resolution evaluation, while the Stage-C S6 receipt and its exact-zero native reuse use the required fixed 384x768 center crop; absolute cross-arm ranking across these crop domains is exploratory only.",
         ],
     }
     args.output_json.parent.mkdir(parents=True, exist_ok=True)
@@ -445,6 +458,7 @@ def main() -> int:
         "# Spring seed=42 seven-arm screening",
         "",
         f"This is a bounded {validation_info['records']}-frame-per-split screening smoke (train sequences {', '.join(train_info['sequences']) or 'unknown'}, validation sequences {', '.join(validation_info['sequences']) or 'unknown'}; one optimizer step). It is not formal full-corpus coverage.",
+        "Crop note: S0-S5 native metrics are full-resolution; S6 Stage-C and its exact-zero native reuse are the required fixed 384x768 center crop, so cross-arm absolute values are exploratory rather than a single-domain ranking.",
         "",
         "| Arm | Pose | VGGT depth | Status | Overall EPE | Overall 1px | High-detail EPE | Low-detail EPE | Matched EPE | Unmatched @1/@2 | Boundary EPE | FFS trusted err | Neg/Zero/Invalid |",
         "|---|---|---:|---|---:|---:|---:|---:|---:|---|---:|---:|---|",
