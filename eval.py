@@ -1312,6 +1312,7 @@ def run(args: argparse.Namespace) -> int:
     }
     visualization_limit = min(int(config.eval.visualization_samples), sample_count)
     visualized = 0
+    visualization_records: list[dict[str, Any]] = []
     endpoint_pose_valid_count = 0
     endpoint_static_prior_valid_count = 0
     started = time.perf_counter()
@@ -1533,6 +1534,51 @@ def run(args: argparse.Namespace) -> int:
             for item_index in range(batch_size):
                 if visualized >= visualization_limit:
                     break
+                visualization_class = "spatial"
+                endpoint_pose_valid = None
+                endpoint_static_prior_valid = None
+                history_valid_pixels = None
+                if stage == "temporal":
+                    assert temporal_visualization is not None
+                    endpoint_pose_valid = bool(
+                        batch["temporal_pose_valid_sequence"][item_index, 2]
+                        .detach()
+                        .cpu()
+                        .item()
+                    )
+                    endpoint_static_prior_valid = bool(
+                        batch["static_prior_valid_sequence"][item_index, 2]
+                        .detach()
+                        .cpu()
+                        .item()
+                    )
+                    history_valid_pixels = int(
+                        temporal_visualization.shared_transport.valid_history_hr[
+                            item_index
+                        ]
+                        .sum()
+                        .detach()
+                        .cpu()
+                        .item()
+                    )
+                    # Alternate positive-source and fail-closed examples. This
+                    # prevents the first few rejected windows from producing
+                    # an apparently empty VGGT/history visualization set.
+                    want_valid_sources = visualized % 2 == 0
+                    has_valid_sources = (
+                        endpoint_pose_valid
+                        and endpoint_static_prior_valid
+                        and history_valid_pixels > 0
+                    )
+                    if want_valid_sources and not has_valid_sources:
+                        continue
+                    if not want_valid_sources and endpoint_pose_valid:
+                        continue
+                    visualization_class = (
+                        "valid_geometry_and_history"
+                        if want_valid_sources
+                        else "pose_rejected_fail_closed"
+                    )
                 sequence_id = str(batch["sequence_id"][item_index]).replace("/", "_")
                 frame_id = int(
                     batch["frame_id"][item_index].item()
@@ -1604,6 +1650,17 @@ def run(args: argparse.Namespace) -> int:
                         if stage == "spatial"
                         else "t3_vggt_disparity_hr_px.png"
                     ),
+                )
+                visualization_records.append(
+                    {
+                        "sample_index": visualized,
+                        "sequence_id": sequence_id,
+                        "frame_id": frame_id,
+                        "selection_class": visualization_class,
+                        "endpoint_pose_valid": endpoint_pose_valid,
+                        "endpoint_static_prior_valid": endpoint_static_prior_valid,
+                        "history_valid_pixels": history_valid_pixels,
+                    }
                 )
                 visualized += 1
 
@@ -1731,6 +1788,7 @@ def run(args: argparse.Namespace) -> int:
         "records_evaluated": sample_count,
         "selection_start": start_index,
         "visualizations_written": visualized,
+        "visualization_selection": visualization_records,
         "elapsed_seconds": elapsed_seconds,
         "device": str(device),
         "crop_mode": str(config.eval.crop_mode),
