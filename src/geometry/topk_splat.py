@@ -28,6 +28,7 @@ from .zbuffer_reproject import (
     _batched_homogeneous_extrinsics,
     _batched_intrinsics,
     _batched_positive_scalar,
+    _metric_depth_from_explicit_stereo_disparity,
     _image_tensor,
     _validate_rotation,
 )
@@ -248,6 +249,8 @@ def topk_z_aware_splat(
         previous_disparity_hr_px: Rectified disparity sampled on the source
             grid but expressed in HR pixels, ``[B,1,H,W]``.
         previous_depth_m: Previous-camera Z depth in metres, ``[B,1,H,W]``.
+            In dual-calibration mode source ``fx*B/disparity`` owns depth and
+            this tensor must agree at every positive-disparity pixel.
         previous_confidence: Source confidence, ``[B,1,H,W]``.  Negative
             confidence remains geometrically inspectable for K=1 compatibility
             but receives zero fusion weight.
@@ -454,10 +457,13 @@ def topk_z_aware_splat(
             dtype=compute_dtype,
             device=device,
         )
-        # Source calibration is validated explicitly and owns the input depth
-        # conversion at the caller. Returned disparity is solely in the target
-        # rectified stereo unit.
-        _ = disparity_intrinsics_previous, source_baseline
+        depth = _metric_depth_from_explicit_stereo_disparity(
+            disparity,
+            depth,
+            intrinsics_source_hr_3x3=disparity_intrinsics_previous,
+            baseline_source_m=source_baseline,
+            name="previous_depth_m",
+        )
         target_disparity_numerator_m_px = (
             disparity_intrinsics_current[:, 0, 0:1] * target_baseline
         )

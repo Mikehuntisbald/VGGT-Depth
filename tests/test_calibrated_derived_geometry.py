@@ -196,10 +196,15 @@ def test_batch_derivation_uses_new_component_and_binds_sidecar(
         ffs_payload,
     ) = _prepare_single_window(tmp_path, previous_value=64, current_value=64)
     metadata_path = tmp_path / "calibration_meta.yaml"
-    _write_metadata(metadata_path)
     baseline = 0.1
     k_left = [[40.0, 0.0, 24.0], [0.0, 40.0, 16.0], [0.0, 0.0, 1.0]]
     k_right = [[40.0, 0.0, 24.0], [0.0, 40.0, 21.4], [0.0, 0.0, 1.0]]
+    _write_metadata(
+        metadata_path,
+        k_left=k_left,
+        k_right=k_right,
+        baseline_m=baseline,
+    )
     p_left = [row + [0.0] for row in k_left]
     p_right = [
         [40.0, 0.0, 24.0, -4.0],

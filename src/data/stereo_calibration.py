@@ -97,6 +97,24 @@ def _flat_rotation(value: Any, *, name: str) -> np.ndarray:
     return _rotation_matrix(array.reshape(3, 3), name=name)
 
 
+def _flat_matrix(
+    value: Any, *, name: str, rows: int, columns: int
+) -> np.ndarray:
+    """Parse a flattened or nested calibration matrix without shape ambiguity."""
+
+    try:
+        array = np.asarray(value, dtype=np.float64)
+    except (TypeError, ValueError) as exc:
+        raise CacheMismatchError(f"{name} is not numeric") from exc
+    if array.size != rows * columns:
+        raise CacheMismatchError(
+            f"{name} must contain exactly {rows * columns} values"
+        )
+    return _plain_matrix(
+        array.reshape(rows, columns), name=name, rows=rows, columns=columns
+    )
+
+
 def _homogeneous_transform(value: Any, *, name: str) -> np.ndarray:
     transform = _plain_matrix(value, name=name, rows=4, columns=4)
     _rotation_matrix(transform[:3, :3], name=f"{name} rotation")
@@ -336,6 +354,36 @@ def _rectified_calibration_payload(
     rotation_right = _flat_rotation(
         right_info.get("r"), name="right rectification rotation"
     )
+    metadata_k_left = _flat_matrix(
+        left_info.get("k"), name="metadata left rectified K", rows=3, columns=3
+    )
+    metadata_k_right = _flat_matrix(
+        right_info.get("k"), name="metadata right rectified K", rows=3, columns=3
+    )
+    metadata_p_left = _flat_matrix(
+        left_info.get("p"), name="metadata left rectified P", rows=3, columns=4
+    )
+    metadata_p_right = _flat_matrix(
+        right_info.get("p"), name="metadata right rectified P", rows=3, columns=4
+    )
+    for name, metadata_value, manifest_value in (
+        ("left rectified K", metadata_k_left, k_left),
+        ("right rectified K", metadata_k_right, k_right),
+        ("left rectified P", metadata_p_left, p_left),
+        ("right rectified P", metadata_p_right, p_right),
+    ):
+        if not np.allclose(metadata_value, manifest_value, atol=1e-9, rtol=0.0):
+            raise CacheMismatchError(f"metadata/manifest {name} mismatch")
+    metadata_baseline = metadata.get("stereo_baseline_m")
+    if (
+        isinstance(metadata_baseline, bool)
+        or not isinstance(metadata_baseline, (int, float))
+        or not math.isfinite(float(metadata_baseline))
+        or not math.isclose(
+            float(metadata_baseline), baseline, abs_tol=1e-9, rel_tol=0.0
+        )
+    ):
+        raise CacheMismatchError("metadata/manifest stereo baseline mismatch")
 
     transform_rectified = np.eye(4, dtype=np.float64)
     # Use the calibrated scalar after proving that projection factorisation is
@@ -648,6 +696,7 @@ def load_rectified_calibration_sidecar(
         raise CacheMismatchError("calibration receipt/sidecar/manifest coverage mismatch")
     parsed: list[RectifiedCalibrationRecord] = []
     seen_identity: set[tuple[str, int]] = set()
+    live_metadata_sha256: dict[Path, str] = {}
     for index, (payload, manifest_record) in enumerate(
         zip(rows, manifest_records, strict=True)
     ):
@@ -664,6 +713,29 @@ def load_rectified_calibration_sidecar(
             raise CacheMismatchError(f"calibration row order mismatch at index {index}")
         if record.source_record_sha256 != canonical_json_sha256(manifest_record.to_dict()):
             raise CacheMismatchError(f"calibration row source hash mismatch at index {index}")
+        metadata_path = Path(record.metadata_path).expanduser().resolve()
+        manifest_metadata_path = Path(
+            str(manifest_record.extras.get("metadata_path", ""))
+        ).expanduser().resolve()
+        manifest_metadata_sha256 = manifest_record.extras.get("metadata_sha256")
+        if metadata_path != manifest_metadata_path or (
+            record.metadata_sha256 != manifest_metadata_sha256
+        ):
+            raise CacheMismatchError(
+                f"calibration row metadata binding mismatch at index {index}"
+            )
+        if not metadata_path.is_file():
+            raise CacheMismatchError(
+                f"calibration metadata is missing at index {index}: {metadata_path}"
+            )
+        actual_metadata_sha256 = live_metadata_sha256.get(metadata_path)
+        if actual_metadata_sha256 is None:
+            actual_metadata_sha256 = sha256_file(metadata_path)
+            live_metadata_sha256[metadata_path] = actual_metadata_sha256
+        if actual_metadata_sha256 != record.metadata_sha256:
+            raise CacheMismatchError(
+                f"calibration metadata SHA-256 mismatch at index {index}"
+            )
         if (
             record.sequence_id != manifest_record.sequence_id
             or record.frame_id != manifest_record.frame_id

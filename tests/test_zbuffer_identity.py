@@ -101,6 +101,52 @@ def test_dual_intrinsics_and_baseline_use_target_projection_and_disparity_unit()
     assert result.projected_uv[0, 0, 0, 1].item() == pytest.approx(1.0)
 
 
+def test_dual_calibration_z_translation_recomputes_target_disparity() -> None:
+    disparity_source_hr_px = torch.tensor([[[[0.1]]]], dtype=torch.float64)
+    depth_source_m = torch.tensor([[[[2.0]]]], dtype=torch.float64)
+    confidence = torch.ones_like(depth_source_m)
+    source_k = _intrinsics(fx_px=2.0, fy_px=2.0, cx_px=0.0, cy_px=0.0)
+    target_k = _intrinsics(fx_px=4.0, fy_px=3.0, cx_px=0.0, cy_px=0.0)
+    previous = torch.eye(4, dtype=torch.float64)
+    current = torch.eye(4, dtype=torch.float64)
+    current[2, 3] = 1.0
+
+    result = zbuffer_reproject(
+        disparity_source_hr_px,
+        depth_source_m,
+        confidence,
+        source_k,
+        previous,
+        current,
+        intrinsics_current_hr_3x3=target_k,
+        baseline_previous_m=torch.tensor([0.1], dtype=torch.float64),
+        baseline_current_m=torch.tensor([0.2], dtype=torch.float64),
+    )
+
+    assert bool(result.valid_mask.item())
+    assert result.depth_m.item() == pytest.approx(3.0)
+    assert result.disparity_hr_px.item() == pytest.approx(4.0 * 0.2 / 3.0)
+
+
+def test_dual_calibration_rejects_inconsistent_source_depth() -> None:
+    disparity = torch.tensor([[[[0.1]]]], dtype=torch.float64)
+    wrong_depth = torch.tensor([[[[9.0]]]], dtype=torch.float64)
+    calibration = _intrinsics(fx_px=2.0, fy_px=2.0, cx_px=0.0, cy_px=0.0)
+    baseline = torch.tensor([0.1], dtype=torch.float64)
+    with pytest.raises(ValueError, match=r"fx\*baseline/disparity"):
+        zbuffer_reproject(
+            disparity,
+            wrong_depth,
+            torch.ones_like(disparity),
+            calibration,
+            torch.eye(4, dtype=torch.float64),
+            torch.eye(4, dtype=torch.float64),
+            intrinsics_current_hr_3x3=calibration,
+            baseline_previous_m=baseline,
+            baseline_current_m=baseline,
+        )
+
+
 def test_explicit_same_calibration_matches_legacy_zbuffer() -> None:
     disparity = torch.tensor([[[[2.0, 4.0, 8.0]]]], dtype=torch.float64)
     depth = 1.0 / disparity

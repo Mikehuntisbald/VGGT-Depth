@@ -31,15 +31,36 @@ def _rotation_z(angle: float) -> np.ndarray:
     )
 
 
-def _write_metadata(path: Path) -> None:
+def _write_metadata(
+    path: Path,
+    *,
+    k_left: list[list[float]] = K_LEFT,
+    k_right: list[list[float]] = K_RIGHT,
+    baseline_m: float = BASELINE_M,
+) -> None:
     rotation_left = _rotation_z(0.02)
     rotation_right = _rotation_z(-0.01)
+    p_left = [row + [0.0] for row in k_left]
+    p_right = [
+        [*k_right[0], -k_right[0][0] * baseline_m],
+        [*k_right[1], 0.0],
+        [*k_right[2], 0.0],
+    ]
     payload = {
         "rectified": True,
         "left_frame_id": "left_optical",
         "right_frame_id": "right_optical",
-        "left_rect_camera_info": {"r": rotation_left.reshape(-1).tolist()},
-        "right_rect_camera_info": {"r": rotation_right.reshape(-1).tolist()},
+        "left_rect_camera_info": {
+            "k": np.asarray(k_left).reshape(-1).tolist(),
+            "p": np.asarray(p_left).reshape(-1).tolist(),
+            "r": rotation_left.reshape(-1).tolist(),
+        },
+        "right_rect_camera_info": {
+            "k": np.asarray(k_right).reshape(-1).tolist(),
+            "p": np.asarray(p_right).reshape(-1).tolist(),
+            "r": rotation_right.reshape(-1).tolist(),
+        },
+        "stereo_baseline_m": baseline_m,
     }
     path.write_text(yaml.safe_dump(payload, sort_keys=True), encoding="utf-8")
 
@@ -180,4 +201,47 @@ def test_builder_rejects_projection_or_audit_mismatch(tmp_path: Path) -> None:
     with pytest.raises(CacheMismatchError, match="did not pass"):
         build_rectified_calibration_sidecar(
             good_manifest, audit, tmp_path / "sidecar2.jsonl"
+        )
+
+
+def test_builder_rejects_metadata_intrinsics_or_projection_mismatch(
+    tmp_path: Path,
+) -> None:
+    records = _records(tmp_path)
+    metadata_path = Path(str(records[0].extras["metadata_path"]))
+    metadata = yaml.safe_load(metadata_path.read_text(encoding="utf-8"))
+    metadata["right_rect_camera_info"]["k"][0] += 1.0
+    metadata_path.write_text(
+        yaml.safe_dump(metadata, sort_keys=True), encoding="utf-8"
+    )
+    metadata_sha256 = sha256_file(metadata_path)
+    records = [
+        ManifestRecord.from_dict(
+            {
+                **record.to_dict(),
+                "metadata_sha256": metadata_sha256,
+            }
+        )
+        for record in records
+    ]
+    manifest = tmp_path / "metadata_mismatch.jsonl"
+    write_manifest(manifest, records)
+    audit = tmp_path / "metadata_mismatch_audit.json"
+    _write_audit(audit, manifest, record_count=len(records))
+    with pytest.raises(CacheMismatchError, match="metadata/manifest right rectified K"):
+        build_rectified_calibration_sidecar(
+            manifest, audit, tmp_path / "metadata_mismatch_sidecar.jsonl"
+        )
+
+
+def test_loader_rejects_live_metadata_tamper(tmp_path: Path) -> None:
+    manifest, sidecar, receipt, records = _build(tmp_path)
+    metadata_path = Path(str(records[0].extras["metadata_path"]))
+    metadata_path.write_text(
+        metadata_path.read_text(encoding="utf-8") + "# tampered\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(CacheMismatchError, match="metadata SHA-256 mismatch"):
+        load_rectified_calibration_sidecar(
+            sidecar, receipt_path=receipt, expected_manifest_path=manifest
         )

@@ -400,6 +400,58 @@ def test_dual_calibration_projects_with_target_k_and_returns_target_disparity() 
     assert hidden.grad[0, 0, 0, 0].item() == pytest.approx(1.0)
 
 
+def test_dual_calibration_z_translation_uses_source_depth_and_target_unit() -> None:
+    disparity = torch.tensor([[[[0.1]]]], dtype=torch.float64)
+    depth = torch.tensor([[[[2.0]]]], dtype=torch.float64)
+    source_k = _intrinsics(fx_px=2.0).double()
+    target_k = _intrinsics(fx_px=4.0).double()
+    previous = torch.eye(4, dtype=torch.float64)
+    current = torch.eye(4, dtype=torch.float64)
+    current[2, 3] = 1.0
+    result = topk_z_aware_splat(
+        disparity,
+        depth,
+        torch.ones_like(depth),
+        source_k,
+        previous,
+        current,
+        intrinsics_current_grid_3x3=target_k,
+        intrinsics_previous_hr_3x3=source_k,
+        intrinsics_current_hr_3x3=target_k,
+        baseline_previous_m=torch.tensor([0.1], dtype=torch.float64),
+        baseline_current_m=torch.tensor([0.2], dtype=torch.float64),
+        top_k=1,
+        splat_footprint="nearest",
+    )
+
+    assert bool(result.valid_mask.item())
+    assert result.depth_m.item() == pytest.approx(3.0)
+    assert result.disparity_hr_px.item() == pytest.approx(4.0 * 0.2 / 3.0)
+
+
+def test_dual_calibration_topk_rejects_inconsistent_source_depth() -> None:
+    disparity = torch.tensor([[[[0.1]]]], dtype=torch.float64)
+    wrong_depth = torch.tensor([[[[9.0]]]], dtype=torch.float64)
+    calibration = _intrinsics(fx_px=2.0).double()
+    baseline = torch.tensor([0.1], dtype=torch.float64)
+    with pytest.raises(ValueError, match=r"fx\*baseline/disparity"):
+        topk_z_aware_splat(
+            disparity,
+            wrong_depth,
+            torch.ones_like(disparity),
+            calibration,
+            torch.eye(4, dtype=torch.float64),
+            torch.eye(4, dtype=torch.float64),
+            intrinsics_current_grid_3x3=calibration,
+            intrinsics_previous_hr_3x3=calibration,
+            intrinsics_current_hr_3x3=calibration,
+            baseline_previous_m=baseline,
+            baseline_current_m=baseline,
+            top_k=1,
+            splat_footprint="nearest",
+        )
+
+
 def test_explicit_same_calibration_matches_legacy_topk() -> None:
     disparity = torch.tensor([[[[1.0, 2.0, 3.0]]]], dtype=torch.float64)
     depth = 1.0 / disparity

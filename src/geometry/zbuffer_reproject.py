@@ -39,7 +39,8 @@ class WarpResult:
     Attributes:
         disparity_hr_px: Current-view rectified disparity in HR pixel units,
             shape ``[B,1,H,W]``.  It is recomputed as
-            ``d_previous * Z_previous / Z_current``.
+            ``d_previous * Z_previous / Z_current`` in legacy mode or exactly
+            ``fx_target * B_target / Z_current`` under dual calibration.
         depth_m: Z coordinate in the current camera, in metres, shape
             ``[B,1,H,W]``.
         confidence: Confidence carried by the winning source point, shape
@@ -172,6 +173,47 @@ def _batched_positive_scalar(
     ):
         raise ValueError(f"{name} must contain only finite positive values")
     return result
+
+
+def _metric_depth_from_explicit_stereo_disparity(
+    disparity_hr_px: Tensor,
+    supplied_depth_m: Tensor,
+    *,
+    intrinsics_source_hr_3x3: Tensor,
+    baseline_source_m: Tensor,
+    name: str,
+) -> Tensor:
+    """Recompute source depth from explicit stereo calibration and fail closed.
+
+    The explicit dual-calibration path must not merely carry an independently
+    supplied depth alongside disparity.  ``fx_source * B_source / d_source``
+    owns source metric depth; the supplied tensor is retained as a cache/API
+    consistency witness and must agree at every positive-disparity pixel.
+    """
+
+    batch_size = disparity_hr_px.shape[0]
+    numerator_m_px = (
+        intrinsics_source_hr_3x3[:, 0, 0]
+        * baseline_source_m.reshape(batch_size)
+    ).reshape(batch_size, 1, 1, 1)
+    disparity_valid = torch.isfinite(disparity_hr_px) & (disparity_hr_px > 0)
+    recomputed_depth_m = torch.where(
+        disparity_valid,
+        numerator_m_px / disparity_hr_px.clamp_min(1e-12),
+        torch.zeros_like(disparity_hr_px),
+    )
+    supplied_valid = torch.isfinite(supplied_depth_m) & (supplied_depth_m > 0)
+    consistent = torch.isclose(
+        supplied_depth_m,
+        recomputed_depth_m,
+        atol=1e-6,
+        rtol=2e-4,
+    )
+    if bool((disparity_valid & (~supplied_valid | ~consistent)).any().item()):
+        raise ValueError(
+            f"{name} is inconsistent with source fx*baseline/disparity"
+        )
+    return recomputed_depth_m
 
 
 def _batched_homogeneous_extrinsics(
@@ -337,6 +379,9 @@ def zbuffer_reproject(
         previous_disparity_hr_px: Previous rectified disparity in HR pixels,
             shape ``[B,1,H,W]``.
         previous_depth_m: Previous camera Z depth in metres, same shape.
+            With explicit source/target baselines this becomes a consistency
+            witness: source depth is recomputed as ``fx_source*B_source/d``
+            and any positive-disparity disagreement fails closed.
         previous_confidence: Previous confidence, same shape.  Finite values
             are propagated without thresholding or clipping.
         intrinsics_hr_3x3: Calibrated *source* HR pinhole intrinsics, shape
@@ -434,10 +479,13 @@ def zbuffer_reproject(
             dtype=compute_dtype,
             device=device,
         )
-        # Source baseline is validated here and is used by callers to produce
-        # ``previous_depth_m``. Target disparity itself is owned entirely by
-        # the current rectified stereo calibration.
-        _ = source_baseline
+        depth = _metric_depth_from_explicit_stereo_disparity(
+            disparity,
+            depth,
+            intrinsics_source_hr_3x3=intrinsics_previous,
+            baseline_source_m=source_baseline,
+            name="previous_depth_m",
+        )
         target_disparity_numerator_m_px = (
             intrinsics_current[:, 0, 0:1] * target_baseline
         )

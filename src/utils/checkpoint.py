@@ -83,12 +83,16 @@ def _resume_compatibility_fingerprint(config: Mapping[str, Any]) -> str:
     """
 
     compatible = _plain_config(config)
-    if "calibration_conditioning_v3" not in compatible:
+    calibration = compatible.get("calibration_conditioning_v3")
+    if calibration is None and "calibration_conditioning_v3" not in compatible:
         compatible["calibration_conditioning_v3"] = dict(
             _LEGACY_SAFE_CALIBRATION_V3
         )
+        legacy_safe = True
+    else:
+        legacy_safe = calibration == _LEGACY_SAFE_CALIBRATION_V3
     data = compatible.get("data")
-    if isinstance(data, dict):
+    if legacy_safe and isinstance(data, dict):
         for name, value in _LEGACY_SAFE_DATA_V3_DEFAULTS.items():
             if name not in data:
                 data[name] = value
