@@ -169,8 +169,12 @@ def groupwise_epipolar_correlation(
     affine comes from the cropped left/right rectified intrinsics; equal
     intrinsics reduce to same-row sampling.
 
-    Bilinear :func:`torch.nn.functional.grid_sample` preserves fractional
-    disparity phase. Channels are divided into ``num_groups`` contiguous,
+    The formal same-row path uses explicit floor/ceil gathers and linear
+    interpolation.  This preserves fractional disparity phase while keeping
+    CUDA backward deterministic; ``grid_sample`` does not provide that
+    guarantee.  A generalized vertical-affine compatibility path remains for
+    diagnostics, but :class:`FrozenTemporalEpipolarStage` rejects it for
+    formal training. Channels are divided into ``num_groups`` contiguous,
     equal-sized groups; the product is averaged over channels inside each
     group. The returned correlation therefore has shape ``[B,G,K,H,W]`` and
     does *not* reduce the group dimension.
@@ -243,28 +247,55 @@ def groupwise_epipolar_correlation(
         & (source_v <= float(height - 1))
     )
 
-    # NaN/Inf coordinates are made harmless before grid_sample. Their outputs
-    # are ignored by candidate_valid_mask below.
+    # NaN/Inf coordinates are made harmless before sampling. Their outputs are
+    # ignored by candidate_valid_mask below.
     safe_source_u = torch.where(finite_coordinate, source_u, torch.zeros_like(source_u))
     safe_source_v = torch.where(finite_coordinate, source_v, torch.zeros_like(source_v))
-    grid_x = 2.0 * (safe_source_u + 0.5) / float(width) - 1.0
-    grid_y = 2.0 * (safe_source_v + 0.5) / float(height) - 1.0
-    candidate_grid = torch.stack((grid_x, grid_y), dim=-1)
-    # Pack K horizontal candidate rows into one grid_sample call. Reshaping the
-    # result restores explicit candidate order without repeating right features.
-    packed_grid = candidate_grid.permute(0, 2, 1, 3, 4).reshape(
-        batch, height, candidate_count * width, 2
+    is_same_row = torch.equal(row_scale, torch.ones_like(row_scale)) and torch.equal(
+        row_offset, torch.zeros_like(row_offset)
     )
-    sampled_right = functional.grid_sample(
-        feature_right_hr.to(dtype=sampling_dtype),
-        packed_grid,
-        mode="bilinear",
-        padding_mode="zeros",
-        align_corners=False,
-    )
-    sampled_right = sampled_right.reshape(
-        batch, channels, height, candidate_count, width
-    ).permute(0, 1, 3, 2, 4)
+    right_fp = feature_right_hr.to(dtype=sampling_dtype)
+    if is_same_row:
+        # ``source_v == output row`` exactly, so only horizontal interpolation
+        # is needed.  Gather backward is supported by strict CUDA deterministic
+        # algorithms, unlike grid_sampler_2d_backward_cuda.  Clamping is safe:
+        # invalid candidates are masked from both values and gradients below.
+        source_u_clamped = safe_source_u.clamp(0.0, float(width - 1))
+        source_u_floor = torch.floor(source_u_clamped)
+        source_u_ceil = (source_u_floor + 1.0).clamp_max(float(width - 1))
+        horizontal_phase = source_u_clamped - source_u_floor
+        index_floor = source_u_floor.to(dtype=torch.int64).unsqueeze(1).expand(
+            batch, channels, candidate_count, height, width
+        )
+        index_ceil = source_u_ceil.to(dtype=torch.int64).unsqueeze(1).expand_as(
+            index_floor
+        )
+        right_candidates = right_fp.unsqueeze(2).expand(
+            batch, channels, candidate_count, height, width
+        )
+        sampled_floor = torch.gather(right_candidates, dim=4, index=index_floor)
+        sampled_ceil = torch.gather(right_candidates, dim=4, index=index_ceil)
+        phase = horizontal_phase.unsqueeze(1)
+        sampled_right = sampled_floor + phase * (sampled_ceil - sampled_floor)
+    else:
+        # Non-formal compatibility path for calibrated vertical-affine probes.
+        # The formal Stage-C wrapper fail-closes to exact same-row coordinates.
+        grid_x = 2.0 * (safe_source_u + 0.5) / float(width) - 1.0
+        grid_y = 2.0 * (safe_source_v + 0.5) / float(height) - 1.0
+        candidate_grid = torch.stack((grid_x, grid_y), dim=-1)
+        packed_grid = candidate_grid.permute(0, 2, 1, 3, 4).reshape(
+            batch, height, candidate_count * width, 2
+        )
+        sampled_right = functional.grid_sample(
+            right_fp,
+            packed_grid,
+            mode="bilinear",
+            padding_mode="zeros",
+            align_corners=False,
+        )
+        sampled_right = sampled_right.reshape(
+            batch, channels, height, candidate_count, width
+        ).permute(0, 1, 3, 2, 4)
 
     channels_per_group = channels // num_groups
     grouped_left = feature_left_hr.to(dtype=sampling_dtype).reshape(

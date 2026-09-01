@@ -174,6 +174,15 @@ class FrozenTemporalEpipolarStage(nn.Module):
             for source in row_mapping_source
         ):
             raise ValueError("batch epipolar row-mapping contract mismatch")
+        if not torch.equal(right_row_scale, torch.ones_like(right_row_scale)) or (
+            not torch.equal(
+                right_row_offset_hr_px,
+                torch.zeros_like(right_row_offset_hr_px),
+            )
+        ):
+            raise ValueError(
+                "formal Stage-C requires exact same-row scale=1 and offset=0"
+            )
 
         # The no-grad island is unconditional, not caller-dependent. This
         # prevents Stage-B activation graphs or parameter gradients even if a

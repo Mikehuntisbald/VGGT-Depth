@@ -137,6 +137,24 @@ def test_stage_rejects_mismatched_right_crop_shape() -> None:
         stage(batch)
 
 
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("epipolar_right_row_scale", 1.001),
+        ("epipolar_right_row_offset_hr_px", 0.001),
+    ],
+)
+def test_formal_stage_rejects_non_same_row_runtime_mapping(
+    field: str, value: float
+) -> None:
+    stage, _ = _stage()
+    batch = _batch(batch_size=1)
+    batch[field].fill_(value)
+
+    with pytest.raises(ValueError, match="exact same-row"):
+        stage(batch)
+
+
 def test_loss_rejects_negative_regularizer_weight() -> None:
     stage, _ = _stage()
     output = stage(_batch(batch_size=1))

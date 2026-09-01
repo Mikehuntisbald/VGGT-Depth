@@ -2,12 +2,68 @@ from __future__ import annotations
 
 import pytest
 import torch
+import torch.nn.functional as functional
 
 from models.epipolar_refiner import (
     HREpipolarRefiner,
     groupwise_epipolar_correlation,
     rectified_vertical_affine_from_intrinsics,
 )
+
+
+def _grid_sample_same_row_reference(
+    feature_left_hr: torch.Tensor,
+    feature_right_hr: torch.Tensor,
+    predicted_disparity_hr_px: torch.Tensor,
+    *,
+    candidate_offsets_hr_px: tuple[float, ...],
+    num_groups: int,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Previous grid-sample formulation, retained only as a test oracle."""
+
+    batch, channels, height, width = feature_left_hr.shape
+    offsets = torch.tensor(
+        candidate_offsets_hr_px,
+        dtype=feature_left_hr.dtype,
+        device=feature_left_hr.device,
+    )
+    candidate_count = offsets.numel()
+    column = torch.arange(width, dtype=feature_left_hr.dtype).view(1, 1, 1, width)
+    row = torch.arange(height, dtype=feature_left_hr.dtype).view(1, 1, height, 1)
+    source_u = (
+        column
+        - predicted_disparity_hr_px[:, 0].unsqueeze(1)
+        - offsets.view(1, candidate_count, 1, 1)
+    )
+    source_v = row.expand(batch, candidate_count, height, width)
+    valid = (
+        torch.isfinite(source_u)
+        & (source_u >= 0.0)
+        & (source_u <= float(width - 1))
+    )
+    grid_x = 2.0 * (source_u + 0.5) / float(width) - 1.0
+    grid_y = 2.0 * (source_v + 0.5) / float(height) - 1.0
+    packed_grid = torch.stack((grid_x, grid_y), dim=-1).permute(
+        0, 2, 1, 3, 4
+    ).reshape(batch, height, candidate_count * width, 2)
+    sampled = functional.grid_sample(
+        feature_right_hr,
+        packed_grid,
+        mode="bilinear",
+        padding_mode="zeros",
+        align_corners=False,
+    ).reshape(batch, channels, height, candidate_count, width).permute(
+        0, 1, 3, 2, 4
+    )
+    channels_per_group = channels // num_groups
+    grouped_left = feature_left_hr.reshape(
+        batch, num_groups, channels_per_group, height, width
+    )
+    grouped_right = sampled.reshape(
+        batch, num_groups, channels_per_group, candidate_count, height, width
+    )
+    correlation = (grouped_left.unsqueeze(3) * grouped_right).mean(dim=2)
+    return correlation.masked_fill(~valid.unsqueeze(1), 0.0), valid
 
 
 @pytest.mark.parametrize(
@@ -65,6 +121,53 @@ def test_fractional_disparity_uses_bilinear_right_feature_sampling() -> None:
     assert valid[0, 0, 0, 4]
     # At left x=4, the right feature is sampled at x=2.5.
     torch.testing.assert_close(correlation[0, 0, 0, 0, 4], torch.tensor(2.5))
+
+
+def test_same_row_gather_matches_grid_sample_values_and_gradients() -> None:
+    """The deterministic sampler is mathematically the old HR sampler."""
+
+    generator = torch.Generator().manual_seed(2026)
+    shape = (2, 4, 3, 11)
+    left_gather = torch.rand(shape, generator=generator, dtype=torch.float64).requires_grad_()
+    right_gather = torch.rand(shape, generator=generator, dtype=torch.float64).requires_grad_()
+    column = torch.arange(shape[-1], dtype=torch.float64).view(1, 1, 1, -1)
+    disparity_gather = (1.25 + 0.03 * column).expand(2, 1, 3, -1).clone().requires_grad_()
+    offsets = (-2.0, -1.0, 0.0, 1.0, 2.0)
+
+    correlation_gather, valid_gather = groupwise_epipolar_correlation(
+        left_gather,
+        right_gather,
+        disparity_gather,
+        candidate_offsets_hr_px=offsets,
+        num_groups=2,
+    )
+    weights = torch.rand(
+        correlation_gather.shape, generator=generator, dtype=torch.float64
+    )
+    gradients_gather = torch.autograd.grad(
+        (correlation_gather * weights).sum(),
+        (left_gather, right_gather, disparity_gather),
+    )
+
+    left_grid = left_gather.detach().clone().requires_grad_()
+    right_grid = right_gather.detach().clone().requires_grad_()
+    disparity_grid = disparity_gather.detach().clone().requires_grad_()
+    correlation_grid, valid_grid = _grid_sample_same_row_reference(
+        left_grid,
+        right_grid,
+        disparity_grid,
+        candidate_offsets_hr_px=offsets,
+        num_groups=2,
+    )
+    gradients_grid = torch.autograd.grad(
+        (correlation_grid * weights).sum(),
+        (left_grid, right_grid, disparity_grid),
+    )
+
+    assert torch.equal(valid_gather, valid_grid)
+    torch.testing.assert_close(correlation_gather, correlation_grid, rtol=0, atol=1e-12)
+    for actual, expected in zip(gradients_gather, gradients_grid, strict=True):
+        torch.testing.assert_close(actual, expected, rtol=0, atol=1e-11)
 
 
 def test_rectified_vertical_principal_point_offset_samples_correct_right_row() -> None:
@@ -261,3 +364,39 @@ def test_refiner_cuda_bfloat16_autocast_smoke() -> None:
     assert torch.isfinite(output.correlation).all()
     assert disparity_hr_px.grad is not None
     assert torch.isfinite(disparity_hr_px.grad).all()
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is unavailable")
+def test_same_row_cuda_backward_passes_strict_deterministic_algorithms() -> None:
+    previous_enabled = torch.are_deterministic_algorithms_enabled()
+    previous_warn_only = torch.is_deterministic_algorithms_warn_only_enabled()
+    try:
+        torch.use_deterministic_algorithms(True, warn_only=False)
+        torch.manual_seed(42)
+        model = HREpipolarRefiner().cuda().train()
+        rgb_left_hr = torch.rand(1, 3, 24, 40, device="cuda")
+        rgb_right_hr = torch.rand_like(rgb_left_hr)
+        disparity_hr_px = torch.full(
+            (1, 1, 24, 40), 7.25, device="cuda", requires_grad=True
+        )
+
+        with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
+            output = model(rgb_left_hr, rgb_right_hr, disparity_hr_px)
+            loss = (
+                output.corrected_disparity_hr_px.mean()
+                + output.correlation.square().mean()
+                + output.confidence.mean()
+            )
+        loss.backward()
+
+        assert torch.isfinite(loss)
+        assert disparity_hr_px.grad is not None
+        assert torch.isfinite(disparity_hr_px.grad).all()
+        assert all(
+            parameter.grad is None or torch.isfinite(parameter.grad).all()
+            for parameter in model.parameters()
+        )
+    finally:
+        torch.use_deterministic_algorithms(
+            previous_enabled, warn_only=previous_warn_only
+        )
