@@ -56,6 +56,7 @@ from losses import (  # noqa: E402
     measurement_consistency_loss,
     sample_hr_at_lr_centers,
     temporal_consistency_loss,
+    validity_completion_loss,
 )
 from geometry.history_confidence import history_confidence  # noqa: E402
 from geometry.zbuffer_reproject import WarpResult, zbuffer_reproject  # noqa: E402
@@ -183,6 +184,75 @@ class PositivityAblation:
     lower_bound_hr_px: float | None = None
     lr_negative_penalty_weight: float = 0.0
     raw_negative_penalty_weight: float = 0.0
+
+
+@dataclass(frozen=True, slots=True)
+class PhysicalOutputV2:
+    """Opt-in explicit valid/completion and non-negative output contract."""
+
+    enabled: bool = False
+    valid_threshold: float = 0.5
+    completion_threshold: float = 0.5
+    trusted_ffs_confidence_threshold: float = 0.8
+    valid_bce_weight: float = 0.0
+    completion_bce_weight: float = 0.0
+    calibration_weight: float = 0.0
+
+
+def physical_output_v2_from_config(
+    config: Mapping[str, Any] | DictConfig,
+) -> PhysicalOutputV2:
+    """Parse V2 without adding keys to resolved canonical configurations."""
+
+    section = config.get("physical_output_v2")
+    if section is None:
+        return PhysicalOutputV2()
+    if not isinstance(section, Mapping):
+        raise ValueError("physical_output_v2 must be a mapping")
+    if section.get("enabled") is not True:
+        if section.get("enabled") is False:
+            return PhysicalOutputV2()
+        raise ValueError("physical_output_v2.enabled must be a bool")
+    if section.get("protocol_version") != "explicit_valid_completion_nonnegative_v2":
+        raise ValueError("physical_output_v2 protocol version mismatch")
+    if positivity_ablation_from_config(config).enabled:
+        raise ValueError(
+            "physical_output_v2 and legacy positivity_ablation are separate lineages"
+        )
+
+    def probability(name: str) -> float:
+        value = section.get(name)
+        if (
+            isinstance(value, bool)
+            or not isinstance(value, (int, float))
+            or not math.isfinite(float(value))
+            or not 0.0 < float(value) < 1.0
+        ):
+            raise ValueError(f"physical_output_v2.{name} must be in (0,1)")
+        return float(value)
+
+    def positive_weight(name: str) -> float:
+        value = section.get(name)
+        if (
+            isinstance(value, bool)
+            or not isinstance(value, (int, float))
+            or not math.isfinite(float(value))
+            or float(value) <= 0
+        ):
+            raise ValueError(f"physical_output_v2.{name} must be positive")
+        return float(value)
+
+    return PhysicalOutputV2(
+        enabled=True,
+        valid_threshold=probability("valid_threshold"),
+        completion_threshold=probability("completion_threshold"),
+        trusted_ffs_confidence_threshold=probability(
+            "trusted_ffs_confidence_threshold"
+        ),
+        valid_bce_weight=positive_weight("valid_bce_weight"),
+        completion_bce_weight=positive_weight("completion_bce_weight"),
+        calibration_weight=positive_weight("calibration_weight"),
+    )
 
 
 def positivity_ablation_from_config(
@@ -347,6 +417,7 @@ def loss_weights_from_config(config: Mapping[str, Any] | DictConfig) -> LossWeig
 
 
 def _validate_common_training_config(config: DictConfig, *, total_steps: int) -> None:
+    physical_output_v2_from_config(config)
     if int(config.data.scale) != 2 or int(config.model.convex_scale) != 2:
         raise ValueError("the first-round training pipeline is fixed to x2")
     if list(config.model.rgb_channels) != [32, 64, 96]:
@@ -678,6 +749,7 @@ def build_temporal_dataset_and_identities(
 
 def build_model(config: DictConfig) -> FFSOmegaTSR:
     positivity_ablation = positivity_ablation_from_config(config)
+    physical_v2 = physical_output_v2_from_config(config)
     model = FFSOmegaTSR(
         rgb_channels=tuple(int(value) for value in config.model.rgb_channels),
         geometry_channels=int(config.model.geometry_channels),
@@ -689,6 +761,12 @@ def build_model(config: DictConfig) -> FFSOmegaTSR:
             positivity_ablation.sanitize_invalid_sources
         ),
         positivity_floor_hr_px=positivity_ablation.lower_bound_hr_px,
+        physical_output_v2=physical_v2.enabled,
+        physical_valid_threshold=physical_v2.valid_threshold,
+        completion_threshold=physical_v2.completion_threshold,
+        trusted_ffs_confidence_threshold=(
+            physical_v2.trusted_ffs_confidence_threshold
+        ),
     )
     parameter_count = count_trainable_parameters(model)
     if parameter_count <= 0 or parameter_count >= 12_000_000:
@@ -705,6 +783,7 @@ def compute_stage_a_loss(
     scale: int = 2,
     weights: LossWeights = LossWeights(),
     positivity_ablation: PositivityAblation = PositivityAblation(),
+    physical_output_v2: PhysicalOutputV2 = PhysicalOutputV2(),
 ) -> LossBreakdown:
     """Compute the exact Stage-A objective from teacher and observation masks."""
 
@@ -766,9 +845,70 @@ def compute_stage_a_loss(
         gate_regularizer=gate_regularizer,
         weights=weights,
     )
-    if not positivity_ablation.enabled:
-        return baseline
-    return _with_positivity_penalty(baseline, output, positivity_ablation)
+    if positivity_ablation.enabled:
+        baseline = _with_positivity_penalty(
+            baseline, output, positivity_ablation
+        )
+    if physical_output_v2.enabled:
+        baseline = _with_physical_output_v2_loss(
+            baseline, output, batch, physical_output_v2
+        )
+    return baseline
+
+
+def _with_physical_output_v2_loss(
+    baseline: LossBreakdown,
+    output: ModelOutput,
+    batch: Mapping[str, Any],
+    contract: PhysicalOutputV2,
+) -> LossBreakdown:
+    """Attach explicit validity/completion supervision to a V2 trajectory."""
+
+    fields = (
+        output.valid_logits,
+        output.completion_logits,
+        output.valid_probability,
+        output.completion_probability,
+    )
+    if not all(isinstance(value, Tensor) for value in fields):
+        raise ValueError("physical_output_v2 requires all validity output fields")
+    teacher_valid = batch.get("teacher_valid_mask")
+    teacher_confidence = batch.get("teacher_confidence")
+    observation_valid = batch.get("valid_ffs")
+    if not all(
+        isinstance(value, Tensor)
+        for value in (teacher_valid, teacher_confidence, observation_valid)
+    ):
+        raise ValueError(
+            "physical_output_v2 requires teacher validity/confidence and FFS validity"
+        )
+    assert output.valid_logits is not None
+    observation_valid_hr = functional.interpolate(
+        observation_valid.to(dtype=torch.float32),
+        size=output.valid_logits.shape[-2:],
+        mode="nearest",
+    ).to(dtype=torch.bool)
+    terms = validity_completion_loss(
+        valid_logits=output.valid_logits,
+        completion_logits=output.completion_logits,  # type: ignore[arg-type]
+        valid_probability=output.valid_probability,  # type: ignore[arg-type]
+        completion_probability=output.completion_probability,  # type: ignore[arg-type]
+        teacher_valid_mask=teacher_valid,
+        teacher_confidence=teacher_confidence,
+        observation_valid_mask_hr=observation_valid_hr,
+    )
+    additional = (
+        contract.valid_bce_weight * terms.valid_bce
+        + contract.completion_bce_weight * terms.completion_bce
+        + contract.calibration_weight * terms.calibration
+    )
+    return replace(
+        baseline,
+        total=baseline.total + additional,
+        valid_bce=terms.valid_bce,
+        completion_bce=terms.completion_bce,
+        validity_calibration=terms.calibration,
+    )
 
 
 def _with_positivity_penalty(
@@ -1072,6 +1212,7 @@ def compute_stage_b_step_loss(
     weights: LossWeights = LossWeights(),
     max_photometric_residual: float = 0.10,
     positivity_ablation: PositivityAblation = PositivityAblation(),
+    physical_output_v2: PhysicalOutputV2 = PhysicalOutputV2(),
 ) -> LossBreakdown:
     """Compute spatial supervision plus visibility-gated temporal consistency."""
 
@@ -1081,6 +1222,7 @@ def compute_stage_b_step_loss(
         scale=scale,
         weights=weights,
         positivity_ablation=positivity_ablation,
+        physical_output_v2=physical_output_v2,
     )
     if transport is None:
         temporal = output.disparity_hr_px.sum() * 0.0
@@ -1108,14 +1250,34 @@ def compute_stage_b_step_loss(
     )
     # ``spatial`` already owns the weighted ablation term.  Recombine the
     # standard Stage-B terms first, then add it once after temporal loss.
-    if not positivity_ablation.enabled:
-        return baseline
-    if spatial.positivity_penalty is None:
-        raise RuntimeError("enabled positivity ablation produced no penalty")
+    extra_total = baseline.total
+    if positivity_ablation.enabled:
+        if spatial.positivity_penalty is None:
+            raise RuntimeError("enabled positivity ablation produced no penalty")
+        extra_total = extra_total + spatial.positivity_penalty
+    if physical_output_v2.enabled:
+        if any(
+            value is None
+            for value in (
+                spatial.valid_bce,
+                spatial.completion_bce,
+                spatial.validity_calibration,
+            )
+        ):
+            raise RuntimeError("enabled physical V2 produced no validity losses")
+        extra_total = extra_total + (
+            physical_output_v2.valid_bce_weight * spatial.valid_bce
+            + physical_output_v2.completion_bce_weight * spatial.completion_bce
+            + physical_output_v2.calibration_weight
+            * spatial.validity_calibration
+        )
     return replace(
         baseline,
-        total=baseline.total + spatial.positivity_penalty,
+        total=extra_total,
         positivity_penalty=spatial.positivity_penalty,
+        valid_bce=spatial.valid_bce,
+        completion_bce=spatial.completion_bce,
+        validity_calibration=spatial.validity_calibration,
     )
 
 
@@ -1128,14 +1290,14 @@ def average_loss_breakdowns(
     def mean(name: str) -> Tensor:
         return torch.stack([getattr(value, name) for value in values]).mean()
 
-    positivity_values = [value.positivity_penalty for value in values]
-    if any(value is None for value in positivity_values):
-        if not all(value is None for value in positivity_values):
-            raise ValueError("cannot mix baseline and positivity-ablation loss breakdowns")
-        positivity_penalty = None
-    else:
-        positivity_penalty = torch.stack(
-            [value for value in positivity_values if value is not None]
+    def optional_mean(name: str) -> Tensor | None:
+        optional_values = [getattr(value, name) for value in values]
+        if any(value is None for value in optional_values):
+            if not all(value is None for value in optional_values):
+                raise ValueError(f"cannot mix enabled/disabled optional loss {name}")
+            return None
+        return torch.stack(
+            [value for value in optional_values if value is not None]
         ).mean()
     return LossBreakdown(
         total=mean("total"),
@@ -1146,7 +1308,10 @@ def average_loss_breakdowns(
         epipolar=mean("epipolar"),
         uncertainty_nll=mean("uncertainty_nll"),
         gate_regularizer=mean("gate_regularizer"),
-        positivity_penalty=positivity_penalty,
+        positivity_penalty=optional_mean("positivity_penalty"),
+        valid_bce=optional_mean("valid_bce"),
+        completion_bce=optional_mean("completion_bce"),
+        validity_calibration=optional_mean("validity_calibration"),
     )
 
 
@@ -1170,6 +1335,7 @@ def _temporal_step_batch(batch: Mapping[str, Any], time_index: int) -> dict[str,
         "observation_trusted_mask": "observation_trusted_mask_sequence",
         "teacher_disparity_hr_px": "teacher_disparity_hr_px_sequence",
         "teacher_confidence": "teacher_confidence_sequence",
+        "teacher_valid_mask": "teacher_valid_mask_sequence",
         "teacher_trusted_mask": "teacher_trusted_mask_sequence",
     }
     result: dict[str, Any] = {}
@@ -1199,6 +1365,7 @@ def _forward_temporal_loss(
 ) -> LossBreakdown:
     """Unroll exactly three causal steps and average their supervised losses."""
 
+    physical_v2 = physical_output_v2_from_config(config)
     rgb_sequence = batch["rgb_hr_sequence"]
     if rgb_sequence.ndim != 5 or rgb_sequence.shape[1] != 3:
         raise ValueError("temporal RGB batch must have shape [B,3,3,H,W]")
@@ -1291,6 +1458,7 @@ def _forward_temporal_loss(
                     config.train.temporal_photometric_threshold
                 ),
                 positivity_ablation=positivity_ablation,
+                physical_output_v2=physical_v2,
             )
         )
         hidden_state = output.hidden_state
@@ -1306,6 +1474,7 @@ def _forward_loss(
     scale: int,
     weights: LossWeights,
     positivity_ablation: PositivityAblation = PositivityAblation(),
+    physical_output_v2: PhysicalOutputV2 = PhysicalOutputV2(),
     diagnostic: bool = False,
 ) -> LossBreakdown:
     output = model(
@@ -1330,6 +1499,7 @@ def _forward_loss(
         scale=scale,
         weights=weights,
         positivity_ablation=positivity_ablation,
+        physical_output_v2=physical_output_v2,
     )
     if diagnostic and not bool(torch.isfinite(breakdown.total.detach()).item()):
         raise FloatingPointError("Stage-A total loss is non-finite")
@@ -1596,6 +1766,7 @@ def run(args: argparse.Namespace) -> int:
             raise ValueError("Stage-A checkpoint changed while the run was being built")
     weights = loss_weights_from_config(config)
     positivity_ablation = positivity_ablation_from_config(config)
+    physical_v2 = physical_output_v2_from_config(config)
     warmup_steps = int(config.train.warmup_steps)
     optimizer = torch.optim.AdamW(
         model.parameters(),
@@ -1625,6 +1796,7 @@ def run(args: argparse.Namespace) -> int:
                     scale=int(config.data.scale),
                     weights=weights,
                     positivity_ablation=positivity_ablation,
+                    physical_output_v2=physical_v2,
                     diagnostic=True,
                 )
             else:
@@ -1725,6 +1897,7 @@ def run(args: argparse.Namespace) -> int:
                             scale=int(config.data.scale),
                             weights=weights,
                             positivity_ablation=positivity_ablation,
+                            physical_output_v2=physical_v2,
                             diagnostic=diagnostic,
                         )
                     else:
@@ -1750,6 +1923,13 @@ def run(args: argparse.Namespace) -> int:
                 ]
                 if breakdown.positivity_penalty is not None:
                     term_names.append("positivity_penalty")
+                for optional_name in (
+                    "valid_bce",
+                    "completion_bce",
+                    "validity_calibration",
+                ):
+                    if getattr(breakdown, optional_name) is not None:
+                        term_names.append(optional_name)
                 for name in term_names:
                     value = getattr(breakdown, name).detach()
                     summed_terms[name] = summed_terms.get(name, value.new_zeros(())) + value

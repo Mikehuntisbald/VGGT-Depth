@@ -303,8 +303,16 @@ def compute_epipolar_stage_loss(
         valid_mask=usable,
         weights=target_confidence,
     )
+    # Physical/no-op variants regularize the pre-bound correction so the
+    # lower-bound projection cannot hide a harmful proposed update or erase
+    # its gradient. Canonical checkpoints have no tap and retain old math.
+    regularized_correction = (
+        output.refinement.pre_lower_bound_correction_hr_px
+        if output.refinement.pre_lower_bound_correction_hr_px is not None
+        else output.correction_hr_px
+    )
     correction_regularizer = finite_masked_mean(
-        output.correction_hr_px.abs(), usable
+        regularized_correction.abs(), usable
     )
     positivity_penalty: Tensor | None = None
     if pre_lower_bound_negative_penalty_weight > 0:

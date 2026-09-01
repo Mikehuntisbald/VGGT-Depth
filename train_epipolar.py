@@ -66,6 +66,7 @@ from train import (  # noqa: E402
     build_temporal_transport,
     learning_rate_multiplier,
     load_receipt_identity,
+    physical_output_v2_from_config,
     positivity_ablation_from_config,
 )
 from utils.checkpoint import (  # noqa: E402
@@ -158,6 +159,7 @@ STAGE_C_MODEL_COMPONENT = "hr_epipolar_refiner"
 FORMAL_STAGE_B_STEPS = 15_000
 FORMAL_STAGE_C_STEPS = 5_000
 STAGE_C_D025_POSITIVITY_PROTOCOL = "d025_stage_c_physical_positivity_v1"
+STAGE_C_PHYSICAL_OUTPUT_V2_PROTOCOL = "base_aware_noop_nonnegative_v2"
 STAGE_C_HIGH_VRAM_PROTOCOL = "d025_stage_c_high_vram_cuda_preflight_v1"
 STAGE_C_HIGH_VRAM_PREFLIGHT_COMPONENT = "d025-stage-c-high-vram-preflight"
 STAGE_C_HIGH_VRAM_FALLBACK = {
@@ -185,6 +187,56 @@ class StageCHighVRAMPreflight:
     enabled: bool = False
     receipt_path: str | None = None
     minimum_headroom_bytes: int = 0
+
+
+@dataclass(frozen=True, slots=True)
+class StageCPhysicalOutputV2:
+    """Opt-in exact no-op and base-aware physical correction contract."""
+
+    enabled: bool = False
+    no_op_threshold: float = 0.5
+    pre_lower_bound_negative_penalty_weight: float = 0.0
+
+
+def stage_c_physical_output_v2_from_config(
+    config: Mapping[str, Any] | DictConfig,
+) -> StageCPhysicalOutputV2:
+    section = config.get("stage_c_physical_output_v2")
+    if section is None:
+        return StageCPhysicalOutputV2()
+    if not isinstance(section, Mapping):
+        raise ValueError("stage_c_physical_output_v2 must be a mapping")
+    if section.get("enabled") is not True:
+        if section.get("enabled") is False:
+            return StageCPhysicalOutputV2()
+        raise ValueError("stage_c_physical_output_v2.enabled must be a bool")
+    if section.get("protocol_version") != STAGE_C_PHYSICAL_OUTPUT_V2_PROTOCOL:
+        raise ValueError("Stage-C physical-output V2 protocol mismatch")
+    threshold = section.get("no_op_threshold")
+    weight = section.get("pre_lower_bound_negative_penalty_weight")
+    if (
+        isinstance(threshold, bool)
+        or not isinstance(threshold, (int, float))
+        or not math.isfinite(float(threshold))
+        or not 0.0 < float(threshold) < 1.0
+    ):
+        raise ValueError("Stage-C no_op_threshold must be in (0,1)")
+    if (
+        isinstance(weight, bool)
+        or not isinstance(weight, (int, float))
+        or not math.isfinite(float(weight))
+        or float(weight) <= 0
+    ):
+        raise ValueError("Stage-C V2 pre-bound penalty weight must be positive")
+    if not physical_output_v2_from_config(config).enabled:
+        raise ValueError("Stage-C V2 requires a physical_output_v2 frozen base")
+    if stage_c_positivity_ablation_from_config(config).enabled:
+        raise ValueError("Stage-C V2 and D-025 are separate experiment arms")
+    return StageCPhysicalOutputV2(
+        enabled=True,
+        no_op_threshold=float(threshold),
+        pre_lower_bound_negative_penalty_weight=float(weight),
+    )
 
 
 def stage_c_positivity_ablation_from_config(
@@ -438,6 +490,7 @@ def validate_epipolar_config(config: DictConfig) -> None:
     if str(config.train.optimizer).lower() != "adamw":
         raise ValueError("Stage-C optimizer must be AdamW")
     stage_c_positivity = stage_c_positivity_ablation_from_config(config)
+    stage_c_physical_output_v2_from_config(config)
     if positivity_ablation_from_config(config).enabled != stage_c_positivity.enabled:
         raise ValueError(
             "Stage-C and frozen-base positivity opt-ins must be enabled together"
@@ -2208,6 +2261,7 @@ def _stage_loss(
     ):
         raise ValueError("Stage C requires teacher disparity/confidence/trusted cache")
     positivity = stage_c_positivity_ablation_from_config(config)
+    physical_v2 = stage_c_physical_output_v2_from_config(config)
     return compute_epipolar_stage_loss(
         output,
         target_sequence[:, -1],
@@ -2218,6 +2272,8 @@ def _stage_loss(
         ),
         pre_lower_bound_negative_penalty_weight=(
             positivity.pre_lower_bound_negative_penalty_weight
+            if positivity.enabled
+            else physical_v2.pre_lower_bound_negative_penalty_weight
         ),
     )
 
@@ -2297,6 +2353,7 @@ def run(args: argparse.Namespace) -> int:
             )
     validate_epipolar_config(config)
     stage_c_positivity = stage_c_positivity_ablation_from_config(config)
+    stage_c_physical_v2 = stage_c_physical_output_v2_from_config(config)
     stage_c_high_vram = stage_c_high_vram_from_config(config)
     runtime_source_bundle = _runtime_source_bundle(
         controlled_ablation=stage_c_positivity.enabled,
@@ -2426,6 +2483,8 @@ def run(args: argparse.Namespace) -> int:
         positivity_floor_hr_px=(
             stage_c_positivity.correction_lower_bound_hr_px
         ),
+        base_aware_noop_v2=stage_c_physical_v2.enabled,
+        no_op_threshold=stage_c_physical_v2.no_op_threshold,
     )
     stage = FrozenTemporalEpipolarStage(
         base_model,
@@ -2739,10 +2798,10 @@ def run(args: argparse.Namespace) -> int:
                     else summed_regularizer
                     + loss.correction_regularizer.detach()
                 )
-                if stage_c_positivity.enabled:
+                if stage_c_positivity.enabled or stage_c_physical_v2.enabled:
                     if loss.positivity_penalty is None:
                         raise RuntimeError(
-                            "enabled Stage-C positivity produced no penalty"
+                            "enabled Stage-C physical bound produced no penalty"
                         )
                     summed_positivity = (
                         loss.positivity_penalty.detach()
@@ -2785,9 +2844,9 @@ def run(args: argparse.Namespace) -> int:
                 "correction_regularizer": float(values[2]),
                 "valid_pixel_count": summed_valid_pixels,
             }
-            if stage_c_positivity.enabled:
+            if stage_c_positivity.enabled or stage_c_physical_v2.enabled:
                 if summed_positivity is None:
-                    raise RuntimeError("Stage-C positivity accumulator is empty")
+                    raise RuntimeError("Stage-C physical penalty accumulator is empty")
                 latest_loss_summary["positivity_penalty"] = float(
                     (summed_positivity / float(accumulation)).float().cpu().item()
                 )

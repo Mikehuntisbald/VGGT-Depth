@@ -12,6 +12,7 @@ from .composite import LossBreakdown, LossWeights, combine_loss_terms
 from .measurement import measurement_consistency_loss, sample_hr_at_lr_centers
 from .temporal import temporal_consistency_loss, temporal_residual_consistency_loss
 from .uncertainty import ffs_gate_regularizer, laplace_uncertainty_nll
+from .validity import ValidityCompletionLoss, validity_completion_loss
 
 __all__ = [
     "charbonnier",
@@ -28,5 +29,7 @@ __all__ = [
     "sample_hr_at_lr_centers",
     "temporal_consistency_loss",
     "temporal_residual_consistency_loss",
+    "ValidityCompletionLoss",
+    "validity_completion_loss",
     "combine_loss_terms",
 ]

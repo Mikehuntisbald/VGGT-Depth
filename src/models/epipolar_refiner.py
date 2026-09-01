@@ -44,6 +44,13 @@ class EpipolarRefinementOutput:
             D-025 Stage-C positivity ablation.
         pre_lower_bound_disparity_hr_px: Optional ``base + correction`` before
             that lower bound. This is the gradient-bearing penalty tap.
+        no_op_probability: Opt-in probability of selecting the exact frozen
+            base rather than applying Stage-C correction.
+        no_op_logits: Unmasked no-op logits used for supervision/diagnostics.
+        no_op_mask: Hard no-op decision. Pixels without a valid base or search
+            candidate always select the exact base/zero-invalid path.
+        output_valid_mask: Physical validity of the refined output. Zero is
+            always invalid.
     """
 
     corrected_disparity_hr_px: Tensor
@@ -55,6 +62,10 @@ class EpipolarRefinementOutput:
     right_row_offset_hr_px: Tensor
     pre_lower_bound_correction_hr_px: Tensor | None = None
     pre_lower_bound_disparity_hr_px: Tensor | None = None
+    no_op_probability: Tensor | None = None
+    no_op_logits: Tensor | None = None
+    no_op_mask: Tensor | None = None
+    output_valid_mask: Tensor | None = None
 
 
 def _batch_scalar(
@@ -365,6 +376,8 @@ class HREpipolarRefiner(nn.Module):
         confidence_temperature: float = 1.0,
         head_channels: int = 48,
         positivity_floor_hr_px: float | None = None,
+        base_aware_noop_v2: bool = False,
+        no_op_threshold: float = 0.5,
     ) -> None:
         super().__init__()
         if feature_channels <= 0 or feature_channels % correlation_groups != 0:
@@ -391,6 +404,19 @@ class HREpipolarRefiner(nn.Module):
                 "Stage-C positivity_floor_hr_px must be exactly 0.0; "
                 "epsilon/softplus fills are forbidden"
             )
+        if not isinstance(base_aware_noop_v2, bool):
+            raise TypeError("base_aware_noop_v2 must be a bool")
+        if (
+            isinstance(no_op_threshold, bool)
+            or not isinstance(no_op_threshold, (int, float))
+            or not math.isfinite(float(no_op_threshold))
+            or not 0.0 < float(no_op_threshold) < 1.0
+        ):
+            raise ValueError("no_op_threshold must be finite and in (0,1)")
+        if base_aware_noop_v2 and positivity_floor_hr_px is not None:
+            raise ValueError(
+                "base_aware_noop_v2 and legacy Stage-C positivity are separate arms"
+            )
 
         self.feature_channels = int(feature_channels)
         self.correlation_groups = int(correlation_groups)
@@ -403,6 +429,8 @@ class HREpipolarRefiner(nn.Module):
             if positivity_floor_hr_px is None
             else float(positivity_floor_hr_px)
         )
+        self.base_aware_noop_v2 = base_aware_noop_v2
+        self.no_op_threshold = float(no_op_threshold)
         self.register_buffer(
             "candidate_offsets_hr_px",
             torch.tensor(candidate_offsets_hr_px, dtype=torch.float32),
@@ -429,12 +457,22 @@ class HREpipolarRefiner(nn.Module):
             ConvNormAct(head_channels, head_channels),
             nn.Conv2d(head_channels, 1, kernel_size=3, padding=1),
         )
+        self.no_op_gate_head: nn.Module | None = None
+        if self.base_aware_noop_v2:
+            self.no_op_gate_head = nn.Conv2d(
+                correction_input_channels, 1, kernel_size=3, padding=1
+            )
 
         # Attaching Stage C to a trained Stage-B model starts as an exact no-op.
         final_layer = self.correction_head[-1]
         assert isinstance(final_layer, nn.Conv2d)
         nn.init.zeros_(final_layer.weight)
         nn.init.zeros_(final_layer.bias)
+        if self.no_op_gate_head is not None:
+            assert isinstance(self.no_op_gate_head, nn.Conv2d)
+            nn.init.zeros_(self.no_op_gate_head.weight)
+            # A fresh V2 Stage C is an exact no-op before any training update.
+            nn.init.zeros_(self.no_op_gate_head.bias)
 
     @property
     def trainable_parameter_count(self) -> int:
@@ -596,7 +634,60 @@ class HREpipolarRefiner(nn.Module):
             * torch.tanh(raw_correction)
             * any_valid.to(raw_correction.dtype)
         )
-        if self.positivity_floor_hr_px is None:
+        no_op_probability: Tensor | None = None
+        no_op_logits: Tensor | None = None
+        no_op_mask: Tensor | None = None
+        output_valid_mask: Tensor | None = None
+        if self.no_op_gate_head is not None:
+            # Forward is exactly hard base/correction selection; the
+            # straight-through term provides gradients to the gate. Physical
+            # projection and the pre-bound penalty tap remain FP32.
+            no_op_logits = self.no_op_gate_head(correction_features).float()
+            no_op_probability = torch.sigmoid(no_op_logits)
+            base_fp32 = predicted_disparity_hr_px.float()
+            base_valid = torch.isfinite(base_fp32) & (base_fp32 > 0)
+            hard_no_op = no_op_probability >= self.no_op_threshold
+            no_op_mask = hard_no_op | ~any_valid | ~base_valid
+            pre_correction_fp32 = pre_lower_bound_correction_hr_px.float()
+            soft_applied = (1.0 - no_op_probability) * pre_correction_fp32
+            hard_applied = (~hard_no_op).to(dtype=torch.float32) * pre_correction_fp32
+            # Exact hard decision in forward, soft product in backward. At the
+            # zero-logit/zero-correction initialization the output is exact
+            # base while the correction head still receives a 0.5 gradient.
+            penalty_correction_hr_px = (
+                hard_applied.detach() + soft_applied - soft_applied.detach()
+            )
+            penalty_correction_hr_px = torch.where(
+                any_valid & base_valid,
+                penalty_correction_hr_px,
+                torch.zeros_like(penalty_correction_hr_px),
+            )
+            penalty_disparity_hr_px = base_fp32 + penalty_correction_hr_px
+            correction_hr_px = torch.maximum(
+                penalty_correction_hr_px,
+                -base_fp32,
+            )
+            correction_hr_px = torch.where(
+                any_valid & base_valid,
+                correction_hr_px,
+                torch.zeros_like(correction_hr_px),
+            )
+            corrected_disparity_hr_px = torch.where(
+                base_valid,
+                base_fp32 + correction_hr_px,
+                torch.zeros_like(base_fp32),
+            )
+            output_valid_mask = (
+                base_valid
+                & torch.isfinite(corrected_disparity_hr_px)
+                & (corrected_disparity_hr_px > 0)
+            )
+            corrected_disparity_hr_px = torch.where(
+                output_valid_mask,
+                corrected_disparity_hr_px,
+                torch.zeros_like(corrected_disparity_hr_px),
+            )
+        elif self.positivity_floor_hr_px is None:
             correction_hr_px = pre_lower_bound_correction_hr_px
             corrected_disparity_hr_px = (
                 predicted_disparity_hr_px
@@ -645,4 +736,8 @@ class HREpipolarRefiner(nn.Module):
             right_row_offset_hr_px=resolved_row_offset_hr_px,
             pre_lower_bound_correction_hr_px=penalty_correction_hr_px,
             pre_lower_bound_disparity_hr_px=penalty_disparity_hr_px,
+            no_op_probability=no_op_probability,
+            no_op_logits=no_op_logits,
+            no_op_mask=no_op_mask,
+            output_valid_mask=output_valid_mask,
         )

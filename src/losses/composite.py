@@ -36,6 +36,11 @@ class LossBreakdown:
     # Populated only by the separate D-025 ablation.  Keeping this optional
     # preserves the baseline loss log schema and computation path exactly.
     positivity_penalty: Tensor | None = None
+    # V2-only explicit classification/calibration terms. Their absence keeps
+    # the canonical loss computation and JSON log schema unchanged.
+    valid_bce: Tensor | None = None
+    completion_bce: Tensor | None = None
+    validity_calibration: Tensor | None = None
 
     def detached_scalars(self) -> dict[str, float]:
         """Return logging values without retaining an autograd graph."""
@@ -57,6 +62,10 @@ class LossBreakdown:
             values["positivity_penalty"] = float(
                 self.positivity_penalty.detach().cpu().item()
             )
+        for name in ("valid_bce", "completion_bce", "validity_calibration"):
+            value = getattr(self, name)
+            if value is not None:
+                values[name] = float(value.detach().cpu().item())
         return values
 
 

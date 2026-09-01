@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from collections.abc import Sequence
 from dataclasses import dataclass
 
@@ -38,6 +39,19 @@ class ModelOutput:
             opt-in physical lower bound, if that ablation is enabled.
         disparity_pre_lower_bound_raw_hr_px: Raw HR disparity before an
             opt-in physical lower bound, if that ablation is enabled.
+        valid_probability: Opt-in calibrated physical-valid probability
+            ``[B,1,2H,2W]``.  It is exactly zero where every geometric source
+            is invalid. ``None`` for legacy models.
+        completion_probability: Opt-in probability that a current FFS hole was
+            completed by another supported source.  It is exactly zero outside
+            FFS holes and on all-source-invalid pixels. ``None`` for legacy.
+        valid_logits, completion_logits: Unmasked logits used to supervise the
+            two explicit heads. ``None`` for legacy models.
+        output_valid_mask: Opt-in physical output-valid decision.  A zero
+            disparity is always invalid; invalid disparity is represented by
+            exact zero rather than epsilon. ``None`` for legacy models.
+        completion_mask: Opt-in hard hole-completion decision. ``None`` for
+            legacy models.
 
     The final five fields are diagnostic tensor taps only.  They do not add
     modules, parameters, buffers, or checkpoint state.  Their optional defaults
@@ -58,6 +72,12 @@ class ModelOutput:
     disparity_post_convex_hr_px: Tensor | None = None
     disparity_pre_lower_bound_hr_px_lr_grid: Tensor | None = None
     disparity_pre_lower_bound_raw_hr_px: Tensor | None = None
+    valid_probability: Tensor | None = None
+    completion_probability: Tensor | None = None
+    valid_logits: Tensor | None = None
+    completion_logits: Tensor | None = None
+    output_valid_mask: Tensor | None = None
+    completion_mask: Tensor | None = None
 
 
 def count_trainable_parameters(module: nn.Module) -> int:
@@ -113,6 +133,10 @@ class FFSOmegaTSR(nn.Module):
         log_variance_bounds: tuple[float, float] = (-10.0, 10.0),
         sanitize_invalid_source_disparities: bool = False,
         positivity_floor_hr_px: float | None = None,
+        physical_output_v2: bool = False,
+        physical_valid_threshold: float = 0.5,
+        completion_threshold: float = 0.5,
+        trusted_ffs_confidence_threshold: float = 0.8,
     ) -> None:
         super().__init__()
         if rgb_channels != (32, 64, 96):
@@ -135,6 +159,20 @@ class FFSOmegaTSR(nn.Module):
             or positivity_floor_hr_px < 0
         ):
             raise ValueError("positivity_floor_hr_px must be finite and non-negative")
+        if not isinstance(physical_output_v2, bool):
+            raise TypeError("physical_output_v2 must be a bool")
+        for name, value in (
+            ("physical_valid_threshold", physical_valid_threshold),
+            ("completion_threshold", completion_threshold),
+            ("trusted_ffs_confidence_threshold", trusted_ffs_confidence_threshold),
+        ):
+            if (
+                isinstance(value, bool)
+                or not isinstance(value, (int, float))
+                or not math.isfinite(float(value))
+                or not 0.0 < float(value) < 1.0
+            ):
+                raise ValueError(f"{name} must be finite and in (0,1)")
 
         self.scale = scale
         self.residual_limit_hr_px = float(residual_limit_hr_px)
@@ -147,6 +185,12 @@ class FFSOmegaTSR(nn.Module):
         self.sanitize_invalid_source_disparities = sanitize_invalid_source_disparities
         self.positivity_floor_hr_px = (
             None if positivity_floor_hr_px is None else float(positivity_floor_hr_px)
+        )
+        self.physical_output_v2 = physical_output_v2
+        self.physical_valid_threshold = float(physical_valid_threshold)
+        self.completion_threshold = float(completion_threshold)
+        self.trusted_ffs_confidence_threshold = float(
+            trusted_ffs_confidence_threshold
         )
         self.rgb_encoder = RGBPyramidEncoder(rgb_channels)
         self.geometry_encoder = GeometryEncoder(geometry_channels)
@@ -177,6 +221,14 @@ class FFSOmegaTSR(nn.Module):
             ConvNormAct(64, hr_decoder_channels),
             nn.Conv2d(hr_decoder_channels, 2, kernel_size=3, padding=1),
         )
+        # Opt-in only.  The legacy/default module graph and state_dict remain
+        # byte-for-key compatible with all existing checkpoints.
+        self.validity_completion_head: nn.Module | None = None
+        if self.physical_output_v2:
+            self.validity_completion_head = nn.Sequential(
+                ConvNormAct(hr_decoder_channels + rgb_channels[0], 32),
+                nn.Conv2d(32, 2, kernel_size=3, padding=1),
+            )
 
         # The initial network is a conservative geometry interpolator: no
         # residual change, uniform convex neighborhoods, and unit variance.
@@ -190,6 +242,11 @@ class FFSOmegaTSR(nn.Module):
         assert isinstance(final_hr_layer, nn.Conv2d)
         nn.init.zeros_(final_hr_layer.weight)
         nn.init.zeros_(final_hr_layer.bias)
+        if self.validity_completion_head is not None:
+            final_validity_layer = self.validity_completion_head[-1]
+            assert isinstance(final_validity_layer, nn.Conv2d)
+            nn.init.zeros_(final_validity_layer.weight)
+            nn.init.zeros_(final_validity_layer.bias)
 
     @property
     def trainable_parameter_count(self) -> int:
@@ -391,7 +448,7 @@ class FFSOmegaTSR(nn.Module):
         safe_disparities_hr_px = tuple(
             sanitize(tensor) for tensor in raw_disparities_hr_px
         )
-        if self.sanitize_invalid_source_disparities:
+        if self.sanitize_invalid_source_disparities or self.physical_output_v2:
             # A source which failed the validity contract must not contribute a
             # finite negative value through the deterministic all-invalid FFS
             # fallback or through the FFS anchor.  Invalid pixels become zero,
@@ -463,9 +520,10 @@ class FFSOmegaTSR(nn.Module):
             mode="bilinear",
             align_corners=False,
         )
-        hr_outputs = self.hr_output_head(
-            torch.cat((hidden_feature_hr, rgb_features.feature_hr), dim=1)
+        hr_decoder_input = torch.cat(
+            (hidden_feature_hr, rgb_features.feature_hr), dim=1
         )
+        hr_outputs = self.hr_output_head(hr_decoder_input)
         residual_hr_px = hr_outputs[:, :1]
         log_variance = hr_outputs[:, 1:2].clamp(*self.log_variance_bounds)
         disparity_pre_lower_bound_raw_hr_px = disparity_convex_hr_px + residual_hr_px
@@ -486,9 +544,95 @@ class FFSOmegaTSR(nn.Module):
             align_corners=False,
         )
         anchor_gate = (1.0 - confidence_ffs_hr + 0.1).clamp(0.1, 1.0)
-        disparity_hr_px = disparity_ffs_bilinear_hr_px + anchor_gate * (
+        disparity_anchored_hr_px = disparity_ffs_bilinear_hr_px + anchor_gate * (
             disparity_raw_hr_px - disparity_ffs_bilinear_hr_px
         )
+        valid_probability: Tensor | None = None
+        completion_probability: Tensor | None = None
+        valid_logits: Tensor | None = None
+        completion_logits: Tensor | None = None
+        output_valid_mask: Tensor | None = None
+        completion_mask: Tensor | None = None
+        if self.validity_completion_head is None:
+            disparity_hr_px = disparity_anchored_hr_px
+        else:
+            # V2 represents disparity as a non-negative magnitude plus an
+            # explicit physical-valid gate.  ``abs`` has no epsilon floor:
+            # magnitude can be exactly zero, and zero always remains invalid.
+            # Keep the sign boundary in FP32 under BF16 autocast.
+            validity_outputs = self.validity_completion_head(hr_decoder_input)
+            valid_logits = validity_outputs[:, :1].float()
+            completion_logits = validity_outputs[:, 1:2].float()
+            source_support_hr = functional.interpolate(
+                source_valid_mask.any(dim=1, keepdim=True).to(dtype=torch.float32),
+                size=rgb_hr.shape[-2:],
+                mode="nearest",
+            ).to(dtype=torch.bool)
+            valid_ffs_hr = functional.interpolate(
+                source_valid_masks[0].to(dtype=torch.float32),
+                size=rgb_hr.shape[-2:],
+                mode="nearest",
+            ).to(dtype=torch.bool)
+            trusted_ffs_hr = valid_ffs_hr & (
+                confidence_ffs_hr.float()
+                >= self.trusted_ffs_confidence_threshold
+            )
+            hole_hr = ~valid_ffs_hr
+            raw_valid_probability = torch.sigmoid(valid_logits)
+            raw_completion_probability = torch.sigmoid(completion_logits)
+            valid_probability = torch.where(
+                source_support_hr,
+                raw_valid_probability,
+                torch.zeros_like(raw_valid_probability),
+            )
+            completion_probability = torch.where(
+                source_support_hr & hole_hr,
+                raw_completion_probability,
+                torch.zeros_like(raw_completion_probability),
+            )
+            predicted_valid = (
+                valid_probability >= self.physical_valid_threshold
+            )
+            completion_mask = (
+                hole_hr
+                & source_support_hr
+                & (completion_probability >= self.completion_threshold)
+            )
+            requested_valid = (
+                trusted_ffs_hr
+                | (valid_ffs_hr & predicted_valid)
+                | completion_mask
+            )
+            raw_magnitude_hr_px = disparity_raw_hr_px.float().abs()
+            disparity_raw_hr_px = torch.where(
+                source_support_hr,
+                raw_magnitude_hr_px,
+                torch.zeros_like(raw_magnitude_hr_px),
+            )
+            anchored_magnitude_hr_px = (
+                disparity_ffs_bilinear_hr_px.float()
+                + anchor_gate.float()
+                * (
+                    disparity_raw_hr_px
+                    - disparity_ffs_bilinear_hr_px.float()
+                )
+            )
+            # High-confidence FFS ownership is an exact conservation rule in
+            # V2, not merely a small correction gate.
+            anchored_magnitude_hr_px = torch.where(
+                trusted_ffs_hr,
+                disparity_ffs_bilinear_hr_px.float(),
+                anchored_magnitude_hr_px,
+            )
+            output_valid_mask = requested_valid & torch.isfinite(
+                anchored_magnitude_hr_px
+            ) & (anchored_magnitude_hr_px > 0)
+            completion_mask = completion_mask & output_valid_mask
+            disparity_hr_px = torch.where(
+                output_valid_mask,
+                anchored_magnitude_hr_px,
+                torch.zeros_like(anchored_magnitude_hr_px),
+            )
         uncertainty = torch.exp(log_variance)
 
         return ModelOutput(
@@ -515,4 +659,10 @@ class FFSOmegaTSR(nn.Module):
                 if self.positivity_floor_hr_px is not None
                 else None
             ),
+            valid_probability=valid_probability,
+            completion_probability=completion_probability,
+            valid_logits=valid_logits,
+            completion_logits=completion_logits,
+            output_valid_mask=output_valid_mask,
+            completion_mask=completion_mask,
         )

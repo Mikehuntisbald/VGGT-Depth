@@ -77,6 +77,7 @@ from train_epipolar import (  # noqa: E402
     predict_frozen_stage_b_endpoint,
     resolve_epipolar_config,
     stage_c_high_vram_from_config,
+    stage_c_physical_output_v2_from_config,
     stage_c_positivity_ablation_from_config,
     stage_c_runtime_git_scopes,
     stage_c_runtime_relative_paths,
@@ -1550,6 +1551,7 @@ def _refiner_config(config: Mapping[str, Any]) -> dict[str, Any]:
     if not isinstance(model, Mapping):
         raise CheckpointMismatchError("Stage-C checkpoint model config is missing")
     positivity = stage_c_positivity_ablation_from_config(config)
+    physical_v2 = stage_c_physical_output_v2_from_config(config)
     return {
         "feature_channels": int(model["epipolar_feature_channels"]),
         "correlation_groups": int(model["epipolar_correlation_groups"]),
@@ -1564,6 +1566,8 @@ def _refiner_config(config: Mapping[str, Any]) -> dict[str, Any]:
         ),
         "head_channels": int(model["epipolar_head_channels"]),
         "positivity_floor_hr_px": positivity.correction_lower_bound_hr_px,
+        "base_aware_noop_v2": physical_v2.enabled,
+        "no_op_threshold": physical_v2.no_op_threshold,
     }
 
 
@@ -1812,15 +1816,6 @@ def load_stage_c_checkpoint(
         or any(character not in "0123456789abcdef" for character in git_hash)
     ):
         raise CheckpointMismatchError("Stage-C checkpoint git hash is malformed")
-    if payload["parameter_count"] != EXPECTED_REFINER_PARAMETERS or payload[
-        "trainable_refiner_parameter_count"
-    ] != EXPECTED_REFINER_PARAMETERS:
-        raise CheckpointMismatchError(
-            "Stage-C parameter count mismatch: expected "
-            f"{EXPECTED_REFINER_PARAMETERS}, got parameter_count="
-            f"{payload['parameter_count']!r}, trainable_refiner_parameter_count="
-            f"{payload['trainable_refiner_parameter_count']!r}"
-        )
     config = payload["config"]
     if not isinstance(config, Mapping):
         raise CheckpointMismatchError("Stage-C checkpoint config is malformed")
@@ -1831,6 +1826,19 @@ def load_stage_c_checkpoint(
         raise CheckpointMismatchError(
             f"saved Stage-C causal/geometry config is invalid: {exc}"
         ) from exc
+    saved_refiner_config = _refiner_config(config)
+    expected_refiner_parameters = HREpipolarRefiner(
+        **saved_refiner_config
+    ).trainable_parameter_count
+    if payload["parameter_count"] != expected_refiner_parameters or payload[
+        "trainable_refiner_parameter_count"
+    ] != expected_refiner_parameters:
+        raise CheckpointMismatchError(
+            "Stage-C parameter count mismatch: expected "
+            f"{expected_refiner_parameters}, got parameter_count="
+            f"{payload['parameter_count']!r}, trainable_refiner_parameter_count="
+            f"{payload['trainable_refiner_parameter_count']!r}"
+        )
     train = config.get("train")
     model_config = config.get("model")
     if (
@@ -1933,9 +1941,9 @@ def load_stage_c_checkpoint(
             "evaluation refiner architecture/search differs from checkpoint"
         )
     refiner = HREpipolarRefiner(**saved_refiner_config)
-    if refiner.trainable_parameter_count != EXPECTED_REFINER_PARAMETERS:
+    if refiner.trainable_parameter_count != expected_refiner_parameters:
         raise CheckpointMismatchError(
-            "reconstructed HREpipolarRefiner does not have 69,905 parameters"
+            "reconstructed HREpipolarRefiner parameter count differs"
         )
     try:
         refiner.load_state_dict(payload["model"], strict=True)
@@ -1980,7 +1988,7 @@ def load_stage_c_checkpoint(
         "checkpoint_sha256": sha256_file(path),
         "step": step,
         "git_hash": git_hash,
-        "parameter_count": EXPECTED_REFINER_PARAMETERS,
+        "parameter_count": expected_refiner_parameters,
         "config": dict(config),
         "base_checkpoint": dict(base),
         "base_lineage": payload["base_lineage"],
