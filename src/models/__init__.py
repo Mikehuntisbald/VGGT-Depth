@@ -10,6 +10,7 @@ from .ffs_omega_tsr import FFSOmegaTSR, ModelOutput, count_trainable_parameters
 from .rgb_encoder import RGBPyramidEncoder, RGBPyramidFeatures
 from .source_gating import SourceGatingHead, masked_source_softmax
 from .temporal_gru import ConvGRUCell, StackedConvGRU
+from .topk_history_encoder import TopKHistoryEncoder, TopKHistoryEncoding
 
 __all__ = [
     "ConvGRUCell",
@@ -22,6 +23,8 @@ __all__ = [
     "RGBPyramidFeatures",
     "SourceGatingHead",
     "StackedConvGRU",
+    "TopKHistoryEncoder",
+    "TopKHistoryEncoding",
     "count_trainable_parameters",
     "groupwise_epipolar_correlation",
     "masked_source_softmax",
