@@ -92,10 +92,12 @@ frame contains RGB, bilinear FFS, T3 without the VGGT prior, T3+VGGT, trusted
 pseudo-GT absolute error, and uncertainty variance. Disparity/error/uncertainty
 scales are fixed by the temporal evaluation config, so color is comparable over
 time; this is a visualization artifact only and never contributes to metrics or
-point-to-plane reporting. The default is disabled. It needs the optional
-`.[video]` extras (imageio plus FFmpeg); if unavailable, an explicitly enabled
-run writes `temporal_flicker_video.status=NOT_AVAILABLE` with the reason in
-`metrics.json` and does not silently write partial MP4s.
+point-to-plane reporting. The default is disabled. The writer prefers optional
+`.[video]` imageio support; if that is absent, it probes the explicit system
+`/usr/bin/ffmpeg` and streams fixed-size raw RGB24 frames directly, so formal
+runs do not require changing the Python environment. If neither encoder path
+works, an explicitly enabled run writes `temporal_flicker_video.status=NOT_AVAILABLE`
+with the reason in `metrics.json` and does not silently write partial MP4s.
 
 ## Start here
 

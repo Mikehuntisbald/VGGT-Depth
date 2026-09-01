@@ -14,9 +14,10 @@ import csv
 import json
 import os
 import re
+import subprocess
 import sys
 import time
-from contextlib import nullcontext
+from contextlib import contextmanager, nullcontext
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
@@ -968,15 +969,120 @@ class _TemporalFlickerVideoUnavailable(RuntimeError):
     """Raised only for an optional imageio/FFmpeg encoding failure."""
 
 
-def _open_temporal_flicker_video_writer(path: Path, *, fps: int) -> Any:
-    """Open an imageio FFmpeg writer or state why optional encoding is unavailable."""
+DIRECT_FFMPEG_EXECUTABLE = Path("/usr/bin/ffmpeg")
 
-    try:
-        import imageio.v2 as imageio
-    except ImportError as exc:  # pragma: no cover - depends on optional install
-        raise _TemporalFlickerVideoUnavailable(
-            "imageio with its FFmpeg plugin is not installed"
-        ) from exc
+
+class _DirectFFmpegRgb24Writer:
+    """Stream fixed-size CPU uint8 RGB24 frames to one explicit FFmpeg process."""
+
+    def __init__(
+        self,
+        executable: Path,
+        path: Path,
+        *,
+        fps: int,
+        frame_size_hw: tuple[int, int],
+    ) -> None:
+        height, width = frame_size_hw
+        if height <= 0 or width <= 0 or height % 2 or width % 2:
+            raise ValueError("direct FFmpeg frames must have positive even H/W")
+        self.path = path
+        self.frame_size_hw = frame_size_hw
+        self._closed = False
+        command = [
+            str(executable),
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-y",
+            "-f",
+            "rawvideo",
+            "-pixel_format",
+            "rgb24",
+            "-video_size",
+            f"{width}x{height}",
+            "-framerate",
+            str(fps),
+            "-i",
+            "pipe:0",
+            "-an",
+            "-c:v",
+            "libx264",
+            "-pix_fmt",
+            "yuv420p",
+            "-movflags",
+            "+faststart",
+            str(path),
+        ]
+        try:
+            self._process = subprocess.Popen(
+                command,
+                stdin=subprocess.PIPE,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.PIPE,
+                bufsize=0,
+            )
+        except OSError as exc:
+            raise _TemporalFlickerVideoUnavailable(
+                f"could not launch direct FFmpeg {executable}: {exc}"
+            ) from exc
+
+    def append_data(self, frame: np.ndarray) -> None:
+        if self._closed:
+            raise _TemporalFlickerVideoUnavailable("direct FFmpeg writer is closed")
+        if (
+            frame.dtype != np.uint8
+            or frame.ndim != 3
+            or frame.shape != (*self.frame_size_hw, 3)
+        ):
+            raise ValueError(
+                "direct FFmpeg frame must be fixed-size HxWx3 uint8 RGB24"
+            )
+        if self._process.stdin is None:
+            raise _TemporalFlickerVideoUnavailable("direct FFmpeg stdin is unavailable")
+        try:
+            self._process.stdin.write(frame.tobytes(order="C"))
+        except (BrokenPipeError, OSError) as exc:
+            raise _TemporalFlickerVideoUnavailable(
+                "direct FFmpeg rejected RGB24 frame: "
+                f"{self._stderr_text() or type(exc).__name__}"
+            ) from exc
+
+    def _stderr_text(self) -> str:
+        if self._process.stderr is None:
+            return ""
+        try:
+            value = self._process.stderr.read().decode("utf-8", errors="replace")
+        except OSError:
+            return ""
+        return value.strip()
+
+    def close(self) -> None:
+        if self._closed:
+            return
+        self._closed = True
+        if self._process.stdin is not None:
+            try:
+                self._process.stdin.close()
+            except OSError:
+                pass
+        return_code = self._process.wait()
+        stderr = self._stderr_text()
+        if return_code != 0:
+            raise _TemporalFlickerVideoUnavailable(
+                "direct FFmpeg failed with return code "
+                f"{return_code}: {stderr or 'no stderr'}"
+            )
+        if not self.path.is_file() or self.path.stat().st_size == 0:
+            raise _TemporalFlickerVideoUnavailable(
+                "direct FFmpeg exited successfully but wrote no MP4"
+            )
+
+
+def _open_imageio_temporal_flicker_writer(path: Path, *, fps: int) -> Any:
+    """Open the preferred imageio FFmpeg writer, propagating ImportError only."""
+
+    import imageio.v2 as imageio
     try:
         return imageio.get_writer(
             str(path),
@@ -991,6 +1097,49 @@ def _open_temporal_flicker_video_writer(path: Path, *, fps: int) -> Any:
         raise _TemporalFlickerVideoUnavailable(
             f"imageio/FFmpeg could not open MP4 writer: {type(exc).__name__}: {exc}"
         ) from exc
+
+
+def _open_direct_ffmpeg_temporal_flicker_writer(
+    path: Path,
+    *,
+    fps: int,
+    frame_size_hw: tuple[int, int],
+) -> _DirectFFmpegRgb24Writer:
+    """Probe the explicit system FFmpeg and open a raw RGB24 streaming pipe."""
+
+    executable = DIRECT_FFMPEG_EXECUTABLE
+    if not executable.is_file() or not os.access(executable, os.X_OK):
+        raise _TemporalFlickerVideoUnavailable(
+            "imageio is unavailable and direct FFmpeg executable is not usable: "
+            f"{executable}"
+        )
+    return _DirectFFmpegRgb24Writer(
+        executable,
+        path,
+        fps=fps,
+        frame_size_hw=frame_size_hw,
+    )
+
+
+def _open_temporal_flicker_video_writer(
+    path: Path,
+    *,
+    fps: int,
+    frame_size_hw: tuple[int, int],
+) -> tuple[Any, str]:
+    """Prefer imageio; fall back to explicit direct FFmpeg without Python installs."""
+
+    try:
+        return _open_imageio_temporal_flicker_writer(path, fps=fps), "imageio_ffmpeg"
+    except ImportError:
+        return (
+            _open_direct_ffmpeg_temporal_flicker_writer(
+                path,
+                fps=fps,
+                frame_size_hw=frame_size_hw,
+            ),
+            "direct_ffmpeg_rgb24",
+        )
 
 
 def _temporal_flicker_tile(
@@ -1138,8 +1287,10 @@ def build_temporal_flicker_panel(
 @dataclass(slots=True)
 class _TemporalFlickerSequenceState:
     writer: Any
+    backend: str
     temporary_path: Path
     output_path: Path
+    frame_size_hw: tuple[int, int]
     last_frame_id: int
     last_timestamp: float
     frame_count: int = 0
@@ -1194,6 +1345,14 @@ class TemporalFlickerVideoCollector:
                 state.output_path.unlink(missing_ok=True)
         self._states.clear()
 
+    def abort_for_interruption(self, exception: BaseException) -> None:
+        """Close pipes and delete temporary artifacts before an evaluation abort."""
+
+        self._abort(
+            "evaluation interrupted before temporal flicker MP4 finalization: "
+            f"{type(exception).__name__}: {exception}"
+        )
+
     def append(
         self,
         *,
@@ -1221,24 +1380,6 @@ class TemporalFlickerVideoCollector:
                 f"{sequence_id!r} frame={frame_id} timestamp={timestamp}"
             )
         try:
-            if state is None:
-                self.root.mkdir(parents=True, exist_ok=True)
-                output_path = self.root / f"{self._file_stem(sequence_id)}.mp4"
-                temporary_path = self.root / (
-                    f".{self._file_stem(sequence_id)}.incomplete.mp4"
-                )
-                writer = _open_temporal_flicker_video_writer(
-                    temporary_path,
-                    fps=self.fps,
-                )
-                state = _TemporalFlickerSequenceState(
-                    writer=writer,
-                    temporary_path=temporary_path,
-                    output_path=output_path,
-                    last_frame_id=frame_id,
-                    last_timestamp=timestamp,
-                )
-                self._states[sequence_id] = state
             frame = build_temporal_flicker_panel(
                 rgb_hr=rgb_hr,
                 bilinear_disparity_hr_px=bilinear_disparity_hr_px,
@@ -1251,6 +1392,32 @@ class TemporalFlickerVideoCollector:
                 error_range_hr_px=self.error_range_hr_px,
                 uncertainty_range=self.uncertainty_range,
             )
+            if state is None:
+                self.root.mkdir(parents=True, exist_ok=True)
+                output_path = self.root / f"{self._file_stem(sequence_id)}.mp4"
+                temporary_path = self.root / (
+                    f".{self._file_stem(sequence_id)}.incomplete.mp4"
+                )
+                writer, backend = _open_temporal_flicker_video_writer(
+                    temporary_path,
+                    fps=self.fps,
+                    frame_size_hw=tuple(int(value) for value in frame.shape[:2]),
+                )
+                state = _TemporalFlickerSequenceState(
+                    writer=writer,
+                    backend=backend,
+                    temporary_path=temporary_path,
+                    output_path=output_path,
+                    frame_size_hw=tuple(int(value) for value in frame.shape[:2]),
+                    last_frame_id=frame_id,
+                    last_timestamp=timestamp,
+                )
+                self._states[sequence_id] = state
+            elif tuple(int(value) for value in frame.shape[:2]) != state.frame_size_hw:
+                raise ValueError(
+                    "temporal flicker frame size changed within sequence: "
+                    f"{state.frame_size_hw} -> {tuple(frame.shape[:2])}"
+                )
             state.writer.append_data(frame)
             state.last_frame_id = frame_id
             state.last_timestamp = timestamp
@@ -1290,6 +1457,7 @@ class TemporalFlickerVideoCollector:
                         "sequence_id": sequence_id,
                         "path": str(state.output_path),
                         "frame_count": state.frame_count,
+                        "backend": state.backend,
                     }
                 )
         except Exception as exc:
@@ -1300,6 +1468,20 @@ class TemporalFlickerVideoCollector:
                 "videos": [],
             }
         return common | {"status": "COMPLETE", "videos": videos}
+
+
+@contextmanager
+def _cleanup_temporal_flicker_on_abort(
+    collector: TemporalFlickerVideoCollector | None,
+) -> Any:
+    """Ensure an interrupted/failed evaluation never leaves encoder processes/files."""
+
+    try:
+        yield
+    except BaseException as exc:
+        if collector is not None:
+            collector.abort_for_interruption(exc)
+        raise
 
 
 def _save_visualization(
@@ -2159,7 +2341,7 @@ def run(args: argparse.Namespace) -> int:
     use_cuda_bf16 = (
         device.type == "cuda" and str(config.eval.precision).lower() == "bf16"
     )
-    with torch.inference_mode():
+    with _cleanup_temporal_flicker_on_abort(temporal_flicker_collector), torch.inference_mode():
         for batch in loader:
             if stage == "temporal":
                 validate_temporal_batch_causality(batch)

@@ -498,20 +498,22 @@ CUDA-BF16 training/evaluation receipts. `--limit` is always smoke-only.
 ### Optional T3 temporal flicker MP4
 
 This is a non-metric visualization only. It is disabled by default and streams
-CPU uint8 frames rather than retaining GPU tensors or float sequences. Install
-the optional writer in the evaluation environment, then add the flag to a
-causal Stage-B `eval.py` command:
+CPU uint8 frames rather than retaining GPU tensors or float sequences. The
+writer prefers imageio when its optional `.[video]` extra is installed, but
+falls back without a Python-environment change to the explicitly probed system
+`/usr/bin/ffmpeg` via a raw RGB24 subprocess pipe. Add the flag to a causal
+Stage-B `eval.py` command:
 
 ```bash
-pip install '.[video]'
 python eval.py ... --temporal-flicker-video --temporal-flicker-video-fps 5
 ```
 
 The output directory receives one `temporal_flicker_videos/<sequence>.mp4` per
 sequence. All panels have the fixed ranges declared in `configs/temporal_x2.yaml`.
-If imageio/FFmpeg cannot encode MP4, the evaluation still records unchanged
-metrics and explicitly writes `temporal_flicker_video.status=NOT_AVAILABLE` in
-`metrics.json`; incomplete temporary files are removed.
+If imageio and `/usr/bin/ffmpeg` cannot encode MP4, the evaluation still records
+unchanged metrics and explicitly writes `temporal_flicker_video.status=NOT_AVAILABLE`
+in `metrics.json`; incomplete temporary files and encoder processes are cleaned
+up on failures or interruptions.
 
 ## M0 environment/backbone tool status and exit codes
 

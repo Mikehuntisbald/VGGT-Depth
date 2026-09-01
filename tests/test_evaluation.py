@@ -587,9 +587,15 @@ def test_temporal_flicker_collector_streams_frames_and_publishes_atomically(
         def close(self) -> None:
             self.closed = True
 
-    def open_writer(path: Path, *, fps: int) -> FakeWriter:
+    def open_writer(
+        path: Path,
+        *,
+        fps: int,
+        frame_size_hw: tuple[int, int],
+    ) -> tuple[FakeWriter, str]:
         assert fps == 7
-        return FakeWriter(path)
+        assert frame_size_hw == (52, 12)
+        return FakeWriter(path), "fake"
 
     monkeypatch.setattr(eval_cli, "_open_temporal_flicker_video_writer", open_writer)
     collector = eval_cli.TemporalFlickerVideoCollector(
@@ -612,6 +618,7 @@ def test_temporal_flicker_collector_streams_frames_and_publishes_atomically(
             "sequence_id": "seq/one",
             "path": str(tmp_path / "videos/seq_one.mp4"),
             "frame_count": 2,
+            "backend": "fake",
         }
     ]
     assert (tmp_path / "videos/seq_one.mp4").read_bytes() == b"fake-mp4"
@@ -622,8 +629,13 @@ def test_temporal_flicker_collector_reports_missing_encoder_without_partial_mp4(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    def unavailable(path: Path, *, fps: int) -> object:
-        del path, fps
+    def unavailable(
+        path: Path,
+        *,
+        fps: int,
+        frame_size_hw: tuple[int, int],
+    ) -> object:
+        del path, fps, frame_size_hw
         raise eval_cli._TemporalFlickerVideoUnavailable("FFmpeg unavailable")
 
     monkeypatch.setattr(eval_cli, "_open_temporal_flicker_video_writer", unavailable)
@@ -641,6 +653,124 @@ def test_temporal_flicker_collector_reports_missing_encoder_without_partial_mp4(
     assert report["reason"] == "FFmpeg unavailable"
     assert report["videos"] == []
     assert list((tmp_path / "videos").glob("*.mp4")) == []
+
+
+def test_temporal_flicker_abort_cleans_encoder_temp_file(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class FakeWriter:
+        def __init__(self, path: Path) -> None:
+            self.path = path
+            self.closed = False
+
+        def append_data(self, frame: np.ndarray) -> None:
+            del frame
+            self.path.write_bytes(b"partial")
+
+        def close(self) -> None:
+            self.closed = True
+
+    writer: FakeWriter | None = None
+
+    def open_writer(
+        path: Path,
+        *,
+        fps: int,
+        frame_size_hw: tuple[int, int],
+    ) -> tuple[FakeWriter, str]:
+        nonlocal writer
+        del fps, frame_size_hw
+        writer = FakeWriter(path)
+        return writer, "fake"
+
+    monkeypatch.setattr(eval_cli, "_open_temporal_flicker_video_writer", open_writer)
+    collector = eval_cli.TemporalFlickerVideoCollector(
+        tmp_path / "videos",
+        enabled=True,
+        fps=5,
+        disparity_range_hr_px=(0.0, 8.0),
+        error_range_hr_px=(0.0, 4.0),
+        uncertainty_range=(0.0, 1.0),
+    )
+    collector.append(sequence_id="seq", frame_id=4, timestamp=0.8, **_temporal_flicker_inputs())
+    collector.abort_for_interruption(KeyboardInterrupt("stop"))
+    assert writer is not None and writer.closed
+    assert list((tmp_path / "videos").glob("*.mp4")) == []
+
+
+def test_temporal_flicker_prefers_imageio_then_falls_back_to_direct_ffmpeg(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def imageio_missing(path: Path, *, fps: int) -> object:
+        del path, fps
+        raise ImportError("imageio absent")
+
+    class FakeDirectWriter:
+        pass
+
+    direct_writer = FakeDirectWriter()
+
+    def direct_writer_factory(
+        path: Path,
+        *,
+        fps: int,
+        frame_size_hw: tuple[int, int],
+    ) -> FakeDirectWriter:
+        assert path == tmp_path / "fallback.mp4"
+        assert fps == 5
+        assert frame_size_hw == (52, 12)
+        return direct_writer
+
+    monkeypatch.setattr(
+        eval_cli, "_open_imageio_temporal_flicker_writer", imageio_missing
+    )
+    monkeypatch.setattr(
+        eval_cli,
+        "_open_direct_ffmpeg_temporal_flicker_writer",
+        direct_writer_factory,
+    )
+    writer, backend = eval_cli._open_temporal_flicker_video_writer(
+        tmp_path / "fallback.mp4",
+        fps=5,
+        frame_size_hw=(52, 12),
+    )
+    assert writer is direct_writer
+    assert backend == "direct_ffmpeg_rgb24"
+
+
+@pytest.mark.skipif(
+    not eval_cli.DIRECT_FFMPEG_EXECUTABLE.is_file(),
+    reason="system direct FFmpeg is unavailable",
+)
+def test_direct_ffmpeg_rgb24_writer_creates_decodable_small_mp4(tmp_path: Path) -> None:
+    output = tmp_path / "tiny.mp4"
+    writer = eval_cli._open_direct_ffmpeg_temporal_flicker_writer(
+        output,
+        fps=5,
+        frame_size_hw=(2, 4),
+    )
+    writer.append_data(np.zeros((2, 4, 3), dtype=np.uint8))
+    writer.append_data(np.full((2, 4, 3), 255, dtype=np.uint8))
+    writer.close()
+    assert output.is_file() and output.stat().st_size > 0
+    decode = eval_cli.subprocess.run(
+        [
+            str(eval_cli.DIRECT_FFMPEG_EXECUTABLE),
+            "-v",
+            "error",
+            "-i",
+            str(output),
+            "-f",
+            "null",
+            "-",
+        ],
+        check=False,
+        stdout=eval_cli.subprocess.DEVNULL,
+        stderr=eval_cli.subprocess.PIPE,
+    )
+    assert decode.returncode == 0, decode.stderr.decode("utf-8", errors="replace")
 
 
 def test_temporal_flicker_config_is_opt_in_and_rejects_spatial_evaluation() -> None:
