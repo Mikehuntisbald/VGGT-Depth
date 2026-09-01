@@ -5,8 +5,8 @@ camera intrinsics become dense local ray directions, while camera transforms
 are split into rotation and translation direction before being broadcast over
 the spatial grid.  It deliberately does *not* predict or apply metric scale.
 
-All public extrinsics in this module are camera-from-camera transforms.  In
-particular, ``E_right_camera_from_left_camera_m`` obeys
+All public extrinsics in this module are homogeneous camera-from-camera
+transforms. In particular, ``T_right_rectified_from_left_rectified_m`` obeys
 
 ``X_right = R_right_from_left @ X_left + t_right_from_left``.
 
@@ -44,14 +44,30 @@ def _require_floating_tensor(
 ) -> Tensor:
     if not isinstance(value, Tensor) or not value.is_floating_point():
         raise TypeError(f"{name} must be a floating-point torch.Tensor")
+    if value.dtype != torch.float32:
+        raise TypeError(f"{name} must have dtype torch.float32")
     if tuple(value.shape) != shape:
         raise ValueError(f"{name} must have shape {shape}, got {tuple(value.shape)}")
     if value.device != device:
         raise ValueError(f"{name} must be on device {device}, got {value.device}")
-    value_fp32 = value.detach().to(dtype=torch.float32)
+    value_fp32 = value.detach()
     if not bool(torch.isfinite(value_fp32).all()):
         raise ValueError(f"{name} must contain only finite values")
     return value_fp32
+
+
+def _validate_homogeneous_rows(transforms: Tensor, *, name: str) -> None:
+    expected = transforms.new_tensor((0.0, 0.0, 0.0, 1.0))
+    rows = transforms[..., 3, :]
+    if not bool(
+        torch.isclose(
+            rows,
+            expected.expand_as(rows),
+            atol=1e-6,
+            rtol=0.0,
+        ).all()
+    ):
+        raise ValueError(f"{name} must have homogeneous bottom row [0,0,0,1]")
 
 
 def _validate_rotation_matrices(
@@ -118,6 +134,8 @@ def dense_unit_rays_from_K_hr(
 
     if not isinstance(K_left_hr_px, Tensor) or not K_left_hr_px.is_floating_point():
         raise TypeError("K_left_hr_px must be a floating-point torch.Tensor")
+    if K_left_hr_px.dtype != torch.float32:
+        raise TypeError("K_left_hr_px must have dtype torch.float32")
     if K_left_hr_px.ndim != 3 or tuple(K_left_hr_px.shape[-2:]) != (3, 3):
         raise ValueError(
             "K_left_hr_px must have shape [B,3,3], got "
@@ -134,7 +152,7 @@ def dense_unit_rays_from_K_hr(
         raise ValueError("spatial_scale must be a positive integer")
 
     with torch.autocast(device_type=K_left_hr_px.device.type, enabled=False):
-        intrinsics_hr = K_left_hr_px.detach().to(dtype=torch.float32)
+        intrinsics_hr = K_left_hr_px.detach()
         if not bool(torch.isfinite(intrinsics_hr).all()):
             raise ValueError("K_left_hr_px must contain only finite values")
         batch_size = intrinsics_hr.shape[0]
@@ -212,13 +230,17 @@ class CalibrationConditionerV3(nn.Module):
             nn.Linear(self.output_channels, self.output_channels),
             nn.LayerNorm(self.output_channels),
         )
-        # Each age contributes rot6d, t_direction, log1p(||t||/B), and a mask.
-        temporal_input_channels = TEMPORAL_POSE_AGES * (10 + 1)
-        self.temporal_pose_encoder = nn.Sequential(
-            nn.Linear(temporal_input_channels, self.output_channels),
-            nn.SiLU(inplace=True),
-            nn.Linear(self.output_channels, self.output_channels),
-            nn.LayerNorm(self.output_channels),
+        # Age-1 and age-2 are encoded by independent, parameter-matched MLPs.
+        # Masking is applied *after* each MLP, so an invalid age embedding is
+        # exactly zero even after its encoder has learned affine biases.
+        self.temporal_pose_encoders = nn.ModuleList(
+            nn.Sequential(
+                nn.Linear(10, self.output_channels),
+                nn.SiLU(inplace=True),
+                nn.Linear(self.output_channels, self.output_channels),
+                nn.LayerNorm(self.output_channels),
+            )
+            for _ in range(TEMPORAL_POSE_AGES)
         )
         self.fusion_norm = nn.GroupNorm(8, self.output_channels)
         self.output_adapter = nn.Conv2d(
@@ -238,9 +260,9 @@ class CalibrationConditionerV3(nn.Module):
         *,
         K_left_hr_px: Tensor | None,
         baseline_m: Tensor | None,
-        E_right_camera_from_left_camera_m: Tensor | None,
-        E_current_camera_from_history_camera_m: Tensor | None,
-        temporal_pose_valid_mask: Tensor | None,
+        T_right_rectified_from_left_rectified_m: Tensor | None,
+        T_current_from_history_m: Tensor | None,
+        temporal_pose_valid: Tensor | None,
     ) -> tuple[Tensor | None, Tensor | None, Tensor | None, Tensor | None, Tensor | None]:
         if (
             not isinstance(reference_feature_lr, Tensor)
@@ -282,21 +304,25 @@ class CalibrationConditionerV3(nn.Module):
             if not bool((baseline > 0).all()):
                 raise ValueError("baseline_m must be strictly positive")
             static_extrinsics = _require_floating_tensor(
-                E_right_camera_from_left_camera_m,
-                name="E_right_camera_from_left_camera_m",
-                shape=(batch_size, 3, 4),
+                T_right_rectified_from_left_rectified_m,
+                name="T_right_rectified_from_left_rectified_m",
+                shape=(batch_size, 4, 4),
                 device=device,
+            )
+            _validate_homogeneous_rows(
+                static_extrinsics,
+                name="T_right_rectified_from_left_rectified_m",
             )
             _validate_rotation_matrices(
                 static_extrinsics[:, :3, :3],
-                name="E_right_camera_from_left_camera_m",
+                name="T_right_rectified_from_left_rectified_m",
             )
             static_norm = torch.linalg.vector_norm(
                 static_extrinsics[:, :3, 3], dim=-1
             )
             if not bool((static_norm > 0).all()):
                 raise ValueError(
-                    "E_right_camera_from_left_camera_m translation must be non-zero"
+                    "T_right_rectified_from_left_rectified_m translation must be non-zero"
                 )
             if not bool(
                 torch.isclose(
@@ -314,49 +340,53 @@ class CalibrationConditionerV3(nn.Module):
                 raise ValueError(
                     "baseline_m was provided while stereo/temporal pose are disabled"
                 )
-            if E_right_camera_from_left_camera_m is not None:
+            if T_right_rectified_from_left_rectified_m is not None:
                 raise ValueError(
-                    "E_right_camera_from_left_camera_m was provided while pose inputs are disabled"
+                    "T_right_rectified_from_left_rectified_m was provided while pose inputs are disabled"
                 )
 
         temporal_extrinsics: Tensor | None = None
         temporal_mask: Tensor | None = None
         if self.use_temporal_pose:
             temporal_extrinsics = _require_floating_tensor(
-                E_current_camera_from_history_camera_m,
-                name="E_current_camera_from_history_camera_m",
-                shape=(batch_size, TEMPORAL_POSE_AGES, 3, 4),
+                T_current_from_history_m,
+                name="T_current_from_history_m",
+                shape=(batch_size, TEMPORAL_POSE_AGES, 4, 4),
                 device=device,
             )
-            if not isinstance(temporal_pose_valid_mask, Tensor):
-                raise TypeError("temporal_pose_valid_mask must be a torch.Tensor")
-            if temporal_pose_valid_mask.dtype != torch.bool:
-                raise TypeError("temporal_pose_valid_mask must have dtype torch.bool")
-            if tuple(temporal_pose_valid_mask.shape) != (
+            _validate_homogeneous_rows(
+                temporal_extrinsics,
+                name="T_current_from_history_m",
+            )
+            if not isinstance(temporal_pose_valid, Tensor):
+                raise TypeError("temporal_pose_valid must be a torch.Tensor")
+            if temporal_pose_valid.dtype != torch.bool:
+                raise TypeError("temporal_pose_valid must have dtype torch.bool")
+            if tuple(temporal_pose_valid.shape) != (
                 batch_size,
                 TEMPORAL_POSE_AGES,
             ):
                 raise ValueError(
-                    "temporal_pose_valid_mask must have shape "
+                    "temporal_pose_valid must have shape "
                     f"{(batch_size, TEMPORAL_POSE_AGES)}, got "
-                    f"{tuple(temporal_pose_valid_mask.shape)}"
+                    f"{tuple(temporal_pose_valid.shape)}"
                 )
-            if temporal_pose_valid_mask.device != device:
+            if temporal_pose_valid.device != device:
                 raise ValueError(
-                    "temporal_pose_valid_mask must share the model input device"
+                    "temporal_pose_valid must share the model input device"
                 )
-            temporal_mask = temporal_pose_valid_mask.detach()
+            temporal_mask = temporal_pose_valid.detach()
             _validate_rotation_matrices(
                 temporal_extrinsics[:, :, :3, :3],
-                name="E_current_camera_from_history_camera_m",
+                name="T_current_from_history_m",
                 valid_mask=temporal_mask,
             )
         else:
-            if E_current_camera_from_history_camera_m is not None:
+            if T_current_from_history_m is not None:
                 raise ValueError(
                     "temporal extrinsics were provided while use_temporal_pose is disabled"
                 )
-            if temporal_pose_valid_mask is not None:
+            if temporal_pose_valid is not None:
                 raise ValueError(
                     "temporal pose mask was provided while use_temporal_pose is disabled"
                 )
@@ -375,9 +405,9 @@ class CalibrationConditionerV3(nn.Module):
         *,
         K_left_hr_px: Tensor | None = None,
         baseline_m: Tensor | None = None,
-        E_right_camera_from_left_camera_m: Tensor | None = None,
-        E_current_camera_from_history_camera_m: Tensor | None = None,
-        temporal_pose_valid_mask: Tensor | None = None,
+        T_right_rectified_from_left_rectified_m: Tensor | None = None,
+        T_current_from_history_m: Tensor | None = None,
+        temporal_pose_valid: Tensor | None = None,
     ) -> Tensor:
         """Return a zero-initialized calibration residual ``[B,64,H,W]``."""
 
@@ -394,13 +424,13 @@ class CalibrationConditionerV3(nn.Module):
                 reference_feature_lr,
                 K_left_hr_px=K_left_hr_px,
                 baseline_m=baseline_m,
-                E_right_camera_from_left_camera_m=(
-                    E_right_camera_from_left_camera_m
+                T_right_rectified_from_left_rectified_m=(
+                    T_right_rectified_from_left_rectified_m
                 ),
-                E_current_camera_from_history_camera_m=(
-                    E_current_camera_from_history_camera_m
+                T_current_from_history_m=(
+                    T_current_from_history_m
                 ),
-                temporal_pose_valid_mask=temporal_pose_valid_mask,
+                temporal_pose_valid=temporal_pose_valid,
             )
         batch_size, _, height_lr, width_lr = reference_feature_lr.shape
         target_dtype = reference_feature_lr.dtype
@@ -467,21 +497,22 @@ class CalibrationConditionerV3(nn.Module):
                     ),
                     dim=-1,
                 )
-                mask_float = temporal_mask.unsqueeze(-1).to(dtype=torch.float32)
-                temporal_pose = temporal_pose * mask_float
-                temporal_input = torch.cat(
-                    (
-                        temporal_pose.reshape(batch_size, -1),
-                        mask_float.reshape(batch_size, -1),
-                    ),
-                    dim=-1,
+            age_features: list[Tensor] = []
+            for age_index, encoder in enumerate(self.temporal_pose_encoders):
+                age_mask = temporal_mask[:, age_index : age_index + 1]
+                pose_for_age = torch.where(
+                    age_mask,
+                    temporal_pose[:, age_index],
+                    torch.zeros_like(temporal_pose[:, age_index]),
                 )
-            temporal_feature = self.temporal_pose_encoder(
-                temporal_input.to(dtype=target_dtype)
-            )
-            temporal_feature = temporal_feature * temporal_mask.any(
-                dim=1, keepdim=True
-            ).to(dtype=temporal_feature.dtype)
+                feature = encoder(
+                    pose_for_age.to(dtype=target_dtype)
+                )
+                # Post-MLP masking is the exact-zero contract. It prevents
+                # learned Linear/LayerNorm biases from leaking an invalid age.
+                feature = feature * age_mask.to(dtype=feature.dtype)
+                age_features.append(feature)
+            temporal_feature = torch.stack(age_features, dim=1).sum(dim=1)
             fused = fused + temporal_feature.reshape(
                 batch_size, self.output_channels, 1, 1
             )

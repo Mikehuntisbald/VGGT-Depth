@@ -471,11 +471,66 @@ def validate_checkpoint_lineage(
             "evaluation teacher cache identity differs from checkpoint lineage"
         )
 
+    saved_calibration = config.get("calibration_conditioning_v3")
+    if saved_calibration is None:
+        saved_calibration = {
+            "enabled": False,
+            "protocol_version": "disabled",
+            "use_rays": False,
+            "use_stereo_pose": False,
+            "use_temporal_pose": False,
+        }
+    saved_calibration = _required_mapping(
+        saved_calibration, "checkpoint calibration-v3 config"
+    )
+    calibration_enabled = saved_calibration.get("enabled") is True
+    expected_derived_contract = (
+        "calibrated_stereo_v2" if calibration_enabled else "legacy_v1"
+    )
+    if data.get("derived_contract", "legacy_v1") != expected_derived_contract:
+        raise CheckpointMismatchError(
+            "checkpoint calibration and derived-cache contracts disagree"
+        )
+    if evaluation_config is not None:
+        current_config = _required_mapping(
+            evaluation_config, "resolved evaluation config"
+        )
+        current_calibration = _required_mapping(
+            current_config.get("calibration_conditioning_v3"),
+            "evaluation calibration-v3 config",
+        )
+        if dict(current_calibration) != dict(saved_calibration):
+            raise CheckpointMismatchError(
+                "evaluation calibration conditioning differs from checkpoint"
+            )
+        current_data = _required_mapping(
+            current_config.get("data"), "evaluation data config"
+        )
+        if current_data.get("derived_contract") != expected_derived_contract:
+            raise CheckpointMismatchError(
+                "evaluation derived-cache contract differs from checkpoint"
+            )
+        if calibration_enabled:
+            saved_sidecar = _required_mapping(
+                data.get("calibration_sidecar_lineage"),
+                "checkpoint calibration sidecar lineage",
+            )
+            current_sidecar = _required_mapping(
+                current_data.get("calibration_sidecar_lineage"),
+                "evaluation calibration sidecar lineage",
+            )
+            for name in ("component", "contract_version", "pixel_audit_sha256"):
+                if saved_sidecar.get(name) != current_sidecar.get(name):
+                    raise CheckpointMismatchError(
+                        f"evaluation calibration lineage differs for {name}"
+                    )
+
     result: dict[str, Any] = {
         "stage": required_stage,
         "source_sequence_length": expected_sequence_length,
         "observation_cache_identity": saved_observation,
         "teacher_cache_identity": saved_teacher,
+        "calibration_conditioning_v3": dict(saved_calibration),
     }
     if required_stage == "spatial":
         if bool(model.get("use_history", False)) or bool(
@@ -526,7 +581,12 @@ def validate_checkpoint_lineage(
     current_derived = _required_mapping(
         derived_cache_lineage, "evaluation derived-cache lineage"
     )
-    if saved_derived.get("component") != "vggt-ffs-derived-geometry-batch":
+    expected_derived_component = (
+        "vggt-ffs-derived-geometry-calibrated-stereo-v2-batch"
+        if calibration_enabled
+        else "vggt-ffs-derived-geometry-batch"
+    )
+    if saved_derived.get("component") != expected_derived_component:
         raise CheckpointMismatchError(
             "checkpoint derived-cache component is incompatible"
         )
@@ -540,7 +600,21 @@ def validate_checkpoint_lineage(
     current_policy = _required_mapping(
         current_derived.get("config"), "evaluation derived-cache policy"
     )
-    if dict(saved_policy) != dict(current_policy):
+    def comparable_policy(value: Mapping[str, Any]) -> dict[str, Any]:
+        result = dict(value)
+        calibration = result.get("rectified_stereo_calibration")
+        if isinstance(calibration, Mapping):
+            result["rectified_stereo_calibration"] = {
+                name: calibration.get(name)
+                for name in (
+                    "component",
+                    "contract_version",
+                    "pixel_audit_sha256",
+                )
+            }
+        return result
+
+    if comparable_policy(saved_policy) != comparable_policy(current_policy):
         raise CheckpointMismatchError(
             "evaluation derived-geometry policy differs from checkpoint lineage"
         )

@@ -94,6 +94,9 @@ def collate_training_samples(
         ),
         "K_hr": _stack_required(samples, "K_hr"),
         "baseline_m": _stack_required(samples, "baseline_m"),
+        "T_right_rectified_from_left_rectified_m": _stack_optional(
+            samples, "T_right_rectified_from_left_rectified_m"
+        ),
         "sequence_id": [_field(sample, "sequence_id") for sample in samples],
         "frame_id": torch.tensor(
             [_field(sample, "frame_id") for sample in samples], dtype=torch.int64
@@ -218,6 +221,12 @@ def collate_temporal_training_samples(
         "K_hr_sequence": _stack_temporal_required(samples, "K_hr_sequence"),
         "baseline_m_sequence": _stack_temporal_required(
             samples, "baseline_m_sequence"
+        ),
+        "T_right_rectified_from_left_rectified_m_sequence": (
+            _stack_temporal_optional(
+                samples,
+                "T_right_rectified_from_left_rectified_m_sequence",
+            )
         ),
         "vggt_disparity_hr_px_sequence": _stack_temporal_required(
             samples, "vggt_disparity_hr_px_sequence"

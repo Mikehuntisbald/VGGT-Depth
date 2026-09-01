@@ -6,6 +6,10 @@ from .camera import (
     resize_intrinsics,
     validate_intrinsics,
 )
+from .calibration_context import (
+    rectified_stereo_transform_4x4,
+    temporal_conditioning_transforms,
+)
 from .disparity import (
     depth_from_disparity,
     disparity_from_depth,
@@ -71,6 +75,7 @@ __all__ = [
     "adjacent_left_photometric_reprojection",
     "assess_pose_quality",
     "camera_centers_from_extrinsics",
+    "rectified_stereo_transform_4x4",
     "combine_pose_quality",
     "crop_intrinsics",
     "depth_from_disparity",
@@ -94,5 +99,6 @@ __all__ = [
     "validate_raw_cache_pair",
     "topk_z_aware_splat",
     "topk_z_aware_splat_v2",
+    "temporal_conditioning_transforms",
     "zbuffer_reproject",
 ]

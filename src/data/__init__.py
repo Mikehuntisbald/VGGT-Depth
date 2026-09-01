@@ -15,6 +15,11 @@ from .manifest import (
     load_manifest,
     write_manifest,
 )
+from .stereo_calibration import (
+    RectifiedCalibrationIndex,
+    RectifiedCalibrationRecord,
+    load_rectified_calibration_sidecar,
+)
 from .collate import collate_temporal_training_samples, collate_training_samples
 from .temporal_training_dataset import (
     CachedTemporalTrainingDataset,
@@ -37,6 +42,8 @@ __all__ = [
     "CausalWindow",
     "ManifestRecord",
     "ManifestValidationError",
+    "RectifiedCalibrationIndex",
+    "RectifiedCalibrationRecord",
     "FFSTrainingSample",
     "TemporalTrainingSample",
     "build_causal_windows",
@@ -44,6 +51,7 @@ __all__ = [
     "collate_temporal_training_samples",
     "iter_manifest",
     "load_manifest",
+    "load_rectified_calibration_sidecar",
     "load_cache_record",
     "sample_aligned_crop",
     "save_cache_record",

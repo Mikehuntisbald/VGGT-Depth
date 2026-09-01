@@ -1721,3 +1721,18 @@ def test_stage_a_cli_writes_bilinear_and_t1_csv_rows(tmp_path: Path) -> None:
     assert report["claims"]["acceptance_eligible"] is False
     assert report["checkpoint_training_completion"]["actual_step"] == 1
     assert "temporal_flicker_video" not in report
+    assert report["runtime_v3"]["contract_version"] == (
+        "matched_candidate_forward_runtime_v1"
+    )
+    assert report["runtime_v3"]["timing_backend"] == "time.perf_counter"
+    assert report["runtime_v3"]["model_forward_calls"] == 1
+    assert report["runtime_v3"]["model_forward_latency_ms_mean"] > 0.0
+    assert report["runtime_v3"]["cuda_peak_allocated_bytes"] is None
+    per_record = (output / "per_record_metrics.jsonl").read_text(
+        encoding="utf-8"
+    ).splitlines()
+    assert len(per_record) == 1
+    assert report["per_record_metrics"]["records"] == 1
+    assert report["per_record_metrics"]["sha256"] == sha256_file(
+        output / "per_record_metrics.jsonl"
+    )

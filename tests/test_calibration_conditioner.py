@@ -48,34 +48,30 @@ def _calibration_inputs(
         dtype=torch.float32,
         device=device,
     )
-    static = torch.zeros(
-        batch_size, 3, 4, dtype=torch.float32, device=device
+    static = torch.eye(4, dtype=torch.float32, device=device).repeat(
+        batch_size, 1, 1
     )
-    static[:, :3, :3] = torch.eye(3, dtype=torch.float32, device=device)
     static[:, 0, 3] = -baseline
 
-    temporal = torch.zeros(
-        batch_size, 2, 3, 4, dtype=torch.float32, device=device
-    )
-    temporal[:, :, :3, :3] = torch.eye(
-        3, dtype=torch.float32, device=device
-    )
+    temporal = torch.eye(4, dtype=torch.float32, device=device).reshape(
+        1, 1, 4, 4
+    ).repeat(batch_size, 2, 1, 1)
     temporal[:, 0, 0, 3] = 0.25 * baseline
     temporal[:, 1, 2, 3] = -0.5 * baseline
     temporal_mask = torch.ones(batch_size, 2, dtype=torch.bool, device=device)
     return {
         "K_left_hr_px": K,
         "baseline_m": baseline,
-        "E_right_camera_from_left_camera_m": static,
-        "E_current_camera_from_history_camera_m": temporal,
-        "temporal_pose_valid_mask": temporal_mask,
+        "T_right_rectified_from_left_rectified_m": static,
+        "T_current_from_history_m": temporal,
+        "temporal_pose_valid": temporal_mask,
     }
 
 
 def test_dense_unit_rays_are_fp32_unit_length_and_crop_equivariant() -> None:
     K_full = torch.tensor(
         [[[8.0, 0.0, 4.0], [0.0, 8.0, 4.0], [0.0, 0.0, 1.0]]],
-        dtype=torch.float64,
+        dtype=torch.float32,
     )
     full = dense_unit_rays_from_K_hr(
         K_full, height_lr=4, width_lr=4, spatial_scale=2
@@ -95,6 +91,16 @@ def test_dense_unit_rays_are_fp32_unit_length_and_crop_equivariant() -> None:
         K_crop, height_lr=2, width_lr=2, spatial_scale=2
     )
     torch.testing.assert_close(cropped, full[:, :, 1:3, 1:3])
+
+    # Resizing an image/intrinsics pair by 2 preserves rays at corresponding
+    # no-half-pixel coordinates.
+    K_resized = K_full.clone()
+    K_resized[:, 0, :] *= 2.0
+    K_resized[:, 1, :] *= 2.0
+    resized = dense_unit_rays_from_K_hr(
+        K_resized, height_lr=8, width_lr=8, spatial_scale=2
+    )
+    torch.testing.assert_close(resized[:, :, ::2, ::2], full)
 
 
 def test_conditioner_is_zero_initialized_and_has_no_metric_scale_path() -> None:
@@ -132,11 +138,11 @@ def test_masked_temporal_pose_slot_cannot_leak_into_conditioning() -> None:
         conditioner.output_adapter.weight.normal_(mean=0.0, std=0.02)
     reference = torch.randn(2, 64, 4, 6)
     calibration = _calibration_inputs()
-    calibration["temporal_pose_valid_mask"][:, 1] = False
+    calibration["temporal_pose_valid"][:, 1] = False
 
     changed = {name: value.clone() for name, value in calibration.items()}
-    changed_dynamic = changed["E_current_camera_from_history_camera_m"]
-    changed_dynamic[:, 1] = 37.0
+    changed_dynamic = changed["T_current_from_history_m"]
+    changed_dynamic[:, 1, :3, 3] = 37.0
     with torch.no_grad():
         expected = conditioner(reference, **calibration)
         actual = conditioner(reference, **changed)
@@ -154,14 +160,36 @@ def test_conditioner_rejects_bad_calibration_and_enforces_switches() -> None:
         conditioner(reference, **mismatch)
 
     bad_rotation = {name: value.clone() for name, value in calibration.items()}
-    bad_rotation["E_right_camera_from_left_camera_m"][:, 0, 0] = 2.0
+    bad_rotation["T_right_rectified_from_left_rectified_m"][:, 0, 0] = 2.0
     with pytest.raises(ValueError, match="proper orthonormal"):
         conditioner(reference, **bad_rotation)
 
     bad_mask = {name: value.clone() for name, value in calibration.items()}
-    bad_mask["temporal_pose_valid_mask"] = torch.ones(2, 2)
+    bad_mask["temporal_pose_valid"] = torch.ones(2, 2)
     with pytest.raises(TypeError, match="dtype torch.bool"):
         conditioner(reference, **bad_mask)
+
+    wrong_dtype = {name: value.clone() for name, value in calibration.items()}
+    wrong_dtype["K_left_hr_px"] = wrong_dtype["K_left_hr_px"].double()
+    with pytest.raises(TypeError, match="dtype torch.float32"):
+        conditioner(reference, **wrong_dtype)
+
+    malformed_homogeneous = {
+        name: value.clone() for name, value in calibration.items()
+    }
+    malformed_homogeneous["T_current_from_history_m"][:, :, 3, 0] = 1.0
+    with pytest.raises(ValueError, match="homogeneous bottom row"):
+        conditioner(reference, **malformed_homogeneous)
+
+    nonfinite = {name: value.clone() for name, value in calibration.items()}
+    nonfinite["baseline_m"][0] = torch.nan
+    with pytest.raises(ValueError, match="finite"):
+        conditioner(reference, **nonfinite)
+
+    wrong_device = {name: value.clone() for name, value in calibration.items()}
+    wrong_device["K_left_hr_px"] = torch.empty((2, 3, 3), device="meta")
+    with pytest.raises(ValueError, match="must be on device"):
+        conditioner(reference, **wrong_device)
 
     ray_only = CalibrationConditionerV3(
         use_rays=True, use_stereo_pose=False, use_temporal_pose=False
@@ -173,8 +201,8 @@ def test_conditioner_rejects_bad_calibration_and_enforces_switches() -> None:
         ray_only(
             reference,
             K_left_hr_px=calibration["K_left_hr_px"],
-            E_right_camera_from_left_camera_m=calibration[
-                "E_right_camera_from_left_camera_m"
+            T_right_rectified_from_left_rectified_m=calibration[
+                "T_right_rectified_from_left_rectified_m"
             ],
         )
 
@@ -194,13 +222,29 @@ def test_conditioner_parameters_receive_finite_gradients_after_adapter_opens() -
     parameters = (
         conditioner.ray_encoder[0][0].weight,
         conditioner.stereo_pose_encoder[0].weight,
-        conditioner.temporal_pose_encoder[0].weight,
+        conditioner.temporal_pose_encoders[0][0].weight,
+        conditioner.temporal_pose_encoders[1][0].weight,
         conditioner.output_adapter.weight,
     )
     for parameter in parameters:
         assert parameter.grad is not None
         assert bool(torch.isfinite(parameter.grad).all())
         assert parameter.grad.abs().sum().item() > 0.0
+
+
+def test_zero_initialized_conditioner_has_finite_nonzero_adapter_gradient() -> None:
+    torch.manual_seed(140)
+    conditioner = CalibrationConditionerV3().train()
+    reference = torch.randn(2, 64, 4, 6)
+    target = torch.randn_like(reference)
+
+    residual = conditioner(reference, **_calibration_inputs())
+    (residual * target).mean().backward()
+
+    gradient = conditioner.output_adapter.weight.grad
+    assert gradient is not None
+    assert bool(torch.isfinite(gradient).all())
+    assert gradient.abs().sum().item() > 0.0
 
 
 def test_v3_disabled_preserves_exact_v2_state_and_behavior() -> None:
@@ -293,3 +337,45 @@ def test_calibration_conditioner_cuda_bf16_forward_backward() -> None:
     assert bool(torch.isfinite(residual).all())
     assert conditioner.output_adapter.weight.grad is not None
     assert bool(torch.isfinite(conditioner.output_adapter.weight.grad).all())
+
+
+@pytest.mark.skipif(
+    not torch.cuda.is_available() or not torch.cuda.is_bf16_supported(),
+    reason="native CUDA BF16 is unavailable",
+)
+def test_full_v3_model_cuda_bf16_forward_backward_is_finite() -> None:
+    device = torch.device("cuda")
+    torch.manual_seed(18)
+    model = FFSOmegaTSR(
+        physical_output_v2=True,
+        temporal_history_top_k=4,
+        calibration_conditioning_v3=True,
+        use_rays=True,
+        use_stereo_pose=True,
+        use_temporal_pose=True,
+    ).to(device).train()
+    rgb, disparity, confidence = (
+        value.to(device) for value in _base_model_inputs(batch_size=2)
+    )
+    calibration = _calibration_inputs(batch_size=2, device=device)
+    with torch.autocast("cuda", dtype=torch.bfloat16):
+        output = model(rgb, disparity, confidence, **calibration)
+        assert output.valid_probability is not None
+        assert output.completion_probability is not None
+        loss = (
+            output.disparity_raw_hr_px.abs().mean()
+            + output.log_variance.square().mean()
+            + output.valid_probability.mean()
+            + output.completion_probability.mean()
+        )
+    loss.backward()
+
+    assert bool(torch.isfinite(output.disparity_hr_px).all())
+    assert bool(torch.isfinite(output.uncertainty).all())
+    gradients = [
+        parameter.grad
+        for parameter in model.parameters()
+        if parameter.requires_grad and parameter.grad is not None
+    ]
+    assert gradients
+    assert all(bool(torch.isfinite(gradient).all()) for gradient in gradients)

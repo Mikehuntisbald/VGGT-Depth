@@ -688,11 +688,82 @@ No v2 checkpoint has been trained or evaluated on the held-out set. Therefore:
   **NO-GO / NOT ESTABLISHED**;
 - canonical v1 and D-025 metrics, fields, and historical decisions: unchanged.
 
+## Architecture v3 implementation and cache receipt (untrained)
+
+Calibration-aware v3 is implemented as an independent extension of the full
+v2 architecture. All six parameter-matched ablation arms contain 1,771,884
+trainable parameters and the same 92 state-dict entries. The additional
+conditioner is a zero-initialized residual on the existing 64-channel geometry
+feature; ConvGRU width remains unchanged. Disabled v3 keeps the v2 state dict
+and output path unchanged. No scale token/head/loss, inverse-depth output,
+q-space fusion, 2D epipolar search or Stage-C behavior was added.
+
+The immutable rectified-stereo sidecars cover all 3031 manifest records:
+
+| Split | Records | Unique static calibrations | Sidecar SHA-256 | Receipt SHA-256 |
+|---|---:|---:|---|---|
+| train | 2787 | 1 | `3443dcc1c080ad857d5f64f617fc5a82b9e5a7ec8d5c2f254f4b41db5175541c` | `a616573331d08855db385ae814fd54de836ce8fcbe30c6ceb6ebf86f36ef9530` |
+| val | 244 | 1 | `ba91a2b4de73bf59867aa78a84bcc3d1c005e4ddfcc8030e6646508d9b49232b` | `14b12ad333b062edbd26c64a3f4dae19a5a4ac99bbdef77f3a8e94b8265d17e0` |
+
+Every record binds the exact manifest entry and stored-pixel audit hash. The
+runtime rig is the rectified virtual camera transform with
+`tx=-0.11612416665784427 m`; the raw optical-frame reconstruction and the known
+right-principal-point y discrepancy remain diagnostic only. The current
+single-rig corpus makes learned static stereo-pose attribution
+`NOT_IDENTIFIABLE` by construction.
+
+The independently rooted calibrated derived caches reuse the existing raw FFS
+and VGGT tensors. Train contains 2779 eligible causal windows (1514 original
+pose-valid, 1265 rejected); val contains 240 windows (178 valid, 62 rejected).
+Their batch receipts are:
+
+```text
+train 691ebe566407498b370f8043de823be4829d306d551462805b78431581b21275
+val   e670de0b0bab4fa58c50a2f775fea4cf8de786ed1a603cf5abf59720667b27f7
+```
+
+The validation temporal-input variation audit is PASS with 177/238 pose-valid
+formal T=3 endpoints (178/240 raw derived endpoints). Age-1 translation-norm
+population standard deviation is 0.09872 m (0.8501 baseline units) and
+rotation-angle standard deviation is 3.0226 degrees; age-2 values are 0.19688
+m (1.6954 baseline units) and 4.3409 degrees. The formal endpoint-ID SHA-256 is
+`1f089d23f94a3e066448c8a90faf96c4223f1906c0ece12a2a60be7d84959a44`;
+audit receipt SHA-256 is
+`15983dcf75121567ca99938637c6c22aab57c9331a7b2a41a45ae316c33b1d96`.
+This establishes only that the conditioner input varies, not pose accuracy or
+benefit. The formal runner hash-binds this audit to the validation derived
+receipt and cache manifest.
+
+The hard right-pose construction runs only after the unchanged unconstrained
+predicted-baseline scale and baseline-CV/rotation/photometric/depth gates. Its
+zero post-constraint residual is never counted as improved VGGT quality.
+
+Real-cache CUDA/BF16 execution smokes passed for both lineages: one Stage-A A3
+update used approximately 2.21/2.55 GiB peak allocated/reserved, and one
+Stage-B B1 update used approximately 5.91/6.28 GiB at micro-batch 1. These are
+execution receipts, not throughput or accuracy evidence. A subsequent complete
+Stage-B B1 optimizer update at the formal 4x2 schedule passed with
+23,427,577,344 / 24,463,278,080 bytes peak allocated/reserved (about
+21.82/22.78 GiB) and finite loss/gradients. The formal schedule therefore
+starts at micro-batch 4 and accumulation 2 and allows 2x4 only after an
+explicit CUDA OOM.
+
+Current v3 decision boundary:
+
+- implementation, sidecar, derived-cache, geometry and CUDA-smoke readiness:
+  **GO to launch the formal runner**;
+- rays, temporal-pose, accuracy, completion, latency, memory or deployment
+  promotion: **NO-GO / NOT ESTABLISHED until formal training and decision.json**;
+- static stereo-pose causal attribution on this one-rig dataset:
+  **NOT_IDENTIFIABLE**;
+- all canonical v1/v2 checkpoints, metrics and historical decisions:
+  unchanged.
+
 ## Tests
 
 ```text
 conda run --no-capture-output -n env-tsr python -m pytest -q
-442 passed in 9.83s
+526 passed in 22.38s
 ```
 
 The current suite includes receipt/cache identity, manifest/crop/intrinsics,
@@ -712,7 +783,11 @@ It additionally covers calibrated Stage-A/B and Stage-C point-cloud export,
 streaming flicker-video fallback/cleanup, deterministic failure-sample
 selection, D-025 positivity/preflight/loss-schema isolation, and independent
 Stage-C training/evaluation artifact audits with JSON/CSV and cache-lineage
-cross-checks.
+cross-checks. V3 coverage adds 3031-record sidecar/audit failures, hard-rig and
+dual-K/B transport, source-calibrated hidden gradients, dense rays and
+factorized poses, parameter-matched no-op conditioning, per-record decision
+metrics, runtime/VRAM gates, temporal-pose variation receipts, and resumable
+single-runner orchestration.
 
 ## Current open work
 

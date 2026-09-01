@@ -678,6 +678,104 @@ conda run --no-capture-output -n env-tsr python eval_epipolar.py \
   --device cuda --batch-size 1 --num-workers 4
 ```
 
+## 16. Build and run the calibration-aware v3 lineage
+
+V3 reuses the immutable raw FFS/VGGT caches. Do not edit the manifests and do
+not write v3 tensors into `m2_formal_{train,val}`. First build the
+manifest-bound rectified-rig sidecars from the stored-pixel audit:
+
+```bash
+export FFS_OMEGA_CACHE_ROOT=/home/haoyi/ffs_omega_cache
+export FFS_OMEGA_PROJECT_ROOT=/home/haoyi/ffs_omega_tsr
+
+conda run --no-capture-output -n env-tsr python tools/build_stereo_calibration.py \
+  --manifest "$FFS_OMEGA_CACHE_ROOT/manifests/train_video_isolated.jsonl" \
+  --pixel-audit "$FFS_OMEGA_PROJECT_ROOT/reports/m6/epipolar_rectification_audit.json" \
+  --output "$FFS_OMEGA_CACHE_ROOT/calibration/rectified_stereo_v1/train.jsonl"
+
+conda run --no-capture-output -n env-tsr python tools/build_stereo_calibration.py \
+  --manifest "$FFS_OMEGA_CACHE_ROOT/manifests/val_video_isolated.jsonl" \
+  --pixel-audit "$FFS_OMEGA_PROJECT_ROOT/reports/m6/epipolar_rectification_audit.json" \
+  --output "$FFS_OMEGA_CACHE_ROOT/calibration/rectified_stereo_v1/val.jsonl"
+```
+
+The builders fail closed on missing/duplicate records, manifest or pixel-audit
+hash drift, projection/intrinsics mismatch, non-SO(3) rotation, baseline drift,
+or a non-negative rectified right-from-left x translation. The known raw
+`K_right.cy` diagnostic offset is recorded but never changes the stored-pixel
+same-row runtime contract. Expected formal coverage is 2787 train plus 244 val
+= 3031 records.
+
+Build only the new derived geometry roots. Baseline scale and all original
+VGGT quality gates are computed before the hard stereo constraint; the
+constraint cannot turn a rejected pose into a valid one.
+
+```bash
+conda run --no-capture-output -n env-tsr python tools/derive_geometry_manifest.py \
+  --vggt-root "$FFS_OMEGA_CACHE_ROOT/m2_formal_train/vggt" \
+  --ffs-root "$FFS_OMEGA_CACHE_ROOT/m1_formal_train/observation" \
+  --output "$FFS_OMEGA_CACHE_ROOT/m2_calibrated_stereo_v2/train/derived" \
+  --rectified-calibration-sidecar \
+    "$FFS_OMEGA_CACHE_ROOT/calibration/rectified_stereo_v1/train.jsonl"
+
+conda run --no-capture-output -n env-tsr python tools/derive_geometry_manifest.py \
+  --vggt-root "$FFS_OMEGA_CACHE_ROOT/m2_formal_val/vggt" \
+  --ffs-root "$FFS_OMEGA_CACHE_ROOT/m1_formal_val/observation" \
+  --output "$FFS_OMEGA_CACHE_ROOT/m2_calibrated_stereo_v2/val/derived" \
+  --rectified-calibration-sidecar \
+    "$FFS_OMEGA_CACHE_ROOT/calibration/rectified_stereo_v1/val.jsonl"
+```
+
+Bind temporal identifiability to the exact 238 formal validation endpoints:
+
+```bash
+conda run --no-capture-output -n env-tsr python tools/audit_v3_temporal_pose.py \
+  --derived-root "$FFS_OMEGA_CACHE_ROOT/m2_calibrated_stereo_v2/val/derived" \
+  --manifest "$FFS_OMEGA_CACHE_ROOT/manifests/val_video_isolated.jsonl" \
+  --output "$FFS_OMEGA_PROJECT_ROOT/reports/v3/temporal_pose_variation_audit.json"
+```
+
+Run a source/input/audit-bound dry run before allocating a formal output root:
+
+```bash
+conda run --no-capture-output -n env-tsr python tools/run_v3_experiments.py \
+  --output-root "$FFS_OMEGA_PROJECT_ROOT/outputs/ffs_omega_tsr_x2_v3_dryrun" \
+  --train-manifest "$FFS_OMEGA_CACHE_ROOT/manifests/train_video_isolated.jsonl" \
+  --train-observation-cache-root "$FFS_OMEGA_CACHE_ROOT/m1_formal_train/observation" \
+  --train-teacher-cache-root "$FFS_OMEGA_CACHE_ROOT/m1_formal_train/teacher" \
+  --train-derived-cache-root "$FFS_OMEGA_CACHE_ROOT/m2_calibrated_stereo_v2/train/derived" \
+  --train-calibration-sidecar "$FFS_OMEGA_CACHE_ROOT/calibration/rectified_stereo_v1/train.jsonl" \
+  --validation-manifest "$FFS_OMEGA_CACHE_ROOT/manifests/val_video_isolated.jsonl" \
+  --validation-observation-cache-root "$FFS_OMEGA_CACHE_ROOT/m1_formal_val/observation" \
+  --validation-teacher-cache-root "$FFS_OMEGA_CACHE_ROOT/m1_formal_val/teacher" \
+  --validation-derived-cache-root "$FFS_OMEGA_CACHE_ROOT/m2_calibrated_stereo_v2/val/derived" \
+  --validation-calibration-sidecar "$FFS_OMEGA_CACHE_ROOT/calibration/rectified_stereo_v1/val.jsonl" \
+  --temporal-pose-audit "$FFS_OMEGA_PROJECT_ROOT/reports/v3/temporal_pose_variation_audit.json" \
+  --eval-batch-size 4 --additional-seeds auto \
+  --dry-run
+```
+
+For the formal queue, use a new empty output root, the same arguments without
+`--dry-run`, and pass
+`--temporal-pose-audit reports/v3/temporal_pose_variation_audit.json`. The
+runner verifies its PASS status plus derived receipt/manifest hashes. The older
+bare `--temporal-pose-varies` assertion remains available for synthetic tests,
+but is not the formal recipe. The runner executes A0/A1/A2/A3/B0/B1
+sequentially, starts at
+BF16 4x2, falls back to 2x4 only after an auditable CUDA OOM, atomically writes
+logs/PIDs/checkpoint hashes/summaries, and never treats a subprocess failure as
+a scientific NO-GO. Resume only with `--resume`; the runner rejects changed
+source/config/input hashes.
+
+Seed 42 is the compute screen. In `--additional-seeds auto` mode, seeds 43/44
+run only if an identifiable component passes the seed-42 aggregate screen.
+Final promotion nevertheless requires all three seeds, full 244-record Stage-A
+and 238-window Stage-B evaluations, paired per-record JSONL, same-direction
+effects and a sequence/frame clustered 95% bootstrap CI below zero. Missing
+latency/peak-VRAM evidence, incomplete masks, or any acceptance input fails
+closed. `decision.json` is the only GO/NO-GO receipt; smoke metrics and
+`orchestration_state.json` are not promotion evidence.
+
 ## M0 environment/backbone tool status and exit codes
 
 | Status | Exit | Meaning |

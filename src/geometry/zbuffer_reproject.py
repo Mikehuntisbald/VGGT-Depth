@@ -210,8 +210,17 @@ def _metric_depth_from_explicit_stereo_disparity(
         rtol=2e-4,
     )
     if bool((disparity_valid & (~supplied_valid | ~consistent)).any().item()):
+        comparable = disparity_valid & supplied_valid
+        relative_error = torch.where(
+            comparable,
+            (supplied_depth_m - recomputed_depth_m).abs()
+            / recomputed_depth_m.abs().clamp_min(1e-12),
+            torch.zeros_like(recomputed_depth_m),
+        )
         raise ValueError(
-            f"{name} is inconsistent with source fx*baseline/disparity"
+            f"{name} is inconsistent with source fx*baseline/disparity; "
+            f"mismatched={int((disparity_valid & (~supplied_valid | ~consistent)).sum())}, "
+            f"max_relative_error={float(relative_error.max()):.6g}"
         )
     return recomputed_depth_m
 

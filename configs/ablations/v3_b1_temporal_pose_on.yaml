@@ -1,0 +1,7 @@
+experiment: ffs_omega_tsr_v3_b1_temporal_pose_on
+defaults_from: configs/temporal_x2_v3.yaml
+
+calibration_conditioning_v3:
+  use_rays: true
+  use_stereo_pose: true
+  use_temporal_pose: true

@@ -40,6 +40,10 @@ from data.collate import (  # noqa: E402
     collate_training_samples,
 )
 from data.manifest import load_manifest  # noqa: E402
+from data.stereo_calibration import (  # noqa: E402
+    RectifiedCalibrationIndex,
+    load_rectified_calibration_sidecar,
+)
 from data.training_dataset import CachedFFSTrainingDataset  # noqa: E402
 from data.temporal_training_dataset import (  # noqa: E402
     CachedTemporalTrainingDataset,
@@ -60,6 +64,10 @@ from losses import (  # noqa: E402
     validity_completion_loss,
 )
 from geometry.history_confidence import history_confidence  # noqa: E402
+from geometry.calibration_context import (  # noqa: E402
+    rectified_stereo_transform_4x4,
+    temporal_conditioning_transforms,
+)
 from geometry.topk_splat import (  # noqa: E402
     TopKSplatResult,
     merge_topk_splat_results,
@@ -95,9 +103,12 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "observation_cache_root": None,
         "teacher_cache_root": None,
         "derived_geometry_cache_root": None,
+        "calibration_sidecar_path": None,
+        "derived_contract": "legacy_v1",
         "observation_cache_identity": None,
         "teacher_cache_identity": None,
         "derived_cache_lineage": None,
+        "calibration_sidecar_lineage": None,
         "crop_mode": "random",
     },
     "ffs": {
@@ -118,6 +129,13 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "cache_extrinsics": True,
         "cache_registers": True,
         "use_registers_in_model": False,
+    },
+    "calibration_conditioning_v3": {
+        "enabled": False,
+        "protocol_version": "disabled",
+        "use_rays": False,
+        "use_stereo_pose": False,
+        "use_temporal_pose": False,
     },
     "model": {
         "rgb_channels": [32, 64, 96],
@@ -207,6 +225,7 @@ class PhysicalOutputV2:
 
 TEMPORAL_HISTORY_V2_PROTOCOL = "topk_z_aware_hidden_warp_v2"
 TEMPORAL_RESIDUAL_V2_PROTOCOL = "teacher_gt_temporal_residual_v2"
+CALIBRATION_CONDITIONING_V3_PROTOCOL = "dense_rays_factorized_pose_v3"
 
 
 @dataclass(frozen=True, slots=True)
@@ -231,6 +250,40 @@ class TemporalResidualV2:
 
     enabled: bool = False
     reference: str = "teacher"
+
+
+@dataclass(frozen=True, slots=True)
+class CalibrationConditioningV3:
+    """Opt-in calibrated-ray and factorized-pose model input contract."""
+
+    enabled: bool = False
+    use_rays: bool = False
+    use_stereo_pose: bool = False
+    use_temporal_pose: bool = False
+
+
+def calibration_conditioning_v3_from_config(
+    config: Mapping[str, Any] | DictConfig,
+) -> CalibrationConditioningV3:
+    section = config.get("calibration_conditioning_v3")
+    if section is None:
+        return CalibrationConditioningV3()
+    if not isinstance(section, Mapping):
+        raise ValueError("calibration_conditioning_v3 must be a mapping")
+    enabled = section.get("enabled")
+    if enabled is False:
+        return CalibrationConditioningV3()
+    if enabled is not True:
+        raise ValueError("calibration_conditioning_v3.enabled must be a bool")
+    if section.get("protocol_version") != CALIBRATION_CONDITIONING_V3_PROTOCOL:
+        raise ValueError("calibration_conditioning_v3 protocol version mismatch")
+    switches: dict[str, bool] = {}
+    for name in ("use_rays", "use_stereo_pose", "use_temporal_pose"):
+        value = section.get(name)
+        if not isinstance(value, bool):
+            raise ValueError(f"calibration_conditioning_v3.{name} must be a bool")
+        switches[name] = value
+    return CalibrationConditioningV3(enabled=True, **switches)
 
 
 def temporal_history_v2_from_config(
@@ -461,6 +514,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="Stage-B vggt-ffs-derived-geometry cache directory",
     )
     parser.add_argument(
+        "--calibration-sidecar",
+        type=Path,
+        help="manifest-bound rectified stereo calibration JSONL sidecar",
+    )
+    parser.add_argument(
         "--init-from",
         type=Path,
         help="Stage-A checkpoint used to initialize a new Stage-B run",
@@ -553,6 +611,7 @@ def _validate_common_training_config(config: DictConfig, *, total_steps: int) ->
     physical_output_v2_from_config(config)
     temporal_history = temporal_history_v2_from_config(config)
     temporal_residual = temporal_residual_v2_from_config(config)
+    calibration_v3 = calibration_conditioning_v3_from_config(config)
     if temporal_history.enabled != temporal_residual.enabled:
         raise ValueError(
             "temporal_history_v2 and temporal_residual_v2 must be enabled together"
@@ -562,6 +621,18 @@ def _validate_common_training_config(config: DictConfig, *, total_steps: int) ->
             raise ValueError("temporal_history_v2 must retain at least K=2 candidates")
         if temporal_history.candidate_feature_channels != 32:
             raise ValueError("the V2 top-K candidate feature width is fixed to 32")
+    derived_contract = str(config.data.derived_contract)
+    if calibration_v3.enabled:
+        if not physical_output_v2_from_config(config).enabled or not temporal_history.enabled:
+            raise ValueError("calibration v3 must extend the complete architecture-v2 lineage")
+        if derived_contract != "calibrated_stereo_v2":
+            raise ValueError("calibration v3 requires data.derived_contract=calibrated_stereo_v2")
+        sidecar = config.data.calibration_sidecar_path
+        if sidecar is None or not str(sidecar).strip():
+            raise ValueError("calibration v3 requires data.calibration_sidecar_path")
+    else:
+        if derived_contract != "legacy_v1":
+            raise ValueError("legacy/v2 configs require data.derived_contract=legacy_v1")
     if int(config.data.scale) != 2 or int(config.model.convex_scale) != 2:
         raise ValueError("the first-round training pipeline is fixed to x2")
     if list(config.model.rgb_channels) != [32, 64, 96]:
@@ -820,6 +891,18 @@ def _resolved_container(config: DictConfig) -> dict[str, Any]:
     return value
 
 
+def _calibration_index_from_config(
+    config: DictConfig, *, manifest_path: Path
+) -> RectifiedCalibrationIndex | None:
+    contract = calibration_conditioning_v3_from_config(config)
+    if not contract.enabled:
+        return None
+    sidecar_path = _require_explicit_path(config, "data.calibration_sidecar_path")
+    return load_rectified_calibration_sidecar(
+        sidecar_path, expected_manifest_path=manifest_path
+    )
+
+
 def build_dataset_and_identities(
     config: DictConfig,
 ) -> tuple[CachedFFSTrainingDataset, CacheIdentity, CacheIdentity]:
@@ -838,6 +921,9 @@ def build_dataset_and_identities(
         expected_component="ffs-teacher",
         manifest_path=manifest_path,
     )
+    calibration_index = _calibration_index_from_config(
+        config, manifest_path=manifest_path
+    )
     crop_height, crop_width = (int(value) for value in config.data.hr_crop)
     dataset = CachedFFSTrainingDataset(
         manifest_path=manifest_path,
@@ -845,6 +931,7 @@ def build_dataset_and_identities(
         teacher_cache_root=teacher_root,
         observation_identity=observation_identity,
         teacher_identity=teacher_identity,
+        rectified_calibration_index=calibration_index,
         crop_size_hr_hw=(crop_height, crop_width),
         crop_mode=str(config.data.crop_mode),
         spatial_scale=int(config.data.scale),
@@ -874,6 +961,9 @@ def build_temporal_dataset_and_identities(
         expected_component="ffs-teacher",
         manifest_path=manifest_path,
     )
+    calibration_index = _calibration_index_from_config(
+        config, manifest_path=manifest_path
+    )
     crop_height, crop_width = (int(value) for value in config.data.hr_crop)
     dataset = CachedTemporalTrainingDataset(
         manifest_path=manifest_path,
@@ -882,6 +972,8 @@ def build_temporal_dataset_and_identities(
         derived_cache_root=derived_root,
         observation_identity=observation_identity,
         teacher_identity=teacher_identity,
+        rectified_calibration_index=calibration_index,
+        derived_contract=str(config.data.derived_contract),
         crop_size_hr_hw=(crop_height, crop_width),
         crop_mode=str(config.data.crop_mode),
         spatial_scale=int(config.data.scale),
@@ -897,6 +989,7 @@ def build_temporal_dataset_and_identities(
 def build_model(config: DictConfig) -> FFSOmegaTSR:
     positivity_ablation = positivity_ablation_from_config(config)
     physical_v2 = physical_output_v2_from_config(config)
+    calibration_v3 = calibration_conditioning_v3_from_config(config)
     temporal_history_v2 = temporal_history_v2_from_config(config)
     model = FFSOmegaTSR(
         rgb_channels=tuple(int(value) for value in config.model.rgb_channels),
@@ -921,6 +1014,10 @@ def build_model(config: DictConfig) -> FFSOmegaTSR:
         temporal_history_feature_channels=(
             temporal_history_v2.candidate_feature_channels
         ),
+        calibration_conditioning_v3=calibration_v3.enabled,
+        use_rays=calibration_v3.use_rays,
+        use_stereo_pose=calibration_v3.use_stereo_pose,
+        use_temporal_pose=calibration_v3.use_temporal_pose,
     )
     parameter_count = count_trainable_parameters(model)
     if parameter_count <= 0 or parameter_count >= 12_000_000:
@@ -1466,7 +1563,7 @@ def _metric_depth_from_hr_disparity(
     valid = torch.isfinite(disparity_hr_px) & (disparity_hr_px > 0)
     depth_m = torch.where(
         valid,
-        fx_hr * baseline / disparity_hr_px.clamp_min(1e-6),
+        fx_hr * baseline / disparity_hr_px.clamp_min(1e-12),
         torch.zeros_like(disparity_hr_px),
     )
     return depth_m, valid
@@ -1523,17 +1620,17 @@ def _topk_splat_for_memory(
     age_frames: int,
     contract: TemporalHistoryV2,
 ) -> TopKSplatResult:
-    depth_m, positive = _metric_depth_from_hr_disparity(
-        disparity_hr_px,
-        intrinsics_hr=intrinsics_previous_hr,
-        baseline_m=baseline_previous_m,
-    )
-    source_valid = (
-        source_valid_mask.to(dtype=torch.bool)
-        & positive
-        & pose_valid.reshape(-1, 1, 1, 1)
-    )
     with torch.autocast(device_type=disparity_hr_px.device.type, enabled=False):
+        depth_m, positive = _metric_depth_from_hr_disparity(
+            disparity_hr_px.float(),
+            intrinsics_hr=intrinsics_previous_hr.float(),
+            baseline_m=baseline_previous_m.float(),
+        )
+        source_valid = (
+            source_valid_mask.to(dtype=torch.bool)
+            & positive
+            & pose_valid.reshape(-1, 1, 1, 1)
+        )
         return topk_z_aware_splat(
             disparity_hr_px.float(),
             depth_m.float(),
@@ -2321,6 +2418,75 @@ def _reset_hidden_where_pose_invalid(
     return tuple(torch.where(selector, state, torch.zeros_like(state)) for state in hidden_state)
 
 
+def calibration_model_kwargs_spatial(
+    batch: Mapping[str, Any], contract: CalibrationConditioningV3
+) -> dict[str, Tensor]:
+    """Build fail-closed v3 inputs for one spatial batch."""
+
+    if not contract.enabled:
+        return {}
+    result: dict[str, Tensor] = {}
+    if contract.use_rays:
+        intrinsics = batch.get("K_hr")
+        if not isinstance(intrinsics, Tensor):
+            raise ValueError("calibration v3 spatial batch lacks K_hr")
+        result["K_left_hr_px"] = intrinsics.float()
+    if contract.use_stereo_pose or contract.use_temporal_pose:
+        baseline = batch.get("baseline_m")
+        transform = batch.get("T_right_rectified_from_left_rectified_m")
+        if not isinstance(baseline, Tensor) or not isinstance(transform, Tensor):
+            raise ValueError("calibration v3 spatial batch lacks baseline/stereo E")
+        result["baseline_m"] = baseline.float().reshape(-1)
+        result["T_right_rectified_from_left_rectified_m"] = (
+            rectified_stereo_transform_4x4(transform)
+        )
+    if contract.use_temporal_pose:
+        reference = batch.get("rgb_hr")
+        if not isinstance(reference, Tensor):
+            raise ValueError("calibration v3 spatial batch lacks rgb_hr")
+        batch_size = reference.shape[0]
+        identity = torch.eye(
+            4, device=reference.device, dtype=torch.float32
+        ).reshape(1, 1, 4, 4).expand(batch_size, 2, -1, -1).clone()
+        result["T_current_from_history_m"] = identity
+        result["temporal_pose_valid"] = torch.zeros(
+            batch_size, 2, device=reference.device, dtype=torch.bool
+        )
+    return result
+
+
+def calibration_model_kwargs_temporal(
+    batch: Mapping[str, Any],
+    *,
+    time_index: int,
+    contract: CalibrationConditioningV3,
+) -> dict[str, Tensor]:
+    """Build current/causal-past-only v3 inputs for one temporal step."""
+
+    if not contract.enabled:
+        return {}
+    spatial_view: dict[str, Any] = {
+        "rgb_hr": batch["rgb_hr_sequence"][:, time_index],
+        "K_hr": batch["K_hr_sequence"][:, time_index],
+        "baseline_m": batch["baseline_m_sequence"][:, time_index],
+        "T_right_rectified_from_left_rectified_m": (
+            None
+            if batch.get("T_right_rectified_from_left_rectified_m_sequence") is None
+            else batch["T_right_rectified_from_left_rectified_m_sequence"][:, time_index]
+        ),
+    }
+    result = calibration_model_kwargs_spatial(spatial_view, contract)
+    if contract.use_temporal_pose:
+        transforms, valid = temporal_conditioning_transforms(
+            batch["vggt_extrinsics_camera_from_world_metric_sequence"][:, time_index],
+            batch["temporal_pose_valid_sequence"][:, time_index],
+            student_time_index=time_index,
+        )
+        result["T_current_from_history_m"] = transforms
+        result["temporal_pose_valid"] = valid
+    return result
+
+
 def _forward_temporal_loss(
     model: FFSOmegaTSR,
     batch: Mapping[str, Any],
@@ -2335,7 +2501,8 @@ def _forward_temporal_loss(
     physical_v2 = physical_output_v2_from_config(config)
     temporal_history_v2 = temporal_history_v2_from_config(config)
     temporal_residual_v2 = temporal_residual_v2_from_config(config)
-    if temporal_history_v2.enabled:
+    calibration_v3 = calibration_conditioning_v3_from_config(config)
+    if temporal_history_v2.enabled and not calibration_v3.enabled:
         validate_v2_temporal_calibration(
             batch["K_hr_sequence"], batch["baseline_m_sequence"]
         )
@@ -2462,6 +2629,11 @@ def _forward_temporal_loss(
             "valid_ffs": step["valid_ffs"],
             "hidden_state": hidden_state,
         }
+        model_kwargs.update(
+            calibration_model_kwargs_temporal(
+                batch, time_index=time_index, contract=calibration_v3
+            )
+        )
         if transport is not None:
             model_kwargs.update(
                 {
@@ -2557,6 +2729,7 @@ def _forward_loss(
     weights: LossWeights,
     positivity_ablation: PositivityAblation = PositivityAblation(),
     physical_output_v2: PhysicalOutputV2 = PhysicalOutputV2(),
+    calibration_v3: CalibrationConditioningV3 = CalibrationConditioningV3(),
     diagnostic: bool = False,
 ) -> LossBreakdown:
     output = model(
@@ -2564,6 +2737,7 @@ def _forward_loss(
         batch["disparity_ffs_hr_px"],
         batch["confidence_ffs"],
         valid_ffs=batch["valid_ffs"],
+        **calibration_model_kwargs_spatial(batch, calibration_v3),
     )
     if diagnostic:
         finite = torch.stack(
@@ -2764,6 +2938,7 @@ def run(args: argparse.Namespace) -> int:
         "data.observation_cache_root": args.observation_cache_root,
         "data.teacher_cache_root": args.teacher_cache_root,
         "data.derived_geometry_cache_root": args.derived_cache_root,
+        "data.calibration_sidecar_path": getattr(args, "calibration_sidecar", None),
         "train.output_dir": args.output_dir,
     }
     for key, value in cli_values.items():
@@ -2792,6 +2967,23 @@ def run(args: argparse.Namespace) -> int:
         collate_function = collate_temporal_training_samples
         total_steps = int(config.train.steps)
         derived_cache_lineage = dataset.cache_lineage_summary
+    calibration_index = dataset.spatial_dataset.rectified_calibration_index if isinstance(
+        dataset, CachedTemporalTrainingDataset
+    ) else dataset.rectified_calibration_index
+    calibration_sidecar_lineage = (
+        None
+        if calibration_index is None
+        else {
+            "component": "rectified-stereo-calibration",
+            "contract_version": "stored_rectified_virtual_cameras_v1",
+            "sidecar_path": str(calibration_index.sidecar_path),
+            "sidecar_sha256": calibration_index.sidecar_sha256,
+            "receipt_path": str(calibration_index.receipt_path),
+            "receipt_sha256": calibration_index.receipt_sha256,
+            "source_manifest_sha256": calibration_index.source_manifest_sha256,
+            "pixel_audit_sha256": calibration_index.pixel_audit_sha256,
+        }
+    )
     OmegaConf.update(
         config,
         "data.observation_cache_identity",
@@ -2808,6 +3000,12 @@ def run(args: argparse.Namespace) -> int:
         config,
         "data.derived_cache_lineage",
         derived_cache_lineage,
+        merge=False,
+    )
+    OmegaConf.update(
+        config,
+        "data.calibration_sidecar_lineage",
+        calibration_sidecar_lineage,
         merge=False,
     )
     workers = int(config.train.num_workers)
@@ -2832,14 +3030,28 @@ def run(args: argparse.Namespace) -> int:
         raise RuntimeError(f"BF16 is unavailable on {torch.cuda.get_device_name(device)}")
     model = build_model(config).to(device)
     parameter_count = count_trainable_parameters(model)
+    calibration_v3 = calibration_conditioning_v3_from_config(config)
     initialization_lineage: Mapping[str, Any] | None = None
     if stage == "temporal" and args.resume is None:
         assert initialization_path is not None
+        required_stage_a_v3 = (
+            {
+                "enabled": True,
+                "protocol_version": CALIBRATION_CONDITIONING_V3_PROTOCOL,
+                "use_rays": True,
+                "use_stereo_pose": True,
+                "use_temporal_pose": False,
+            }
+            if calibration_v3.enabled
+            else None
+        )
         initialization_lineage = load_model_initialization_checkpoint(
             initialization_path,
             model=model,
             expected_parameter_count=parameter_count,
             required_sequence_length=1,
+            required_seed=int(config.seed) if calibration_v3.enabled else None,
+            required_calibration_conditioning_v3=required_stage_a_v3,
         )
         if (
             initialization_lineage["checkpoint_sha256"]
@@ -2879,6 +3091,7 @@ def run(args: argparse.Namespace) -> int:
                     weights=weights,
                     positivity_ablation=positivity_ablation,
                     physical_output_v2=physical_v2,
+                    calibration_v3=calibration_v3,
                     diagnostic=True,
                 )
             else:
@@ -2901,6 +3114,7 @@ def run(args: argparse.Namespace) -> int:
                     "observation_identity": observation_identity.to_dict(),
                     "teacher_identity": teacher_identity.to_dict(),
                     "derived_cache_lineage": derived_cache_lineage,
+                    "calibration_sidecar_lineage": calibration_sidecar_lineage,
                     "initialization_lineage": initialization_lineage,
                     "loss": breakdown.detached_scalars(),
                 },
@@ -2980,6 +3194,7 @@ def run(args: argparse.Namespace) -> int:
                             weights=weights,
                             positivity_ablation=positivity_ablation,
                             physical_output_v2=physical_v2,
+                            calibration_v3=calibration_v3,
                             diagnostic=diagnostic,
                         )
                     else:

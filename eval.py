@@ -17,6 +17,7 @@ import os
 import re
 import subprocess
 import sys
+import tempfile
 import time
 from contextlib import contextmanager, nullcontext
 from collections.abc import Callable, Mapping
@@ -74,16 +75,21 @@ from metrics.temporal import (  # noqa: E402
     temporal_residual_error,
 )
 from train import (  # noqa: E402
+    CalibrationConditioningV3,
     DEFAULT_CONFIG,
     ReferenceTemporalWarp,
     TemporalMemoryEntry,
     TemporalTransport,
     _reset_hidden_where_pose_invalid,
+    _calibration_index_from_config,
     _temporal_step_batch,
     build_model,
     build_reference_temporal_warp,
     build_topk_temporal_transport,
     build_temporal_transport,
+    calibration_conditioning_v3_from_config,
+    calibration_model_kwargs_spatial,
+    calibration_model_kwargs_temporal,
     load_receipt_identity,
     physical_output_v2_from_config,
     temporal_history_v2_from_config,
@@ -169,6 +175,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--derived-cache-root",
         type=Path,
         help="validation vggt-ffs-derived-geometry cache root for T=3",
+    )
+    parser.add_argument(
+        "--calibration-sidecar",
+        type=Path,
+        help="manifest-bound rectified stereo calibration JSONL sidecar",
     )
     parser.add_argument(
         "--output",
@@ -295,6 +306,7 @@ def _update_cli_values(config: DictConfig, args: argparse.Namespace) -> None:
         "data.observation_cache_root": args.observation_cache_root,
         "data.teacher_cache_root": args.teacher_cache_root,
         "data.derived_geometry_cache_root": args.derived_cache_root,
+        "data.calibration_sidecar_path": getattr(args, "calibration_sidecar", None),
         "eval.output_dir": args.output_dir,
         "eval.batch_size": args.batch_size,
         "eval.num_workers": args.num_workers,
@@ -351,6 +363,7 @@ def validate_evaluation_config(config: DictConfig) -> str:
 
     history_v2 = temporal_history_v2_from_config(config)
     residual_v2 = temporal_residual_v2_from_config(config)
+    calibration_v3 = calibration_conditioning_v3_from_config(config)
     if history_v2.enabled != residual_v2.enabled:
         raise ValueError(
             "temporal_history_v2 and temporal_residual_v2 must be enabled together"
@@ -374,8 +387,16 @@ def validate_evaluation_config(config: DictConfig) -> str:
             raise ValueError("temporal_history_v2 evaluation requires top_k >= 2")
     else:
         raise ValueError("evaluation supports only T=1 spatial or causal T=3")
-    if stage != "temporal" and (history_v2.enabled or residual_v2.enabled):
-        raise ValueError("temporal v2 evaluation requires causal T=3")
+    # Architecture-v2/v3 Stage A instantiates the top-K/temporal modules so
+    # its checkpoint is strictly compatible with Stage B; T=1 supplies no
+    # history and reports no temporal metric.
+    if calibration_v3.enabled:
+        if not history_v2.enabled or str(config.data.derived_contract) != "calibrated_stereo_v2":
+            raise ValueError("calibration v3 evaluation requires v2 plus calibrated_stereo_v2")
+        if config.data.calibration_sidecar_path is None:
+            raise ValueError("calibration v3 evaluation requires a sidecar path")
+    elif str(config.data.derived_contract) != "legacy_v1":
+        raise ValueError("legacy/v2 evaluation requires derived_contract=legacy_v1")
     if int(config.data.scale) != 2 or int(config.model.convex_scale) != 2:
         raise ValueError("first-round evaluation is fixed to x2")
     if list(config.model.rgb_channels) != [32, 64, 96]:
@@ -1102,6 +1123,49 @@ def _explicit_validity_completion_metrics(
     }
 
 
+def _calibration_contract_for_model(model: torch.nn.Module) -> CalibrationConditioningV3:
+    return CalibrationConditioningV3(
+        enabled=bool(getattr(model, "calibration_conditioning_v3", False)),
+        use_rays=bool(getattr(model, "use_rays", False)),
+        use_stereo_pose=bool(getattr(model, "use_stereo_pose", False)),
+        use_temporal_pose=bool(getattr(model, "use_temporal_pose", False)),
+    )
+
+
+def _calibration_model_kwargs_t1_from_temporal_batch(
+    batch: Mapping[str, Any],
+    *,
+    time_index: int,
+    contract: CalibrationConditioningV3,
+) -> dict[str, Tensor]:
+    """Build one independent T1 view with temporal pose explicitly invalid.
+
+    The Stage-B evaluator runs its bound Stage-A checkpoint independently on
+    each of the three frames.  Even when that checkpoint instantiated the full
+    v3 conditioner, a T1 comparator must never observe age-1/age-2 pose inputs.
+    ``calibration_model_kwargs_spatial`` owns the identity-plus-false encoding
+    for this case; using the temporal helper here would leak past-frame pose
+    conditioning into the nominal T1 row.
+    """
+
+    if not contract.enabled:
+        return {}
+    transform_sequence = batch.get(
+        "T_right_rectified_from_left_rectified_m_sequence"
+    )
+    spatial_view: dict[str, Any] = {
+        "rgb_hr": batch["rgb_hr_sequence"][:, time_index],
+        "K_hr": batch["K_hr_sequence"][:, time_index],
+        "baseline_m": batch["baseline_m_sequence"][:, time_index],
+        "T_right_rectified_from_left_rectified_m": (
+            None
+            if transform_sequence is None
+            else transform_sequence[:, time_index]
+        ),
+    }
+    return calibration_model_kwargs_spatial(spatial_view, contract)
+
+
 def _run_spatial_endpoint(
     model: torch.nn.Module,
     batch: dict[str, Any],
@@ -1110,6 +1174,7 @@ def _run_spatial_endpoint(
 ) -> SpatialEndpointPrediction:
     """Run T1 independently at each time and return the final transition."""
 
+    calibration_v3 = _calibration_contract_for_model(model)
     previous_output: ModelOutput | None = None
     previous_rgb_hr: Tensor | None = None
     final_transport: TemporalTransport | None = None
@@ -1125,6 +1190,9 @@ def _run_spatial_endpoint(
             step["confidence_ffs"],
             valid_ffs=step["valid_ffs"],
             hidden_state=None,
+            **_calibration_model_kwargs_t1_from_temporal_batch(
+                batch, time_index=time_index, contract=calibration_v3
+            ),
         )
         if time_index > 0:
             assert previous_output is not None and previous_rgb_hr is not None
@@ -1217,6 +1285,7 @@ def _run_temporal_endpoint_ablation(
     history_contract = temporal_history_v2_from_config(config)
     residual_contract = temporal_residual_v2_from_config(config)
     temporal_v2 = history_contract.enabled and residual_contract.enabled
+    calibration_v3 = _calibration_contract_for_model(model)
     for time_index in range(3):
         step = _temporal_step_batch(batch, time_index)
         pose_valid = batch["temporal_pose_valid_sequence"][:, time_index]
@@ -1325,6 +1394,10 @@ def _run_temporal_endpoint_ablation(
             "confidence_vggt": batch["confidence_vggt_sequence"][:, time_index],
             "valid_ffs": step["valid_ffs"],
         }
+        calibration_kwargs = calibration_model_kwargs_temporal(
+            batch, time_index=time_index, contract=calibration_v3
+        )
+        geometry_kwargs.update(calibration_kwargs)
         output_on = model(
             step["rgb_hr"],
             step["disparity_ffs_hr_px"],
@@ -1365,6 +1438,7 @@ def _run_temporal_endpoint_ablation(
             valid_vggt=torch.zeros_like(valid_vggt),
             valid_ffs=step["valid_ffs"],
             hidden_state=hidden_no_vggt,
+            **calibration_kwargs,
             **no_vggt_history_kwargs,
         )
         hidden_on = output_on.hidden_state
@@ -2568,6 +2642,109 @@ def _write_csv(
             writer.writerow(row)
 
 
+def _write_jsonl_atomic(path: Path, rows: list[dict[str, Any]]) -> None:
+    """Atomically publish deterministic per-record bootstrap evidence."""
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    descriptor, temporary_name = tempfile.mkstemp(
+        prefix=f".{path.name}.", suffix=".tmp", dir=path.parent
+    )
+    temporary = Path(temporary_name)
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+            for row in rows:
+                json.dump(row, handle, sort_keys=True, allow_nan=False)
+                handle.write("\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, path)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+class _ModelForwardTimer:
+    """Measure only the candidate model's forward calls during evaluation.
+
+    CUDA events avoid reporting asynchronous host enqueue time as inference
+    latency.  The hook is installed only on the top-level treatment model, so
+    the Stage-B T=1 comparator and shared metric/visualization work are not
+    charged to the v3 arm.  All arms execute the same endpoint ablations, which
+    makes the resulting per-forward mean a parameter-matched promotion check.
+    """
+
+    def __init__(self, model: torch.nn.Module, *, device: torch.device) -> None:
+        self.device = device
+        self._pending_cpu_started: float | None = None
+        self._pending_cuda_started: torch.cuda.Event | None = None
+        self._cpu_elapsed_seconds: list[float] = []
+        self._cuda_event_pairs: list[tuple[torch.cuda.Event, torch.cuda.Event]] = []
+        self._pre_handle = model.register_forward_pre_hook(self._before_forward)
+        self._post_handle = model.register_forward_hook(self._after_forward)
+
+    def _before_forward(
+        self, _module: torch.nn.Module, _inputs: tuple[Any, ...]
+    ) -> None:
+        if self._pending_cpu_started is not None or self._pending_cuda_started is not None:
+            raise RuntimeError("nested candidate model forwards cannot be timed")
+        if self.device.type == "cuda":
+            event = torch.cuda.Event(enable_timing=True)
+            event.record()
+            self._pending_cuda_started = event
+        else:
+            self._pending_cpu_started = time.perf_counter()
+
+    def _after_forward(
+        self,
+        _module: torch.nn.Module,
+        _inputs: tuple[Any, ...],
+        _output: Any,
+    ) -> None:
+        if self.device.type == "cuda":
+            started = self._pending_cuda_started
+            if started is None:
+                raise RuntimeError("candidate CUDA timer has no matching start event")
+            finished = torch.cuda.Event(enable_timing=True)
+            finished.record()
+            self._cuda_event_pairs.append((started, finished))
+            self._pending_cuda_started = None
+        else:
+            started = self._pending_cpu_started
+            if started is None:
+                raise RuntimeError("candidate CPU timer has no matching start time")
+            self._cpu_elapsed_seconds.append(time.perf_counter() - started)
+            self._pending_cpu_started = None
+
+    def finalize(self) -> dict[str, Any]:
+        self._pre_handle.remove()
+        self._post_handle.remove()
+        if self._pending_cpu_started is not None or self._pending_cuda_started is not None:
+            raise RuntimeError("candidate model timer ended during an incomplete forward")
+        if self.device.type == "cuda":
+            torch.cuda.synchronize(self.device)
+            latencies_ms = [
+                float(start.elapsed_time(finish))
+                for start, finish in self._cuda_event_pairs
+            ]
+            timing_backend = "torch.cuda.Event"
+        else:
+            latencies_ms = [value * 1000.0 for value in self._cpu_elapsed_seconds]
+            timing_backend = "time.perf_counter"
+        if not latencies_ms:
+            raise RuntimeError("candidate model forward timing recorded no calls")
+        return {
+            "contract_version": "matched_candidate_forward_runtime_v1",
+            "scope": (
+                "top-level candidate FFSOmegaTSR.forward only; shared transport, "
+                "T1 comparator, data loading, metrics, and visualization excluded"
+            ),
+            "timing_backend": timing_backend,
+            "model_forward_calls": len(latencies_ms),
+            "model_forward_latency_ms_mean": sum(latencies_ms) / len(latencies_ms),
+            "model_forward_latency_ms_min": min(latencies_ms),
+            "model_forward_latency_ms_max": max(latencies_ms),
+        }
+
+
 def _resolved_dict(config: DictConfig) -> dict[str, Any]:
     value = OmegaConf.to_container(config, resolve=True, enum_to_str=True)
     if not isinstance(value, dict):
@@ -2937,8 +3114,25 @@ def _audit_temporal_holdout_and_raw_lineage(
     training_derived_root = Path(
         saved_derived["derived_cache_root"]
     ).expanduser().resolve()
-    training_raw_root = training_derived_root.parent / "vggt"
-    evaluation_raw_root = dataset.derived_cache_root.parent / "vggt"
+    def raw_vggt_root(derived_root: Path) -> Path:
+        receipt_path = derived_root / "run_receipt.json"
+        try:
+            receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            raise ValueError(f"cannot read derived receipt {receipt_path}") from exc
+        source_roots = None
+        if isinstance(receipt, dict):
+            source_roots = receipt.get("source_roots")
+            if not isinstance(source_roots, dict):
+                source_roots = receipt.get("inputs")
+        value = source_roots.get("vggt_root") if isinstance(source_roots, dict) else None
+        if isinstance(value, str) and value:
+            return Path(value).expanduser().resolve()
+        # Backward-compatible fallback for the original colocated cache tree.
+        return derived_root.parent / "vggt"
+
+    training_raw_root = raw_vggt_root(training_derived_root)
+    evaluation_raw_root = raw_vggt_root(dataset.derived_cache_root)
     training_raw = _validated_raw_vggt_receipt(
         training_raw_root,
         expected_manifest_sha256=sha256_file(training_manifest_path),
@@ -2998,6 +3192,7 @@ def run(args: argparse.Namespace) -> int:
     stage = validate_evaluation_config(config)
     temporal_metric_v2 = temporal_residual_v2_from_config(config).enabled
     physical_metric_v2 = physical_output_v2_from_config(config).enabled
+    calibration_metric_v3 = calibration_conditioning_v3_from_config(config).enabled
     stage_label = "T1_SPATIAL_ONLY" if stage == "spatial" else "T3_CAUSAL_STAGE_B"
     seed_everything(int(config.seed), deterministic=True)
     model = build_model(config)
@@ -3059,6 +3254,9 @@ def run(args: argparse.Namespace) -> int:
         expected_component="ffs-teacher",
         manifest_path=manifest_path,
     )
+    calibration_index = _calibration_index_from_config(
+        config, manifest_path=manifest_path
+    )
     full_resolution = str(config.eval.crop_mode) == "full"
     crop_size = None if full_resolution else tuple(int(v) for v in config.data.hr_crop)
     origin_value = config.eval.fixed_crop_origin_hr_xy
@@ -3075,6 +3273,7 @@ def run(args: argparse.Namespace) -> int:
                 teacher_cache_root=teacher_root,
                 observation_identity=observation_identity,
                 teacher_identity=teacher_identity,
+                rectified_calibration_index=calibration_index,
                 crop_size_hr_hw=crop_size,
                 crop_mode="fixed",
                 fixed_crop_origin_hr_xy=fixed_origin,
@@ -3094,6 +3293,8 @@ def run(args: argparse.Namespace) -> int:
             derived_cache_root=derived_root,
             observation_identity=observation_identity,
             teacher_identity=teacher_identity,
+            rectified_calibration_index=calibration_index,
+            derived_contract=str(config.data.derived_contract),
             crop_size_hr_hw=crop_size,
             crop_mode="fixed",
             fixed_crop_origin_hr_xy=fixed_origin,
@@ -3107,6 +3308,26 @@ def run(args: argparse.Namespace) -> int:
         collate_function = collate_temporal_training_samples
     if len(dataset) == 0:
         raise ValueError("validation dataset is empty")
+    calibration_sidecar_lineage = (
+        None
+        if calibration_index is None
+        else {
+            "component": "rectified-stereo-calibration",
+            "contract_version": "stored_rectified_virtual_cameras_v1",
+            "sidecar_path": str(calibration_index.sidecar_path),
+            "sidecar_sha256": calibration_index.sidecar_sha256,
+            "receipt_path": str(calibration_index.receipt_path),
+            "receipt_sha256": calibration_index.receipt_sha256,
+            "source_manifest_sha256": calibration_index.source_manifest_sha256,
+            "pixel_audit_sha256": calibration_index.pixel_audit_sha256,
+        }
+    )
+    OmegaConf.update(
+        config,
+        "data.calibration_sidecar_lineage",
+        calibration_sidecar_lineage,
+        merge=False,
+    )
     start_index = int(config.eval.start)
     if start_index >= len(dataset):
         raise ValueError(
@@ -3151,7 +3372,7 @@ def run(args: argparse.Namespace) -> int:
         observation_cache_identity=observation_identity.to_dict(),
         teacher_cache_identity=teacher_identity.to_dict(),
         derived_cache_lineage=derived_lineage,
-        evaluation_config=_resolved_dict(config) if stage == "temporal" else None,
+        evaluation_config=_resolved_dict(config),
     )
     holdout_raw_lineage: dict[str, Any] | None = None
     if stage == "temporal":
@@ -3181,11 +3402,22 @@ def run(args: argparse.Namespace) -> int:
                 f"--spatial-checkpoint with the exact bound artifact: "
                 f"{spatial_checkpoint_path}"
             )
-        spatial_model = build_model(config)
+        spatial_preview = torch.load(
+            spatial_checkpoint_path, map_location="cpu", weights_only=False
+        )
+        spatial_saved_config = (
+            spatial_preview.get("config")
+            if isinstance(spatial_preview, Mapping)
+            else None
+        )
+        if not isinstance(spatial_saved_config, Mapping):
+            raise ValueError("Stage-A checkpoint has no resolved training config")
+        spatial_model = build_model(OmegaConf.create(dict(spatial_saved_config)))
+        spatial_parameter_count = count_trainable_parameters(spatial_model)
         spatial_checkpoint_metadata = load_model_for_evaluation(
             spatial_checkpoint_path,
             spatial_model,
-            expected_parameter_count=parameter_count,
+            expected_parameter_count=spatial_parameter_count,
             require_full_training_state=True,
         )
         spatial_checkpoint_metadata = _materialize_checkpoint_cache_identities(
@@ -3194,11 +3426,24 @@ def run(args: argparse.Namespace) -> int:
         validate_spatial_checkpoint_binding(
             spatial_checkpoint_metadata, checkpoint_lineage
         )
+        spatial_evaluation_config = _resolved_dict(config)
+        spatial_saved_training_config = spatial_checkpoint_metadata.get(
+            "training_config"
+        )
+        if not isinstance(spatial_saved_training_config, Mapping):
+            raise ValueError("Stage-A checkpoint training config is malformed")
+        spatial_evaluation_config["calibration_conditioning_v3"] = dict(
+            spatial_saved_training_config.get(
+                "calibration_conditioning_v3",
+                DEFAULT_CONFIG["calibration_conditioning_v3"],
+            )
+        )
         spatial_checkpoint_lineage = validate_checkpoint_lineage(
             spatial_checkpoint_metadata,
             required_stage="spatial",
             observation_cache_identity=observation_identity.to_dict(),
             teacher_cache_identity=teacher_identity.to_dict(),
+            evaluation_config=spatial_evaluation_config,
         )
         spatial_model.to(device=device).eval()
     model.to(device=device).eval()
@@ -3224,6 +3469,7 @@ def run(args: argparse.Namespace) -> int:
     visualization_limit = min(int(config.eval.visualization_samples), sample_count)
     visualized = 0
     visualization_records: list[dict[str, Any]] = []
+    per_record_metrics: list[dict[str, Any]] = []
     temporal_flicker_collector: TemporalFlickerVideoCollector | None = None
     if config.eval.temporal_flicker_video:
         temporal_flicker_collector = TemporalFlickerVideoCollector(
@@ -3259,6 +3505,15 @@ def run(args: argparse.Namespace) -> int:
     t3_vggt_sign_health = (
         T3VGGTSignHealthAccumulator() if stage == "temporal" else None
     )
+    candidate_forward_timer = _ModelForwardTimer(model, device=device)
+    cuda_memory_start: dict[str, int] | None = None
+    if device.type == "cuda":
+        torch.cuda.synchronize(device)
+        torch.cuda.reset_peak_memory_stats(device)
+        cuda_memory_start = {
+            "allocated_bytes": int(torch.cuda.memory_allocated(device)),
+            "reserved_bytes": int(torch.cuda.memory_reserved(device)),
+        }
     started = time.perf_counter()
 
     use_cuda_bf16 = (
@@ -3268,7 +3523,7 @@ def run(args: argparse.Namespace) -> int:
         for batch in loader:
             if stage == "temporal":
                 validate_temporal_batch_causality(batch)
-                if temporal_metric_v2:
+                if temporal_metric_v2 and not calibration_metric_v3:
                     validate_v2_temporal_calibration(
                         batch["K_hr_sequence"], batch["baseline_m_sequence"]
                     )
@@ -3336,6 +3591,9 @@ def run(args: argparse.Namespace) -> int:
                         endpoint_ffs_disparity,
                         endpoint_ffs_confidence,
                         valid_ffs=endpoint_ffs_valid,
+                        **calibration_model_kwargs_spatial(
+                            batch, _calibration_contract_for_model(model)
+                        ),
                     )
                     raw_predictions = {
                         "bilinear": baseline.float(),
@@ -3651,6 +3909,101 @@ def run(args: argparse.Namespace) -> int:
                     )
                 accumulators[method_name].update(sample_metrics)
 
+            # Write one paired-bootstrap row per source frame/window.  These
+            # are raw candidate metrics, never clamp/postprocess variants.
+            decision_method = "T1" if stage == "spatial" else "T3_VGGT"
+            decision_prediction = raw_predictions[decision_method]
+            for item_index in range(target.shape[0]):
+                record_metrics = compute_sample_metrics(
+                    decision_prediction[item_index : item_index + 1],
+                    target[item_index : item_index + 1].float(),
+                    target_trusted_mask=target_trusted[item_index : item_index + 1],
+                    ffs_confidence_hr=confidence_hr[item_index : item_index + 1].float(),
+                    ffs_valid_mask_hr=valid_hr[item_index : item_index + 1],
+                    ffs_trusted_mask_hr=trusted_hr[item_index : item_index + 1],
+                    low_confidence_threshold=float(
+                        config.eval.low_confidence_threshold
+                    ),
+                    boundary_gradient_threshold_px=float(
+                        config.eval.boundary_gradient_threshold_px
+                    ),
+                    boundary_radius_px=int(config.eval.boundary_radius_px),
+                )
+                if stage == "temporal" and temporal_metric_v2:
+                    assert temporal_visualization is not None
+                    reference = temporal_visualization.reference_transport
+                    if reference.prediction_disparity_hr_px is None:
+                        raise RuntimeError(
+                            "per-record temporal residual lacks carried prediction"
+                        )
+                    current_reference_valid = (
+                        target_valid[item_index : item_index + 1].bool()
+                        & target_trusted[item_index : item_index + 1].bool()
+                        & torch.isfinite(target[item_index : item_index + 1])
+                        & (target[item_index : item_index + 1] > 0)
+                    )
+                    transport = temporal_visualization.shared_transport
+                    record_metrics["temporal_residual_error_native_px"] = (
+                        hr_temporal_residual_metric(
+                            decision_prediction[item_index : item_index + 1],
+                            reference.prediction_disparity_hr_px[
+                                item_index : item_index + 1
+                            ],
+                            target[item_index : item_index + 1].float(),
+                            reference.disparity_hr_px[item_index : item_index + 1],
+                            visibility_mask_hr=transport.visibility_mask_hr[
+                                item_index : item_index + 1
+                            ],
+                            static_mask_hr=transport.static_mask_hr[
+                                item_index : item_index + 1
+                            ],
+                            collision_mask_hr=transport.collision_mask_hr[
+                                item_index : item_index + 1
+                            ],
+                            geometry_consistent_mask_hr=(
+                                transport.geometry_consistent_mask_hr[
+                                    item_index : item_index + 1
+                                ]
+                            ),
+                            valid_prediction_history_hr=transport.valid_history_hr[
+                                item_index : item_index + 1
+                            ],
+                            current_reference_valid_mask_hr=current_reference_valid,
+                            warped_previous_reference_valid_mask_hr=(
+                                reference.valid_mask_hr[item_index : item_index + 1]
+                            ),
+                        )
+                    )
+                if stage == "spatial":
+                    sequence_id = str(batch["sequence_id"][item_index])
+                    frame_id = int(batch["frame_id"][item_index].item())
+                    timestamp = float(batch["timestamp"][item_index].item())
+                    manifest_index = int(
+                        batch["identity_metadata"][item_index]["dataset_index"]
+                    )
+                else:
+                    sequence_id = str(batch["sequence_id"][item_index])
+                    frame_id = int(batch["frame_ids"][item_index, 2].item())
+                    timestamp = float(batch["timestamps"][item_index, 2].item())
+                    manifest_index = int(
+                        batch["manifest_indices"][item_index, 2].item()
+                    )
+                per_record_metrics.append(
+                    {
+                        "record_id": f"{sequence_id}/{frame_id}",
+                        "sequence_id": sequence_id,
+                        "frame_id": frame_id,
+                        "timestamp": timestamp,
+                        "manifest_index": manifest_index,
+                        "method": decision_method,
+                        "metrics": {
+                            name: float(metric.value)
+                            for name, metric in record_metrics.items()
+                            if metric.valid and metric.value is not None
+                        },
+                    }
+                )
+
             if failure_sample_collector is not None:
                 assert stage == "temporal"
                 assert temporal_visualization is not None
@@ -3878,6 +4231,40 @@ def run(args: argparse.Namespace) -> int:
                 )
                 visualized += 1
 
+    runtime_v3 = candidate_forward_timer.finalize()
+    if device.type == "cuda":
+        assert cuda_memory_start is not None
+        runtime_v3.update(
+            {
+                "cuda_memory_scope": (
+                    "complete matched evaluator loop after both models were loaded; "
+                    "includes shared transport and metric temporaries"
+                ),
+                "cuda_allocated_at_start_bytes": cuda_memory_start[
+                    "allocated_bytes"
+                ],
+                "cuda_reserved_at_start_bytes": cuda_memory_start[
+                    "reserved_bytes"
+                ],
+                "cuda_peak_allocated_bytes": int(
+                    torch.cuda.max_memory_allocated(device)
+                ),
+                "cuda_peak_reserved_bytes": int(
+                    torch.cuda.max_memory_reserved(device)
+                ),
+            }
+        )
+    else:
+        runtime_v3.update(
+            {
+                "cuda_memory_scope": "NOT_AVAILABLE_ON_CPU",
+                "cuda_allocated_at_start_bytes": None,
+                "cuda_reserved_at_start_bytes": None,
+                "cuda_peak_allocated_bytes": None,
+                "cuda_peak_reserved_bytes": None,
+            }
+        )
+
     temporal_flicker_report = (
         temporal_flicker_collector.finalize()
         if temporal_flicker_collector is not None
@@ -3947,6 +4334,15 @@ def run(args: argparse.Namespace) -> int:
         eligibility["final_acceptance_eligible"]
     )
     evaluation_status = str(eligibility["status"])
+    if len(per_record_metrics) != sample_count:
+        raise RuntimeError(
+            "per-record metric coverage differs from the evaluated selection"
+        )
+    record_ids = [str(row["record_id"]) for row in per_record_metrics]
+    if len(set(record_ids)) != len(record_ids):
+        raise RuntimeError("per-record metric identities are not unique")
+    per_record_path = output_dir / "per_record_metrics.jsonl"
+    _write_jsonl_atomic(per_record_path, per_record_metrics)
     aggregate_methods = {
         method: accumulator.finalize()
         for method, accumulator in accumulators.items()
@@ -4110,6 +4506,12 @@ def run(args: argparse.Namespace) -> int:
         },
         "point_to_plane": dict(POINT_TO_PLANE_NOT_AVAILABLE),
         "records_evaluated": sample_count,
+        "per_record_metrics": {
+            "path": str(per_record_path),
+            "sha256": sha256_file(per_record_path),
+            "records": len(per_record_metrics),
+            "paired_bootstrap_unit": "sequence_id/frame_id",
+        },
         "selection_start": start_index,
         "visualizations_written": visualized,
         "visualization_selection": visualization_records,
@@ -4124,6 +4526,7 @@ def run(args: argparse.Namespace) -> int:
             else {"failure_sample_bundles": failure_sample_report}
         ),
         "elapsed_seconds": elapsed_seconds,
+        "runtime_v3": runtime_v3,
         "device": str(device),
         "crop_mode": str(config.eval.crop_mode),
         "hr_crop": None if full_resolution else list(crop_size or ()),
@@ -4142,6 +4545,7 @@ def run(args: argparse.Namespace) -> int:
             "teacher": asdict(teacher_identity),
         },
         "derived_cache_lineage": derived_lineage,
+        "calibration_sidecar_lineage": calibration_sidecar_lineage,
         "formal_temporal_coverage": formal_coverage,
         "holdout_and_raw_lineage": holdout_raw_lineage,
         "causal_contract": (

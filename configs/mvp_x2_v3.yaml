@@ -1,0 +1,21 @@
+experiment: ffs_omega_tsr_spatial_x2_v3
+defaults_from: configs/mvp_x2_v2.yaml
+
+# Calibration-aware v3 is a separate checkpoint/cache lineage.  The sidecar
+# path must be supplied explicitly by the formal training/evaluation command.
+data:
+  calibration_sidecar_path: null
+  derived_contract: calibrated_stereo_v2
+
+calibration_conditioning_v3:
+  enabled: true
+  protocol_version: dense_rays_factorized_pose_v3
+  use_rays: true
+  use_stereo_pose: true
+  use_temporal_pose: true
+
+train:
+  micro_batch_size: 4
+  grad_accumulation: 2
+  effective_batch_size: 8
+  compile_model: false

@@ -156,6 +156,51 @@ v2 checkpoint, and initialize Stage C only from the resulting Stage-B v2
 checkpoint. Do not initialize any v2 stage from a canonical v1/D-025 strict
 checkpoint: parameter/state/config lineage checks are intentionally strict.
 
+## Architecture v3: calibration-aware geometry conditioning
+
+V3 is another opt-in lineage and leaves every v1/v2 manifest, raw cache,
+configuration and checkpoint contract unchanged. It adds a manifest-bound
+rectified-stereo sidecar, a calibrated-stereo-v2 derived cache, explicit
+source/target intrinsics and baselines for every temporal transport, and a
+parameter-matched calibration conditioner. FFS remains the sole metric owner:
+disparity is still in HR pixels, depth remains `fx * baseline / disparity`, and
+there is no learned scale token, scale head, q-space fusion or inverse-depth
+output.
+
+The conditioner converts crop-corrected HR intrinsics to dense unit rays on the
+LR grid. The fixed rectified rig is encoded only as rotation-6D plus translation
+direction; each causal age-1/age-2 transform adds
+`log1p(translation_norm / baseline)`. Invalid temporal ages have exactly zero
+embedding. A zero-initialized 64-channel residual is added to the existing
+geometry feature, so the ConvGRU width is unchanged and all A0/A1/A2/A3/B0/B1
+arms have the same parameters. The current model has about 1.77M trainable
+parameters, well below 12M.
+
+All history transport now obeys the dual-calibration equation:
+
+```text
+Z_source = fx_source * baseline_source / disparity_source
+P_target = T_target_from_source * (Z_source * inv(K_source) * pixel_source)
+disparity_target = fx_target * baseline_target / Z_target
+```
+
+This applies to top-K z-aware disparity candidates, fractional phase, RGB,
+teacher correspondences and the differentiable selected hidden features. Equal
+source/target calibration is regression-tested against v2. The Stage-C
+same-row search and its checkpoint behavior are intentionally unchanged.
+
+The v3 configs are `configs/mvp_x2_v3.yaml` and
+`configs/temporal_x2_v3.yaml`; exact parameter-matched arms live under
+`configs/ablations/v3_*.yaml`. Use the single resumable
+`tools/run_v3_experiments.py` runner described in RUNBOOK.md. Seed 42 controls
+whether seeds 43/44 run; only three-seed paired sequence/frame bootstrap
+evidence can publish a promotion decision. This dataset contains one audited
+static rig, so the standalone stereo-pose embedding is always
+`NOT_IDENTIFIABLE`, even if an exact A3/B1 checkpoint retains that branch as
+its evaluated background. Formal temporal-pose identifiability is supplied by
+the hash-bound `tools/audit_v3_temporal_pose.py` receipt, not a metric inferred
+after training.
+
 ## Colored point-cloud export
 
 `metrics.export_colored_point_cloud_ply` writes one calibrated camera-frame

@@ -1,0 +1,7 @@
+experiment: ffs_omega_tsr_v3_a3_rays_stereo_pose
+defaults_from: configs/mvp_x2_v3.yaml
+
+calibration_conditioning_v3:
+  use_rays: true
+  use_stereo_pose: true
+  use_temporal_pose: false

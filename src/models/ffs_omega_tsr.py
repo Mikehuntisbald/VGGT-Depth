@@ -360,9 +360,9 @@ class FFSOmegaTSR(nn.Module):
         hidden_state: Sequence[Tensor] | None = None,
         K_left_hr_px: Tensor | None = None,
         baseline_m: Tensor | None = None,
-        E_right_camera_from_left_camera_m: Tensor | None = None,
-        E_current_camera_from_history_camera_m: Tensor | None = None,
-        temporal_pose_valid_mask: Tensor | None = None,
+        T_right_rectified_from_left_rectified_m: Tensor | None = None,
+        T_current_from_history_m: Tensor | None = None,
+        temporal_pose_valid: Tensor | None = None,
     ) -> ModelOutput:
         """Run one causal time step.
 
@@ -384,13 +384,13 @@ class FFSOmegaTSR(nn.Module):
             hidden_state: Previous two-layer causal state, or ``None`` at reset.
             K_left_hr_px: Opt-in v3 cropped HR intrinsics ``[B,3,3]``.
             baseline_m: Opt-in v3 physical stereo baseline ``[B]`` in metres.
-            E_right_camera_from_left_camera_m: Opt-in v3 static stereo
-                camera-from-camera transform ``[B,3,4]``. It maps left-camera
-                coordinates into the right camera.
-            E_current_camera_from_history_camera_m: Opt-in v3 temporal
-                camera-from-camera transforms ``[B,2,3,4]`` ordered age1,
+            T_right_rectified_from_left_rectified_m: Opt-in v3 static stereo
+                homogeneous transform ``[B,4,4]``. It maps left-camera
+                coordinates into the rectified right camera.
+            T_current_from_history_m: Opt-in v3 temporal homogeneous
+                camera-from-camera transforms ``[B,2,4,4]`` ordered age1,
                 age2. Each maps its history camera into the current camera.
-            temporal_pose_valid_mask: Boolean temporal-pose mask ``[B,2]``.
+            temporal_pose_valid: Boolean temporal-pose mask ``[B,2]``.
         """
 
         if rgb_hr.ndim != 4 or rgb_hr.shape[1] != 3:
@@ -416,9 +416,9 @@ class FFSOmegaTSR(nn.Module):
         calibration_inputs = (
             K_left_hr_px,
             baseline_m,
-            E_right_camera_from_left_camera_m,
-            E_current_camera_from_history_camera_m,
-            temporal_pose_valid_mask,
+            T_right_rectified_from_left_rectified_m,
+            T_current_from_history_m,
+            temporal_pose_valid,
         )
         if self.calibration_conditioner is None and any(
             value is not None for value in calibration_inputs
@@ -586,13 +586,13 @@ class FFSOmegaTSR(nn.Module):
                 geometry_feature_lr,
                 K_left_hr_px=K_left_hr_px,
                 baseline_m=baseline_m,
-                E_right_camera_from_left_camera_m=(
-                    E_right_camera_from_left_camera_m
+                T_right_rectified_from_left_rectified_m=(
+                    T_right_rectified_from_left_rectified_m
                 ),
-                E_current_camera_from_history_camera_m=(
-                    E_current_camera_from_history_camera_m
+                T_current_from_history_m=(
+                    T_current_from_history_m
                 ),
-                temporal_pose_valid_mask=temporal_pose_valid_mask,
+                temporal_pose_valid=temporal_pose_valid,
             )
             geometry_feature_lr = geometry_feature_lr + calibration_residual_lr
         recurrent_features = [rgb_features.feature_lr, geometry_feature_lr]

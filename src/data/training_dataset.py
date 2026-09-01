@@ -33,6 +33,7 @@ from .cache_dataset import (
 )
 from .crop import CropWindow, sample_aligned_crop
 from .manifest import ManifestRecord, load_manifest
+from .stereo_calibration import RectifiedCalibrationIndex
 
 
 @dataclass(frozen=True, slots=True)
@@ -77,6 +78,7 @@ class FFSTrainingSample:
     frame_id: int
     timestamp: float
     identity_metadata: Mapping[str, Any]
+    T_right_rectified_from_left_rectified_m: Tensor | None = None
 
     @property
     def disparity_ffs_hr_px(self) -> Tensor:
@@ -345,6 +347,7 @@ class CachedFFSTrainingDataset(Dataset[FFSTrainingSample]):
         *,
         observation_identity: CacheIdentity | None = None,
         teacher_identity: CacheIdentity | None = None,
+        rectified_calibration_index: RectifiedCalibrationIndex | None = None,
         crop_size_hr_hw: tuple[int, int] | None = (384, 768),
         crop_mode: Literal["random", "fixed"] = "random",
         fixed_crop_origin_hr_xy: tuple[int, int] | None = None,
@@ -361,6 +364,15 @@ class CachedFFSTrainingDataset(Dataset[FFSTrainingSample]):
         )
         self.observation_identity = observation_identity
         self.teacher_identity = teacher_identity
+        self.rectified_calibration_index = rectified_calibration_index
+        if (
+            rectified_calibration_index is not None
+            and rectified_calibration_index.source_manifest_path
+            != self.manifest_path
+        ):
+            raise CacheMismatchError(
+                "rectified calibration sidecar is bound to a different manifest"
+            )
         self.spatial_scale = _positive_integer(spatial_scale, "spatial_scale")
         if crop_mode not in ("random", "fixed"):
             raise ValueError("crop_mode must be 'random' or 'fixed'")
@@ -669,6 +681,37 @@ class CachedFFSTrainingDataset(Dataset[FFSTrainingSample]):
             "epoch": self.epoch,
             "seed": self.seed,
         }
+        rectified_stereo_transform: Tensor | None = None
+        if self.rectified_calibration_index is not None:
+            calibration = self.rectified_calibration_index.record_for_manifest_index(
+                index
+            )
+            if (
+                calibration.sequence_id != record.sequence_id
+                or calibration.frame_id != record.frame_id
+                or calibration.timestamp != record.timestamp
+            ):
+                raise CacheMismatchError(
+                    "rectified calibration identity disagrees with the training record"
+                )
+            rectified_stereo_transform = calibration.as_tensor().contiguous()
+            identity_metadata["rectified_stereo_calibration"] = {
+                "sidecar_path": str(
+                    self.rectified_calibration_index.sidecar_path
+                ),
+                "sidecar_sha256": (
+                    self.rectified_calibration_index.sidecar_sha256
+                ),
+                "receipt_path": str(
+                    self.rectified_calibration_index.receipt_path
+                ),
+                "receipt_sha256": (
+                    self.rectified_calibration_index.receipt_sha256
+                ),
+                "calibration_record_sha256": (
+                    calibration.calibration_record_sha256
+                ),
+            }
         return FFSTrainingSample(
             rgb_hr=rgb_hr,
             observation_disparity_hr_px=observation_disparity_hr_px,
@@ -686,6 +729,9 @@ class CachedFFSTrainingDataset(Dataset[FFSTrainingSample]):
             frame_id=record.frame_id,
             timestamp=record.timestamp,
             identity_metadata=identity_metadata,
+            T_right_rectified_from_left_rectified_m=(
+                rectified_stereo_transform
+            ),
         )
 
 

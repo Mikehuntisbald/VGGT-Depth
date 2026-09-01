@@ -35,6 +35,7 @@ from .cache_dataset import (
     sha256_file,
 )
 from .crop import CropWindow, sample_aligned_crop
+from .stereo_calibration import RectifiedCalibrationIndex
 from .training_dataset import (
     CachedFFSTrainingDataset,
     CausalWindow,
@@ -45,6 +46,16 @@ from .training_dataset import (
 
 
 DERIVED_COMPONENT = "vggt-ffs-derived-geometry"
+CALIBRATED_DERIVED_COMPONENT = (
+    "vggt-ffs-derived-geometry-calibrated-stereo-v2"
+)
+LEGACY_DERIVED_ALGORITHM = (
+    "baseline_metric_scale+scale_only_alignment+strict_pose_quality"
+)
+CALIBRATED_DERIVED_ALGORITHM = (
+    LEGACY_DERIVED_ALGORITHM + "+calibrated_stereo_constraint_v2"
+)
+DERIVED_CONTRACTS = {"legacy_v1", "calibrated_stereo_v2"}
 STUDENT_SEQUENCE_LENGTH = 3
 VGGT_CONTEXT_PAIRS = 5
 VGGT_STEREO_VIEW_COUNT = 2 * VGGT_CONTEXT_PAIRS
@@ -102,6 +113,7 @@ class TemporalTrainingSample:
     timestamps: tuple[float, ...]
     manifest_indices: tuple[int, ...]
     identity_metadata: Mapping[str, Any]
+    T_right_rectified_from_left_rectified_m_sequence: Tensor | None = None
 
     @property
     def disparity_ffs_hr_px_sequence(self) -> Tensor:
@@ -143,7 +155,7 @@ def _is_within(path: Path, root: Path) -> bool:
 
 
 def _identity_from_mapping(
-    value: Mapping[str, Any], *, cache_path: Path
+    value: Mapping[str, Any], *, cache_path: Path, expected_component: str
 ) -> CacheIdentity:
     fields = {
         "component",
@@ -168,10 +180,10 @@ def _identity_from_mapping(
         ),
         config_sha256=str(value["config_sha256"]),
     )
-    if identity.component != DERIVED_COMPONENT:
+    if identity.component != expected_component:
         raise CacheMismatchError(
             f"derived cache component mismatch for {cache_path}: expected "
-            f"{DERIVED_COMPONENT!r}, got {identity.component!r}"
+            f"{expected_component!r}, got {identity.component!r}"
         )
     return identity
 
@@ -280,6 +292,7 @@ def _validate_derived_run_receipt(
     derived_cache_root: Path,
     *,
     entry_count: int,
+    derived_contract: str,
 ) -> dict[str, Any]:
     """Validate the batch receipt that owns the derived manifest.
 
@@ -303,12 +316,19 @@ def _validate_derived_run_receipt(
         ) from exc
     if not isinstance(receipt, Mapping):
         raise CacheMismatchError(f"derived receipt is not a mapping: {receipt_path}")
-    if receipt.get("schema_version") != 1:
+    calibrated = derived_contract == "calibrated_stereo_v2"
+    expected_schema_version = 2 if calibrated else 1
+    if receipt.get("schema_version") != expected_schema_version:
         raise CacheMismatchError(
             f"unsupported derived receipt schema in {receipt_path}: "
             f"{receipt.get('schema_version')!r}"
         )
-    if receipt.get("component") != "vggt-ffs-derived-geometry-batch":
+    expected_component = (
+        f"{CALIBRATED_DERIVED_COMPONENT}-batch"
+        if calibrated
+        else "vggt-ffs-derived-geometry-batch"
+    )
+    if receipt.get("component") != expected_component:
         raise CacheMismatchError(
             f"derived receipt component mismatch in {receipt_path}: "
             f"{receipt.get('component')!r}"
@@ -317,7 +337,11 @@ def _validate_derived_run_receipt(
     if not isinstance(config, Mapping):
         raise CacheMismatchError(f"derived receipt config missing: {receipt_path}")
     required_config = {
-        "algorithm": "baseline_metric_scale+scale_only_alignment+strict_pose_quality",
+        "algorithm": (
+            CALIBRATED_DERIVED_ALGORITHM
+            if calibrated
+            else LEGACY_DERIVED_ALGORITHM
+        ),
         "extrinsics_convention": "camera-from-world",
         "previous_left_view_index": 6,
         "current_left_view_index": 8,
@@ -333,6 +357,18 @@ def _validate_derived_run_receipt(
             f"derived receipt causal contract mismatch in {receipt_path}: "
             f"{differences}"
         )
+    if calibrated:
+        calibration = config.get("rectified_stereo_calibration")
+        if not isinstance(calibration, Mapping):
+            raise CacheMismatchError(
+                f"calibrated derived receipt lacks calibration lineage: {receipt_path}"
+            )
+        for name in ("sidecar_sha256", "receipt_sha256", "pixel_audit_sha256"):
+            value = calibration.get(name)
+            if not isinstance(value, str) or len(value) != 64:
+                raise CacheMismatchError(
+                    f"calibrated derived receipt has invalid {name}: {receipt_path}"
+                )
 
     actual_manifest_sha256 = _current_sha256(manifest_path)
     output = receipt.get("output")
@@ -437,6 +473,8 @@ def _validate_derived_lineage(
     observation_cache_path: Path,
     observation_cache_sha256: str,
     cache_path: Path,
+    derived_contract: str,
+    expected_calibration_lineage: Mapping[str, Any] | None = None,
 ) -> tuple[bool, bool]:
     metadata = payload.get("metadata")
     if not isinstance(metadata, Mapping):
@@ -444,8 +482,13 @@ def _validate_derived_lineage(
     config = metadata.get("config")
     if not isinstance(config, Mapping):
         raise CacheMismatchError(f"derived config missing for {cache_path}")
+    calibrated = derived_contract == "calibrated_stereo_v2"
     required_config = {
-        "algorithm": "baseline_metric_scale+scale_only_alignment+strict_pose_quality",
+        "algorithm": (
+            CALIBRATED_DERIVED_ALGORITHM
+            if calibrated
+            else LEGACY_DERIVED_ALGORITHM
+        ),
         "extrinsics_convention": "camera-from-world",
         "previous_left_view_index": 6,
         "current_left_view_index": 8,
@@ -460,6 +503,36 @@ def _validate_derived_lineage(
         raise CacheMismatchError(
             f"derived geometry contract mismatch for {cache_path}: {differences}"
         )
+    if calibrated:
+        calibration = config.get("rectified_stereo_calibration")
+        if not isinstance(calibration, Mapping):
+            raise CacheMismatchError(
+                f"calibrated derived config lacks sidecar lineage for {cache_path}"
+            )
+        if not isinstance(expected_calibration_lineage, Mapping):
+            raise CacheMismatchError(
+                f"active calibrated sidecar lineage is unavailable for {cache_path}"
+            )
+        compared_fields = (
+            "component",
+            "contract_version",
+            "sidecar_sha256",
+            "receipt_sha256",
+            "pixel_audit_sha256",
+        )
+        calibration_differences = {
+            name: {
+                "expected": expected_calibration_lineage.get(name),
+                "actual": calibration.get(name),
+            }
+            for name in compared_fields
+            if calibration.get(name) != expected_calibration_lineage.get(name)
+        }
+        if calibration_differences:
+            raise CacheMismatchError(
+                f"derived/active calibration lineage mismatch for {cache_path}: "
+                f"{calibration_differences}"
+            )
 
     target = metadata.get("target")
     expected_target = {
@@ -619,6 +692,8 @@ class CachedTemporalTrainingDataset(Dataset[TemporalTrainingSample]):
         observation_identity: CacheIdentity | None = None,
         teacher_identity: CacheIdentity | None = None,
         derived_identities: Mapping[tuple[str, int], CacheIdentity] | None = None,
+        rectified_calibration_index: RectifiedCalibrationIndex | None = None,
+        derived_contract: str = "legacy_v1",
         crop_size_hr_hw: tuple[int, int] | None = (384, 768),
         crop_mode: Literal["random", "fixed"] = "random",
         fixed_crop_origin_hr_xy: tuple[int, int] | None = None,
@@ -628,6 +703,18 @@ class CachedTemporalTrainingDataset(Dataset[TemporalTrainingSample]):
         seed: int = 42,
     ) -> None:
         super().__init__()
+        if derived_contract not in DERIVED_CONTRACTS:
+            raise ValueError(
+                f"derived_contract must be one of {sorted(DERIVED_CONTRACTS)}"
+            )
+        if (derived_contract == "calibrated_stereo_v2") != (
+            rectified_calibration_index is not None
+        ):
+            raise ValueError(
+                "calibrated_stereo_v2 requires a calibration sidecar index, and "
+                "legacy_v1 forbids one"
+            )
+        self.derived_contract = derived_contract
         if student_sequence_length != STUDENT_SEQUENCE_LENGTH:
             raise ValueError("Stage B is fixed to a causal student sequence length T=3")
         if vggt_context_pairs != VGGT_CONTEXT_PAIRS:
@@ -678,6 +765,7 @@ class CachedTemporalTrainingDataset(Dataset[TemporalTrainingSample]):
             teacher_cache_root,
             observation_identity=observation_identity,
             teacher_identity=teacher_identity,
+            rectified_calibration_index=rectified_calibration_index,
             crop_size_hr_hw=None,
             crop_mode="fixed",
             spatial_scale=self.spatial_scale,
@@ -697,7 +785,34 @@ class CachedTemporalTrainingDataset(Dataset[TemporalTrainingSample]):
         self.cache_lineage_summary = _validate_derived_run_receipt(
             self.derived_cache_root,
             entry_count=len(self.derived_entries),
+            derived_contract=self.derived_contract,
         )
+        if self.derived_contract == "calibrated_stereo_v2":
+            assert rectified_calibration_index is not None
+            active_calibration_lineage = {
+                "component": CALIBRATED_DERIVED_COMPONENT,
+                "contract_version": "stored_rectified_virtual_cameras_v1",
+                "sidecar_sha256": rectified_calibration_index.sidecar_sha256,
+                "receipt_sha256": rectified_calibration_index.receipt_sha256,
+                "pixel_audit_sha256": rectified_calibration_index.pixel_audit_sha256,
+            }
+            receipt_calibration = self.cache_lineage_summary["config"].get(
+                "rectified_stereo_calibration"
+            )
+            if not isinstance(receipt_calibration, Mapping):
+                raise CacheMismatchError(
+                    "calibrated derived receipt lacks active sidecar lineage"
+                )
+            calibration_differences = {
+                name: {"expected": expected, "actual": receipt_calibration.get(name)}
+                for name, expected in active_calibration_lineage.items()
+                if receipt_calibration.get(name) != expected
+            }
+            if calibration_differences:
+                raise CacheMismatchError(
+                    "derived receipt/active calibration lineage mismatch: "
+                    f"{calibration_differences}"
+                )
         self.derived_identities = (
             None if derived_identities is None else dict(derived_identities)
         )
@@ -823,7 +938,13 @@ class CachedTemporalTrainingDataset(Dataset[TemporalTrainingSample]):
             entry.cache_path, expected_identity=expected_identity
         )
         actual_identity = _identity_from_mapping(
-            payload["identity"], cache_path=entry.cache_path
+            payload["identity"],
+            cache_path=entry.cache_path,
+            expected_component=(
+                CALIBRATED_DERIVED_COMPONENT
+                if self.derived_contract == "calibrated_stereo_v2"
+                else DERIVED_COMPONENT
+            ),
         )
         observation_path = cache_path_for_record(
             self.observation_cache_root, record
@@ -834,6 +955,14 @@ class CachedTemporalTrainingDataset(Dataset[TemporalTrainingSample]):
             observation_cache_path=observation_path,
             observation_cache_sha256=_current_sha256(observation_path),
             cache_path=entry.cache_path,
+            derived_contract=self.derived_contract,
+            expected_calibration_lineage=(
+                self.cache_lineage_summary["config"].get(
+                    "rectified_stereo_calibration"
+                )
+                if self.derived_contract == "calibrated_stereo_v2"
+                else None
+            ),
         )
         tensors = payload["tensors"]
         disparity_vggt_hr_px = _scalar_chw(
@@ -886,9 +1015,13 @@ class CachedTemporalTrainingDataset(Dataset[TemporalTrainingSample]):
                     f"{entry.cache_path}"
                 )
 
-        extrinsics = tensors.get(
-            "vggt_extrinsics_camera_from_world_metric_temporal"
+        calibrated = self.derived_contract == "calibrated_stereo_v2"
+        extrinsics_name = (
+            "vggt_extrinsics_camera_from_world_metric_temporal_stereo_constrained"
+            if calibrated
+            else "vggt_extrinsics_camera_from_world_metric_temporal"
         )
+        extrinsics = tensors.get(extrinsics_name)
         if not isinstance(extrinsics, Tensor) or extrinsics.shape != (
             VGGT_STEREO_VIEW_COUNT,
             3,
@@ -913,6 +1046,33 @@ class CachedTemporalTrainingDataset(Dataset[TemporalTrainingSample]):
         # rejects it, even if tensor representation changes in a later schema.
         if not pose_valid:
             extrinsics = torch.zeros_like(extrinsics)
+
+        if calibrated:
+            calibration_valid = _scalar_bool(tensors, "stereo_calibration_valid")
+            cached_transform = tensors.get(
+                "T_right_rectified_from_left_rectified_m"
+            )
+            expected_transform = (
+                spatial_sample.T_right_rectified_from_left_rectified_m
+            )
+            if not calibration_valid:
+                raise CacheMismatchError(
+                    f"calibrated derived cache rejected stereo calibration: {entry.cache_path}"
+                )
+            if (
+                not isinstance(cached_transform, Tensor)
+                or tuple(cached_transform.shape) != (4, 4)
+                or expected_transform is None
+            ):
+                raise CacheMismatchError(
+                    f"calibrated stereo transform is missing or malformed: {entry.cache_path}"
+                )
+            if not torch.allclose(
+                cached_transform.float(), expected_transform.float(), atol=1e-6, rtol=0.0
+            ):
+                raise CacheMismatchError(
+                    f"derived/sidecar stereo transforms disagree: {entry.cache_path}"
+                )
 
         return (
             _crop_lr(disparity_vggt_hr_px, crop),
@@ -1045,6 +1205,13 @@ class CachedTemporalTrainingDataset(Dataset[TemporalTrainingSample]):
                 ],
                 "per_time_derived": [item[6] for item in derived],
             },
+            T_right_rectified_from_left_rectified_m_sequence=_stack_optional(
+                [
+                    sample.T_right_rectified_from_left_rectified_m
+                    for sample in cropped_samples
+                ],
+                "T_right_rectified_from_left_rectified_m",
+            ),
         )
 
 
