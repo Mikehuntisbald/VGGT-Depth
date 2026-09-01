@@ -1,0 +1,138 @@
+{
+  "schema_version": 1,
+  "component": "stage-b-intermediate-holdout-evaluation-with-sign-health",
+  "status": "INTERMEDIATE_ACCURACY_GATES_PASS_OUTPUT_HEALTH_FAIL",
+  "claim_boundary": {
+    "coverage_eligible": true,
+    "final_training_checkpoint": false,
+    "final_acceptance_eligible": false,
+    "formal_holdout": true,
+    "paper_accuracy": false,
+    "paper_ground_truth": false,
+    "target": "trusted_hr_ffs_teacher_pseudo_gt",
+    "note": "This is a complete 238-window diagnostic of the 10000/15000 checkpoint. It cannot own the final Stage-B decision."
+  },
+  "checkpoint": {
+    "path": "outputs/ffs_omega_tsr_x2/stage_b/step10000.pt",
+    "sha256": "2078f75be5649ce75940e5a613dec9d6e89e2c9c96e3c0a67d803f87b49103dd",
+    "step": 10000,
+    "configured_steps": 15000,
+    "training_git_hash": "3e0df0b543f5000d0bf8490740b5f34ad979e3b6"
+  },
+  "evaluator": {
+    "git_hash": "a3a5ab01bd1fe6895d8208937e1dca3838e0df9f",
+    "eval_py_sha256": "4d934573141239aaf252a3040a1469ee71482e6a9b16561a53af7bd761338027",
+    "evaluation_module_sha256": "9ce1551ba73585eb800b5f3749a44250a26a063f1b2eaea8c45f1b794504fa18",
+    "torch_version": "2.10.0+cu128",
+    "cuda_version": "12.8"
+  },
+  "coverage": {
+    "manifest_records": 244,
+    "derived_endpoint_records": 240,
+    "evaluable_t3_windows": 238,
+    "evaluated_t3_windows": 238,
+    "endpoint_pose_valid": 177,
+    "endpoint_pose_rejected": 61,
+    "endpoint_static_prior_valid": 177,
+    "future_frames": false,
+    "derived_receipt_sha256": "1e05c4e081620b9f634e9b3020779c6e4fdb7e21bf1df55365c3d4cde3d50620"
+  },
+  "metrics": {
+    "t1_paired_temporal_error_hr_px": 0.3632056074752127,
+    "t3_paired_temporal_error_hr_px": 0.27810384157727913,
+    "t3_vs_t1_temporal_relative_change_percent": -23.430741196290974,
+    "t1_vs_bilinear_low_confidence_epe_relative_change_percent": -10.59050302796077,
+    "t3_vs_bilinear_low_confidence_epe_relative_change_percent": 11.085709144178882,
+    "t3_vs_bilinear_invalid_region_completeness_relative_change_percent": 397.2417935850425,
+    "t3_vs_bilinear_trusted_region_epe_relative_change_percent": 0.07156948037161397,
+    "t3_vggt_vs_t3_epe_relative_change_percent": -16.426865263796177,
+    "t3_vggt_vs_bilinear_low_confidence_epe_relative_change_percent": -12.068254014996805,
+    "t3_vggt_vs_bilinear_invalid_region_completeness_relative_change_percent": 485.01007421127065,
+    "t3_vggt_vs_bilinear_trusted_region_epe_relative_change_percent": -5.457981513106822,
+    "t3_vggt_epe_hr_px": 0.1576819863245353,
+    "t3_vggt_boundary_epe_hr_px": 0.9476880610646734,
+    "t3_vggt_bad_1": 0.008382095594754885,
+    "t3_vggt_bad_2": 0.003126265131765432,
+    "t3_vggt_raw_nan_rate_percent": 0.0,
+    "t3_vggt_raw_infinite_rate_percent": 0.0,
+    "t3_vggt_raw_negative_rate_percent": 2.7824280753968252,
+    "t3_vggt_raw_invalid_rate_percent": 2.7824295001203606,
+    "t3_vggt_clamp0_negative_rate_percent": 0.0,
+    "t3_vggt_clamp0_zero_invalid_rate_percent": 2.7824295001203606
+  },
+  "engineering_gates": {
+    "t1_low_confidence_epe_improves_at_least_10_percent": true,
+    "t3_temporal_error_improves_at_least_10_percent": true,
+    "t3_vggt_low_confidence_epe_improves_at_least_10_percent": true,
+    "invalid_region_completeness_improves_at_least_15_percent": true,
+    "trusted_region_error_degradation_at_most_2_percent": true,
+    "raw_nan_or_negative_rate_below_0_5_percent": false,
+    "physical_clamp0_nan_or_negative_rate_below_0_5_percent": true,
+    "physical_clamp0_invalid_rate_below_0_5_percent": false,
+    "note": "Clamp-to-zero is fail-closed for depth conversion but retains every negative as an honest invalid zero; it does not solve output completeness."
+  },
+  "sign_health": {
+    "method": "T3_VGGT",
+    "records": 238,
+    "hr_domain_pixels": 70189056,
+    "lr_domain_pixels": 17547264,
+    "nonfinite_count_all_stages": 0,
+    "stage_negative_counts": {
+      "source_mix_lr": 309734,
+      "post_lr_residual": 1704481,
+      "post_convex": 6932232,
+      "post_hr_residual_raw": 5063318,
+      "post_anchor_final": 1952960
+    },
+    "stage_negative_rates_percent": {
+      "source_mix_lr": 1.7651412778653126,
+      "post_lr_residual": 9.713656784328314,
+      "post_convex": 9.876514082195379,
+      "post_hr_residual_raw": 7.213828321041958,
+      "post_anchor_final": 2.7824280753968252
+    },
+    "final_negative_by_bilinear_band": {
+      "bilinear_lt_0": 860384,
+      "bilinear_ge_0_lt_0_25": 975002,
+      "bilinear_ge_0_25": 117574,
+      "share_below_0_25_percent": 93.97970260527609
+    },
+    "final_negative_by_availability": {
+      "ffs_invalid": 874814,
+      "history_invalid": 1633757,
+      "pose_invalid": 1341965
+    },
+    "interpretation": "The source-mix floor is unchanged from step 7500. LR residual and convex propagation remain the bulk negative path, while the HR residual plus FFS anchor reduce the final count by 1639724 pixels versus step 7500."
+  },
+  "trajectory": {
+    "temporal_improvement_percent": {
+      "step2500": -10.561315662814508,
+      "step5000": -12.282528991375505,
+      "step7500": -14.252219843956606,
+      "step10000": -23.430741196290974
+    },
+    "vggt_prior_epe_effect_percent": {
+      "step2500": -1.5365621439070787,
+      "step5000": -8.36401517646691,
+      "step7500": -9.03051220305855,
+      "step10000": -16.426865263796177
+    },
+    "t3_vggt_raw_negative_rate_percent": {
+      "step5000": 1.4553080753785889,
+      "step7500": 5.118581449506886,
+      "step10000": 2.7824280753968252
+    },
+    "step10000_vs_step7500_negative_count_change_percent": -45.64064081338631
+  },
+  "artifacts": {
+    "metrics_json": "outputs/ffs_omega_tsr_x2/stage_b/eval_step10000_signhealth/metrics.json",
+    "metrics_json_sha256": "5b66faf1b2a85ccbfcb2f0236ca02f31c8b4563b56051de16051380924022967",
+    "metrics_csv": "outputs/ffs_omega_tsr_x2/stage_b/eval_step10000_signhealth/metrics.csv",
+    "metrics_csv_sha256": "04615bc9dea6457c8068ca60ecf3ee367cd015fe64153eecb2d5678f3c41264b",
+    "training_audit": "reports/m4/stage_b_training_audit_step10000.json",
+    "training_audit_sha256": "0759e036803b88ea234555879cfa54da8d4ff2460b49e126e1547b04cb7a040c",
+    "visualizations_written": 4,
+    "visualization_addition": "final_negative_mask.png",
+    "elapsed_seconds": 249.55299728199998
+  }
+}
