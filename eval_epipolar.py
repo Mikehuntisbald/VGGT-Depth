@@ -60,6 +60,7 @@ from evaluation import (  # noqa: E402
     validate_temporal_batch_causality,
 )
 from metrics.disparity import MetricResult  # noqa: E402
+from metrics.pointcloud import export_colored_point_cloud_ply  # noqa: E402
 from models.epipolar_refiner import HREpipolarRefiner  # noqa: E402
 from models.epipolar_stage import FrozenTemporalEpipolarStage  # noqa: E402
 from train import (  # noqa: E402
@@ -2115,6 +2116,8 @@ def _save_visualization(
     sample_name: str,
     rgb_left_hr: Tensor,
     rgb_right_hr: Tensor,
+    K_hr_px: Tensor,
+    baseline_m: Tensor,
     base_disparity_hr_px: Tensor,
     refined_disparity_hr_px: Tensor,
     correction_hr_px: Tensor,
@@ -2155,6 +2158,24 @@ def _save_visualization(
     )
     save_rgb_uint8(directory / "rgb_left.png", _rgb_uint8(rgb_left_hr))
     save_rgb_uint8(directory / "rgb_right.png", _rgb_uint8(rgb_right_hr))
+    # Both clouds use the endpoint's cropped, manifest-calibrated left camera
+    # intrinsics and physical stereo baseline.  The exporter is fail-closed:
+    # only finite, strictly-positive HR-pixel disparities with finite RGB are
+    # emitted, and it raises for invalid calibration rather than guessing it.
+    base_point_cloud = export_colored_point_cloud_ply(
+        base_disparity_hr_px,
+        rgb_left_hr,
+        K_hr_px,
+        baseline_m,
+        directory / "base_point_cloud_camera_frame.ply",
+    )
+    refined_point_cloud = export_colored_point_cloud_ply(
+        refined_disparity_hr_px,
+        rgb_left_hr,
+        K_hr_px,
+        baseline_m,
+        directory / "refined_point_cloud_camera_frame.ply",
+    )
     maps = (
         (
             "base_disparity_hr_px.png",
@@ -2247,6 +2268,22 @@ def _save_visualization(
                 "candidate_valid_pixels": int(
                     candidate_valid_mask.to(dtype=torch.bool).sum().item()
                 ),
+                "point_clouds": {
+                    "coordinate_frame": "left_camera_frame",
+                    "coordinate_units": "meters",
+                    "calibration": {
+                        "K_hr_px": K_hr_px.detach().float().cpu().tolist(),
+                        "baseline_m": float(baseline_m.detach().item()),
+                    },
+                    "base": {
+                        "path": base_point_cloud.path.name,
+                        "point_count": base_point_cloud.point_count,
+                    },
+                    "refined": {
+                        "path": refined_point_cloud.path.name,
+                        "point_count": refined_point_cloud.point_count,
+                    },
+                },
                 "provenance": dict(provenance or {}),
             },
             indent=2,
@@ -2620,6 +2657,8 @@ def run(args: argparse.Namespace) -> int:
                     sample_name=f"{visualized:04d}_{sequence}_{frame}",
                     rgb_left_hr=batch["rgb_hr_sequence"][item, -1],
                     rgb_right_hr=batch["rgb_right_hr"][item],
+                    K_hr_px=batch["K_hr_sequence"][item, -1],
+                    baseline_m=batch["baseline_m_sequence"][item, -1],
                     base_disparity_hr_px=base[item],
                     refined_disparity_hr_px=refined[item],
                     correction_hr_px=correction[item],

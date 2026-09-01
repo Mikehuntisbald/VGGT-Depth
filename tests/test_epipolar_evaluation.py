@@ -901,6 +901,10 @@ def test_metric_rows_and_visualizations_cover_base_and_refined(tmp_path: Path) -
         sample_name="sample",
         rgb_left_hr=torch.rand(3, 4, 6),
         rgb_right_hr=torch.rand(3, 4, 6),
+        K_hr_px=torch.tensor(
+            [[4.0, 0.0, 2.0], [0.0, 5.0, 1.0], [0.0, 0.0, 1.0]]
+        ),
+        baseline_m=torch.tensor(0.1),
         base_disparity_hr_px=base[0],
         refined_disparity_hr_px=refined[0],
         correction_hr_px=(refined - base)[0],
@@ -914,6 +918,8 @@ def test_metric_rows_and_visualizations_cover_base_and_refined(tmp_path: Path) -
     assert generated == {
         "rgb_left.png",
         "rgb_right.png",
+        "base_point_cloud_camera_frame.ply",
+        "refined_point_cloud_camera_frame.ply",
         "base_disparity_hr_px.png",
         "refined_disparity_hr_px.png",
         "target_disparity_hr_px.png",
@@ -930,6 +936,72 @@ def test_metric_rows_and_visualizations_cover_base_and_refined(tmp_path: Path) -
     )
     assert metadata["units"] == "HR pixels"
     assert metadata["shared_disparity_display_range_hr_px"] == [5.0, 5.0]
+    point_clouds = metadata["point_clouds"]
+    assert point_clouds == {
+        "coordinate_frame": "left_camera_frame",
+        "coordinate_units": "meters",
+        "calibration": {
+            "K_hr_px": [[4.0, 0.0, 2.0], [0.0, 5.0, 1.0], [0.0, 0.0, 1.0]],
+            "baseline_m": pytest.approx(0.1),
+        },
+        "base": {"path": "base_point_cloud_camera_frame.ply", "point_count": 24},
+        "refined": {
+            "path": "refined_point_cloud_camera_frame.ply",
+            "point_count": 24,
+        },
+    }
+    base_ply = (
+        tmp_path / "visualizations/sample/base_point_cloud_camera_frame.ply"
+    ).read_text(encoding="ascii")
+    assert "comment camera_frame left; coordinates_m" in base_ply
+    assert "element vertex 24" in base_ply
+    first_vertex = base_ply.split("end_header\n", maxsplit=1)[1].splitlines()[0]
+    x_m, y_m, z_m, *_ = (float(value) for value in first_vertex.split())
+    # Endpoint K=(fx=4, fy=5, cx=2, cy=1), B=0.1 and d=6 at (u,v)=(0,0).
+    assert (x_m, y_m, z_m) == pytest.approx((-1.0 / 30.0, -1.0 / 75.0, 1.0 / 15.0))
+
+
+def test_epipolar_visualization_point_clouds_fail_closed_for_nonpositive_or_nonfinite_disparity(
+    tmp_path: Path,
+) -> None:
+    base = torch.tensor([[[2.0, 0.0], [float("nan"), -1.0]]])
+    refined = torch.tensor([[[4.0, 2.0], [float("inf"), 1.0]]])
+    target = torch.ones((1, 2, 2))
+    trusted = torch.ones((1, 2, 2), dtype=torch.bool)
+    eval_epipolar._save_visualization(
+        tmp_path,
+        sample_name="sample",
+        rgb_left_hr=torch.tensor(
+            [
+                [[0.0, 0.25], [0.5, 0.75]],
+                [[0.0, 0.25], [0.5, 0.75]],
+                [[0.0, 0.25], [0.5, 0.75]],
+            ]
+        ),
+        rgb_right_hr=torch.zeros((3, 2, 2)),
+        K_hr_px=torch.tensor(
+            [[2.0, 0.0, 0.0], [0.0, 2.0, 0.0], [0.0, 0.0, 1.0]]
+        ),
+        baseline_m=torch.tensor(0.1),
+        base_disparity_hr_px=base,
+        refined_disparity_hr_px=refined,
+        correction_hr_px=refined - base,
+        confidence=torch.ones((1, 2, 2)),
+        target_disparity_hr_px=target,
+        target_trusted_mask=trusted,
+        candidate_valid_mask=torch.ones((1, 2, 2), dtype=torch.bool),
+        correction_limit_hr_px=2.0,
+    )
+    metadata = eval_epipolar.json.loads(
+        (tmp_path / "sample/visualization_metadata.json").read_text()
+    )
+    assert metadata["point_clouds"]["base"]["point_count"] == 1
+    assert metadata["point_clouds"]["refined"]["point_count"] == 3
+    for name, expected_count in (("base", 1), ("refined", 3)):
+        contents = (
+            tmp_path / "sample" / f"{name}_point_cloud_camera_frame.ply"
+        ).read_text(encoding="ascii")
+        assert f"element vertex {expected_count}" in contents
 
 
 def test_runtime_correspondence_geometry_counts_fixed_domains_without_masking() -> None:
