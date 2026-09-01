@@ -324,6 +324,7 @@ def _runtime_source_bundle() -> dict[str, Any]:
         raise RuntimeError("Stage-C runtime source requires a Git commit identity")
     files = [
         PROJECT_ROOT / "train_epipolar.py",
+        PROJECT_ROOT / "eval_epipolar.py",
         PROJECT_ROOT / "train.py",
         PROJECT_ROOT / "eval.py",
         PROJECT_ROOT / "configs" / "epipolar_x2.yaml",
@@ -1423,7 +1424,7 @@ def run(args: argparse.Namespace) -> int:
             )
     runtime_source_bundle = _runtime_source_bundle()
     validate_epipolar_config(config)
-    seed_everything(int(config.seed), deterministic=True)
+    seed_everything(int(config.seed), deterministic=True, warn_only=False)
     dataset, observation_identity, teacher_identity = _build_temporal_dataset(config)
     rectification_audit_path = _required_path(
         config, "data.epipolar_rectification_audit_path", directory=False

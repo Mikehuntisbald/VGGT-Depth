@@ -544,7 +544,7 @@ def test_formal_crop_must_match_checkpoint_and_384x768() -> None:
 
 
 def test_cpu_execution_is_explicitly_smoke_only() -> None:
-    eval_epipolar.seed_everything(42, deterministic=True)
+    eval_epipolar.seed_everything(42, deterministic=True, warn_only=False)
     train = {
         "precision": "bf16",
         "optimizer": "adamw",

@@ -212,8 +212,25 @@ def test_runtime_source_bundle_rejects_scoped_dirty_state(
         train_epipolar._runtime_source_bundle()
 
 
+def test_runtime_source_bundle_hashes_stage_c_evaluator(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        train_epipolar.subprocess,
+        "run",
+        lambda *args, **kwargs: SimpleNamespace(stdout=""),
+    )
+    monkeypatch.setattr(train_epipolar, "repository_git_hash", lambda path: "a" * 40)
+
+    bundle = train_epipolar._runtime_source_bundle()
+    paths = [record["path"] for record in bundle["files"]]
+
+    assert "eval_epipolar.py" in paths
+    assert len(paths) == 52
+
+
 def test_cpu_runtime_receipt_is_never_formal_bf16_eligible() -> None:
-    seed_everything(42, deterministic=True)
+    seed_everything(42, deterministic=True, warn_only=False)
     runtime = train_epipolar._training_runtime(
         torch.device("cpu"), use_bf16=False
     )
@@ -238,7 +255,7 @@ def test_seed_everything_enforces_fail_closed_determinism(
     torch.backends.cudnn.deterministic = False
     torch.backends.cudnn.benchmark = True
 
-    seed_everything(42, deterministic=True)
+    seed_everything(42, deterministic=True, warn_only=False)
     runtime = train_epipolar._training_runtime(
         torch.device("cpu"), use_bf16=False
     )
@@ -251,6 +268,16 @@ def test_seed_everything_enforces_fail_closed_determinism(
     assert runtime["strict_determinism_eligible"] is True
 
 
+def test_seed_everything_default_preserves_warning_only_policy() -> None:
+    seed_everything(42, deterministic=True)
+
+    assert torch.are_deterministic_algorithms_enabled()
+    assert torch.is_deterministic_algorithms_warn_only_enabled()
+
+    # Leave the shared pytest process on the formal Stage-C policy.
+    seed_everything(42, deterministic=True, warn_only=False)
+
+
 @pytest.mark.parametrize(
     ("dry_run", "run_steps"),
     [(True, None), (True, 10), (False, 1)],
@@ -258,7 +285,7 @@ def test_seed_everything_enforces_fail_closed_determinism(
 def test_cpu_smoke_policy_allows_only_explicit_bounded_execution(
     dry_run: bool, run_steps: int | None
 ) -> None:
-    seed_everything(42, deterministic=True)
+    seed_everything(42, deterministic=True, warn_only=False)
     runtime = train_epipolar._training_runtime(
         torch.device("cpu"), use_bf16=False
     )
@@ -285,7 +312,7 @@ def test_cpu_smoke_policy_rejects_unapproved_or_unbounded_execution(
     run_steps: int | None,
     message: str,
 ) -> None:
-    seed_everything(42, deterministic=True)
+    seed_everything(42, deterministic=True, warn_only=False)
     runtime = train_epipolar._training_runtime(
         torch.device("cpu"), use_bf16=False
     )
@@ -300,7 +327,7 @@ def test_cpu_smoke_policy_rejects_unapproved_or_unbounded_execution(
 
 
 def test_cuda_policy_fails_closed_when_runtime_is_not_bf16_eligible() -> None:
-    seed_everything(42, deterministic=True)
+    seed_everything(42, deterministic=True, warn_only=False)
     runtime = train_epipolar._training_runtime(
         torch.device("cpu"), use_bf16=False
     )
@@ -317,7 +344,7 @@ def test_cuda_policy_fails_closed_when_runtime_is_not_bf16_eligible() -> None:
 
 
 def test_execution_policy_rejects_warn_only_determinism() -> None:
-    seed_everything(42, deterministic=True)
+    seed_everything(42, deterministic=True, warn_only=False)
     runtime = train_epipolar._training_runtime(
         torch.device("cpu"), use_bf16=False
     )
@@ -335,7 +362,7 @@ def test_execution_policy_rejects_warn_only_determinism() -> None:
 
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is unavailable")
 def test_cuda_runtime_receipt_binds_actual_device_and_native_bf16() -> None:
-    seed_everything(42, deterministic=True)
+    seed_everything(42, deterministic=True, warn_only=False)
     current_device = torch.cuda.current_device()
     with torch.cuda.device(current_device):
         native_bf16_supported = torch.cuda.is_bf16_supported(
@@ -406,7 +433,7 @@ def test_epipolar_data_cursor_reproduces_exact_next_batches() -> None:
 def test_resume_checkpoint_restores_model_optimizer_scheduler_rng_and_cursor(
     tmp_path: Path,
 ) -> None:
-    seed_everything(42, deterministic=True)
+    seed_everything(42, deterministic=True, warn_only=False)
     config = _config()
     first = _tiny_stage(42)
     first_optimizer = torch.optim.AdamW(

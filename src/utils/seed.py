@@ -12,19 +12,28 @@ import torch
 STRICT_CUBLAS_WORKSPACE_CONFIG = ":4096:8"
 
 
-def configure_strict_determinism() -> None:
-    """Enable the fail-closed PyTorch/CUDA determinism contract.
+def configure_determinism(*, warn_only: bool = True) -> None:
+    """Configure PyTorch/CUDA determinism before CUDA seeding.
 
     ``CUBLAS_WORKSPACE_CONFIG`` is installed before any CUDA seeding call so a
     newly started producer process cannot initialize cuBLAS under an
-    unrecorded workspace policy.  Unsupported nondeterministic operations are
-    errors, never warnings.
+    unrecorded workspace policy.  Existing Stage-A/B callers retain the
+    historical warning-only behavior; formal Stage-C explicitly passes
+    ``warn_only=False``.
     """
 
+    if not isinstance(warn_only, bool):
+        raise TypeError("warn_only must be a bool")
     os.environ["CUBLAS_WORKSPACE_CONFIG"] = STRICT_CUBLAS_WORKSPACE_CONFIG
-    torch.use_deterministic_algorithms(True, warn_only=False)
+    torch.use_deterministic_algorithms(True, warn_only=warn_only)
     torch.backends.cudnn.deterministic = True
     torch.backends.cudnn.benchmark = False
+
+
+def configure_strict_determinism() -> None:
+    """Enable fail-closed determinism; unsupported operations are errors."""
+
+    configure_determinism(warn_only=False)
 
 
 def deterministic_runtime_state() -> dict[str, bool | str | None]:
@@ -56,7 +65,12 @@ def strict_determinism_enabled() -> bool:
     )
 
 
-def seed_everything(seed: int = 42, *, deterministic: bool = True) -> None:
+def seed_everything(
+    seed: int = 42,
+    *,
+    deterministic: bool = True,
+    warn_only: bool = True,
+) -> None:
     """Seed Python, NumPy, and PyTorch in the current process.
 
     Args:
@@ -64,12 +78,17 @@ def seed_everything(seed: int = 42, *, deterministic: bool = True) -> None:
         deterministic: Request deterministic PyTorch algorithms.  CUDA BLAS is
             configured before kernels are launched so supported matrix
             multiplications also follow the deterministic contract.
+        warn_only: When deterministic algorithms are requested, preserve the
+            historical warning-only policy by default.  Formal Stage-C callers
+            must explicitly set this to ``False``.
     """
 
     if isinstance(seed, bool) or not isinstance(seed, int) or seed < 0:
         raise ValueError("seed must be a non-negative integer")
+    if not isinstance(warn_only, bool):
+        raise TypeError("warn_only must be a bool")
     if deterministic:
-        configure_strict_determinism()
+        configure_determinism(warn_only=warn_only)
     random.seed(seed)
     np.random.seed(seed % (2**32))
     torch.manual_seed(seed)
@@ -89,6 +108,7 @@ def seed_data_worker(worker_id: int) -> None:
 
 __all__ = [
     "STRICT_CUBLAS_WORKSPACE_CONFIG",
+    "configure_determinism",
     "configure_strict_determinism",
     "deterministic_runtime_state",
     "seed_data_worker",

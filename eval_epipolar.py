@@ -2154,7 +2154,7 @@ def run(args: argparse.Namespace) -> int:
         OmegaConf.update(config, name, str(value.expanduser().resolve()), merge=False)
     OmegaConf.update(config, "data.crop_mode", "fixed", merge=False)
     validate_epipolar_config(config)
-    seed_everything(int(config.seed), deterministic=True)
+    seed_everything(int(config.seed), deterministic=True, warn_only=False)
     manifest = args.manifest.expanduser().resolve()
     observation_root = args.observation_cache_root.expanduser().resolve()
     teacher_root = args.teacher_cache_root.expanduser().resolve()
