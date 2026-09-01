@@ -3,9 +3,9 @@ from __future__ import annotations
 import json
 import hashlib
 from pathlib import Path
-from typing import Any
+from typing import Any, Mapping
 
-from tools.decide_v3_conditioning import decide_manifest
+from tools.decide_v3_conditioning import _bootstrap_ci, decide_manifest
 
 
 SEEDS = (42, 43, 44)
@@ -24,6 +24,22 @@ SWITCHES = {
     "B0": (True, True, False),
     "B1": (True, True, True),
 }
+
+
+def _validation_records() -> list[dict[str, Any]]:
+    return [
+        {
+            "sequence_id": "validation-sequence",
+            "frame_id": index,
+            "timestamp": float(index),
+            "left_path": f"left/{index}.png",
+            "right_path": f"right/{index}.png",
+            "K": [[100.0, 0.0, 50.0], [0.0, 100.0, 25.0], [0.0, 0.0, 1.0]],
+            "baseline_m": 0.1,
+            "gt_disparity_path": None,
+        }
+        for index in range(244)
+    ]
 
 
 def _sha256(path: Path) -> str:
@@ -66,6 +82,8 @@ def _write_arm(
     temporal_eligible_records: int | None = None,
     temporal_candidate: float = 0.45,
     validation_manifest: Path,
+    validation_records: list[dict[str, Any]],
+    derived_lineage: Mapping[str, Any],
     runtime_scale: float = 1.0,
 ) -> dict[str, str]:
     directory = root / f"seed_{seed}" / arm
@@ -107,7 +125,7 @@ def _write_arm(
             "observation": {"id": "validation-observation"},
             "teacher": {"id": "validation-teacher"},
         },
-        "derived_cache_lineage": {"id": "validation-derived"} if stage_b else None,
+        "derived_cache_lineage": dict(derived_lineage) if stage_b else None,
         "device": "cuda:0",
         "resolved_config": {
             "seed": seed,
@@ -134,13 +152,11 @@ def _write_arm(
                 "relative_change_percent": -12.0,
             }
         }
-    metrics = directory / "metrics.json"
-    metrics.write_text(json.dumps(report), encoding="utf-8")
     records = directory / "per_record_metrics.jsonl"
     if write_records:
-        count = 238 if stage_b else 244
+        selected_records = validation_records[6:] if stage_b else validation_records
         with records.open("w", encoding="utf-8") as handle:
-            for index in range(count):
+            for index, record in enumerate(selected_records):
                 record_values: dict[str, float | None] = dict(values)
                 if (
                     stage_b
@@ -151,12 +167,27 @@ def _write_arm(
                 handle.write(
                     json.dumps(
                         {
-                            "record_id": f"record-{index:03d}",
+                            "record_id": (
+                                f"{record['sequence_id']}/{record['frame_id']}"
+                            ),
+                            "sequence_id": record["sequence_id"],
+                            "frame_id": record["frame_id"],
+                            "timestamp": record["timestamp"],
+                            "manifest_index": int(record["frame_id"]),
+                            "method": method,
                             "metrics": record_values,
                         }
                     )
                     + "\n"
                 )
+    report["per_record_metrics"] = {
+        "path": str(records.resolve()),
+        "sha256": _sha256(records) if records.is_file() else None,
+        "records": 238 if stage_b else 244,
+        "paired_bootstrap_unit": "sequence_id/frame_id",
+    }
+    metrics = directory / "metrics.json"
+    metrics.write_text(json.dumps(report), encoding="utf-8")
     return {
         "metrics_json": str(metrics),
         "metrics_sha256": _sha256(metrics),
@@ -179,7 +210,42 @@ def _manifest(
 ) -> Path:
     tmp_path.mkdir(parents=True, exist_ok=True)
     validation_manifest = tmp_path / "validation.jsonl"
-    validation_manifest.write_text("{}\n", encoding="utf-8")
+    validation_records = _validation_records()
+    validation_manifest.write_text(
+        "".join(json.dumps(record) + "\n" for record in validation_records),
+        encoding="utf-8",
+    )
+    derived_root = tmp_path / "validation_derived"
+    derived_root.mkdir()
+    derived_manifest = derived_root / "cache_manifest.jsonl"
+    derived_manifest.write_text(
+        "".join(
+            json.dumps(
+                {
+                    "sequence_id": record["sequence_id"],
+                    "frame_id": record["frame_id"],
+                    "target_manifest_index": record["frame_id"],
+                }
+            )
+            + "\n"
+            for record in validation_records[4:]
+        ),
+        encoding="utf-8",
+    )
+    derived_receipt = derived_root / "run_receipt.json"
+    derived_receipt.write_text(
+        json.dumps(
+            {
+                "output": {"cache_manifest_sha256": _sha256(derived_manifest)}
+            }
+        ),
+        encoding="utf-8",
+    )
+    derived_lineage = {
+        "derived_cache_root": str(derived_root.resolve()),
+        "run_receipt_sha256": _sha256(derived_receipt),
+        "cache_manifest_sha256": _sha256(derived_manifest),
+    }
     evidence: dict[str, Any] = {}
     for seed in seeds:
         evidence[str(seed)] = {
@@ -192,18 +258,70 @@ def _manifest(
                 temporal_eligible_records=temporal_eligible_records,
                 temporal_candidate=temporal_candidate,
                 validation_manifest=validation_manifest,
+                validation_records=validation_records,
+                derived_lineage=derived_lineage,
                 runtime_scale=(1.06 if arm == runtime_regression_arm else 1.0),
             )
             for arm in ARMS
+        }
+    identifiability: dict[str, Any] = {
+        "unique_static_stereo_calibrations": unique_calibrations,
+        "temporal_pose_varies": temporal_pose_varies,
+    }
+    if temporal_pose_varies:
+        formal_ids = [
+            f"{record['sequence_id']}/{record['frame_id']}"
+            for record in validation_records[6:]
+        ]
+        audit_path = tmp_path / "temporal_pose_audit.json"
+        audit_path.write_text(
+            json.dumps(
+                {
+                    "schema_version": 1,
+                    "component": "v3-temporal-pose-variation-audit",
+                    "status": "PASS",
+                    "temporal_pose_varies": True,
+                    "counts": {
+                        "formal_temporal_endpoints": 238,
+                        "formal_windows": 238,
+                        "formal_pose_valid_windows": 238,
+                    },
+                    "ages": {"1": {"varies": True}, "2": {"varies": True}},
+                    "formal_endpoint_binding": {
+                        "available": True,
+                        "record_ids": formal_ids,
+                        "record_ids_sha256": hashlib.sha256(
+                            json.dumps(
+                                formal_ids,
+                                sort_keys=True,
+                                separators=(",", ":"),
+                            ).encode("utf-8")
+                        ).hexdigest(),
+                        "pose_valid_record_ids": formal_ids,
+                    },
+                    "inputs": {
+                        "derived_root": str(derived_root.resolve()),
+                        "run_receipt_sha256": _sha256(derived_receipt),
+                        "cache_manifest_sha256": _sha256(derived_manifest),
+                        "validation_manifest": {
+                            "path": str(validation_manifest.resolve()),
+                            "sha256": _sha256(validation_manifest),
+                            "records": 244,
+                        },
+                    },
+                }
+            ),
+            encoding="utf-8",
+        )
+        identifiability["temporal_pose_variation_audit"] = {
+            "path": str(audit_path.resolve()),
+            "sha256": _sha256(audit_path),
         }
     payload = {
         "schema_version": 1,
         "component": "v3-experiment-decision-inputs",
         "expected_counts": {"stage_a_records": 244, "stage_b_windows": 238},
-        "identifiability": {
-            "unique_static_stereo_calibrations": unique_calibrations,
-            "temporal_pose_varies": temporal_pose_varies,
-        },
+        "identifiability": identifiability,
         "validation_manifest": {
             "path": str(validation_manifest.resolve()),
             "sha256": _sha256(validation_manifest),
@@ -382,3 +500,133 @@ def test_identifiable_static_go_without_temporal_go_selects_exact_a3(
         "use_stereo_pose": True,
         "use_temporal_pose": False,
     }
+
+
+def test_bare_temporal_boolean_never_promotes_b1(tmp_path: Path) -> None:
+    manifest_path = _manifest(tmp_path)
+    payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+    payload["identifiability"].pop("temporal_pose_variation_audit")
+    manifest_path.write_text(json.dumps(payload), encoding="utf-8")
+
+    report = decide_manifest(manifest_path, bootstrap_replicates=200)
+
+    assert report["components"]["temporal_pose"]["status"] == "NOT_IDENTIFIABLE"
+    assert report["promotion_recipe"]["exact_evaluated_arm"] == "A1"
+    assert report["recommended_switches"]["use_temporal_pose"] is False
+
+
+def test_per_record_file_must_match_metrics_internal_binding(tmp_path: Path) -> None:
+    manifest_path = _manifest(tmp_path)
+    payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+    entry = payload["seeds"]["42"]["A1"]
+    original = Path(entry["per_record_jsonl"])
+    replacement = original.with_name("replacement.jsonl")
+    replacement.write_bytes(original.read_bytes())
+    entry["per_record_jsonl"] = str(replacement)
+    entry["per_record_jsonl_sha256"] = _sha256(replacement)
+    manifest_path.write_text(json.dumps(payload), encoding="utf-8")
+
+    report = decide_manifest(manifest_path, bootstrap_replicates=200)
+
+    assert report["decision"] == "NO-GO"
+    assert any("metrics/per-record binding differs" in value for value in report["input_errors"])
+
+
+def test_per_record_identity_must_belong_to_exact_manifest(tmp_path: Path) -> None:
+    manifest_path = _manifest(tmp_path)
+    payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+    entry = payload["seeds"]["42"]["A1"]
+    records_path = Path(entry["per_record_jsonl"])
+    rows = records_path.read_text(encoding="utf-8").splitlines()
+    first = json.loads(rows[0])
+    first["sequence_id"] = "foreign-sequence"
+    first["record_id"] = f"foreign-sequence/{first['frame_id']}"
+    rows[0] = json.dumps(first)
+    records_path.write_text("\n".join(rows) + "\n", encoding="utf-8")
+    new_sha = _sha256(records_path)
+    entry["per_record_jsonl_sha256"] = new_sha
+    metrics_path = Path(entry["metrics_json"])
+    metrics = json.loads(metrics_path.read_text(encoding="utf-8"))
+    metrics["per_record_metrics"]["sha256"] = new_sha
+    metrics_path.write_text(json.dumps(metrics), encoding="utf-8")
+    entry["metrics_sha256"] = _sha256(metrics_path)
+    manifest_path.write_text(json.dumps(payload), encoding="utf-8")
+
+    report = decide_manifest(manifest_path, bootstrap_replicates=200)
+
+    assert report["decision"] == "NO-GO"
+    assert "outside exact validation selection" in " ".join(
+        report["components"]["rays"]["reasons"]
+    )
+
+
+def test_bootstrap_jointly_resamples_clusters_across_fixed_seed_strata() -> None:
+    a = ("sequence", 10)
+    b = ("sequence", 11)
+    report = _bootstrap_ci(
+        {
+            42: {a: -10.0, b: 10.0},
+            43: {a: 10.0, b: -10.0},
+            44: {a: 0.0, b: 0.0},
+        },
+        replicates=200,
+        random_seed=7,
+    )
+
+    assert report["cluster_unit"] == "sequence_id/source_frame_id"
+    assert report["common_clusters"] == 2
+    assert report["ci95_lower"] == 0.0
+    assert report["ci95_upper"] == 0.0
+
+
+def test_output_bad_rate_may_increase_but_must_remain_below_absolute_gate(
+    tmp_path: Path,
+) -> None:
+    manifest_path = _manifest(tmp_path)
+    payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+    for seed in SEEDS:
+        entry = payload["seeds"][str(seed)]["A1"]
+        metrics_path = Path(entry["metrics_json"])
+        metrics = json.loads(metrics_path.read_text(encoding="utf-8"))
+        metric = metrics["methods"]["T1"]["output_invalid_rate"]
+        metric.update({"value": 0.002, "numerator": 0.2})
+        metrics_path.write_text(json.dumps(metrics), encoding="utf-8")
+        entry["metrics_sha256"] = _sha256(metrics_path)
+    manifest_path.write_text(json.dumps(payload), encoding="utf-8")
+
+    report = decide_manifest(manifest_path, bootstrap_replicates=200)
+
+    assert report["components"]["rays"]["status"] == "GO"
+
+
+def test_temporal_audit_valid_subset_must_belong_to_formal_endpoints(
+    tmp_path: Path,
+) -> None:
+    manifest_path = _manifest(tmp_path)
+    payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+    identity = payload["identifiability"]["temporal_pose_variation_audit"]
+    audit_path = Path(identity["path"])
+    audit = json.loads(audit_path.read_text(encoding="utf-8"))
+    audit["formal_endpoint_binding"]["pose_valid_record_ids"][0] = "foreign/1"
+    audit_path.write_text(json.dumps(audit), encoding="utf-8")
+    identity["sha256"] = _sha256(audit_path)
+    manifest_path.write_text(json.dumps(payload), encoding="utf-8")
+
+    report = decide_manifest(manifest_path, bootstrap_replicates=200)
+
+    assert report["decision"] == "NO-GO"
+    assert any("formal endpoint identities differ" in value for value in report["input_errors"])
+
+
+def test_temporal_audit_rehashes_live_derived_manifest(tmp_path: Path) -> None:
+    manifest_path = _manifest(tmp_path)
+    payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+    identity = payload["identifiability"]["temporal_pose_variation_audit"]
+    audit = json.loads(Path(identity["path"]).read_text(encoding="utf-8"))
+    derived_manifest = Path(audit["inputs"]["derived_root"]) / "cache_manifest.jsonl"
+    derived_manifest.write_text("drift\n", encoding="utf-8")
+
+    report = decide_manifest(manifest_path, bootstrap_replicates=200)
+
+    assert report["decision"] == "NO-GO"
+    assert any("derived inputs changed" in value for value in report["input_errors"])

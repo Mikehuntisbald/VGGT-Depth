@@ -28,6 +28,7 @@ import os
 import platform
 import re
 import shlex
+import signal
 import subprocess
 import sys
 import time
@@ -42,6 +43,8 @@ try:
         STAGE_A_RECORDS,
         STAGE_B_RECORDS,
         _atomic_json,
+        _canonical_sha256,
+        _validation_record_sets,
         decide_manifest,
     )
 except ModuleNotFoundError:  # Direct ``python tools/run_v3_experiments.py``.
@@ -49,6 +52,8 @@ except ModuleNotFoundError:  # Direct ``python tools/run_v3_experiments.py``.
         STAGE_A_RECORDS,
         STAGE_B_RECORDS,
         _atomic_json,
+        _canonical_sha256,
+        _validation_record_sets,
         decide_manifest,
     )
 
@@ -115,6 +120,60 @@ def _strict_json(path: Path, name: str) -> Mapping[str, Any]:
     return value
 
 
+def _pid_is_live(pid: int) -> bool:
+    if pid <= 0:
+        return False
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    stat_path = Path(f"/proc/{pid}/stat")
+    try:
+        stat = stat_path.read_text(encoding="utf-8")
+    except OSError:
+        # Fail closed on platforms without inspectable procfs.
+        return True
+    closing = stat.rfind(")")
+    fields = stat[closing + 2 :].split() if closing >= 0 else []
+    return not fields or fields[0] != "Z"
+
+
+def _live_recorded_child(active_process_path: Path) -> Mapping[str, Any] | None:
+    if not active_process_path.is_file():
+        return None
+    active = _strict_json(active_process_path, "active process receipt")
+    if active.get("status") != "RUNNING":
+        return None
+    child_pid = active.get("child_pid")
+    if (
+        isinstance(child_pid, bool)
+        or not isinstance(child_pid, int)
+        or not _pid_is_live(child_pid)
+    ):
+        return None
+    recorded_command = active.get("command")
+    if not isinstance(recorded_command, list) or any(
+        not isinstance(value, str) for value in recorded_command
+    ):
+        raise OrchestrationError("live active-process receipt has malformed command")
+    cmdline_path = Path(f"/proc/{child_pid}/cmdline")
+    try:
+        actual_command = [
+            value.decode("utf-8", errors="surrogateescape")
+            for value in cmdline_path.read_bytes().split(b"\0")
+            if value
+        ]
+    except OSError:
+        actual_command = []
+    # A live but uninspectable PID is still unsafe. A clearly reused PID with a
+    # different command is not the orphaned child recorded by this runner.
+    if actual_command and actual_command != recorded_command:
+        return None
+    return active
+
+
 def _source_snapshot(project_root: Path) -> dict[str, Any]:
     """Hash executable model/evaluator/config bytes, including dirty files."""
 
@@ -148,6 +207,7 @@ def _source_snapshot(project_root: Path) -> dict[str, Any]:
         (
             project_root / "tools" / "run_v3_experiments.py",
             project_root / "tools" / "decide_v3_conditioning.py",
+            project_root / "tools" / "audit_v3_temporal_pose.py",
         )
     )
     files: dict[str, str] = {}
@@ -175,10 +235,17 @@ def _path_identity(path: Path, *, directory: bool = False) -> dict[str, Any]:
         if not resolved.is_dir():
             raise OrchestrationError(f"required directory is missing: {resolved}")
         receipt = resolved / "run_receipt.json"
+        cache_manifest = resolved / "cache_manifest.jsonl"
         return {
             "path": str(resolved),
             "run_receipt_path": str(receipt) if receipt.is_file() else None,
             "run_receipt_sha256": _sha256(receipt) if receipt.is_file() else None,
+            "cache_manifest_path": (
+                str(cache_manifest) if cache_manifest.is_file() else None
+            ),
+            "cache_manifest_sha256": (
+                _sha256(cache_manifest) if cache_manifest.is_file() else None
+            ),
         }
     if not resolved.is_file():
         raise OrchestrationError(f"required file is missing: {resolved}")
@@ -191,7 +258,7 @@ def _input_identities(args: argparse.Namespace) -> dict[str, Any]:
         calibration_receipt = args.validation_calibration_sidecar.with_suffix(
             ".receipt.json"
         )
-    return {
+    identities = {
         "train_manifest": _path_identity(args.train_manifest),
         "train_observation_cache_root": _path_identity(
             args.train_observation_cache_root, directory=True
@@ -224,6 +291,12 @@ def _input_identities(args: argparse.Namespace) -> dict[str, Any]:
             else {"path": str(calibration_receipt.resolve()), "sha256": None}
         ),
     }
+    temporal_pose_audit = getattr(args, "temporal_pose_audit", None)
+    if temporal_pose_audit is not None:
+        identities["temporal_pose_variation_audit"] = _path_identity(
+            temporal_pose_audit
+        )
+    return identities
 
 
 def _default_executor(
@@ -232,28 +305,66 @@ def _default_executor(
     on_started: Callable[[int], None],
     emit: Callable[[str], None],
 ) -> ProcessResult:
-    process = subprocess.Popen(
-        list(command),
-        cwd=cwd,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        text=True,
-        bufsize=1,
-    )
-    on_started(process.pid)
-    assert process.stdout is not None
+    watched_signals = {signal.SIGINT, signal.SIGTERM}
+    previous_mask = signal.pthread_sigmask(signal.SIG_BLOCK, watched_signals)
     try:
+        process = subprocess.Popen(
+            list(command),
+            cwd=cwd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            bufsize=1,
+            start_new_session=True,
+        )
+    except BaseException:
+        signal.pthread_sigmask(signal.SIG_SETMASK, previous_mask)
+        raise
+    previous_handlers: dict[int, Any] = {}
+
+    def forward_signal(signum: int, _frame: Any) -> None:
+        if process.poll() is None:
+            with contextlib.suppress(ProcessLookupError):
+                os.killpg(process.pid, signum)
+        if signum == signal.SIGINT:
+            raise KeyboardInterrupt
+        raise SystemExit(128 + signum)
+
+    try:
+        for signum in (signal.SIGINT, signal.SIGTERM):
+            previous_handlers[signum] = signal.getsignal(signum)
+            signal.signal(signum, forward_signal)
+    except BaseException:
+        with contextlib.suppress(ProcessLookupError):
+            os.killpg(process.pid, signal.SIGTERM)
+        process.wait()
+        for signum, previous in previous_handlers.items():
+            signal.signal(signum, previous)
+        signal.pthread_sigmask(signal.SIG_SETMASK, previous_mask)
+        raise
+    try:
+        # A signal arriving between spawn and handler installation remains
+        # pending and is delivered only inside this protected block.
+        signal.pthread_sigmask(signal.SIG_SETMASK, previous_mask)
+        on_started(process.pid)
+        assert process.stdout is not None
         for line in process.stdout:
             emit(line)
         return ProcessResult(exit_code=process.wait())
     except BaseException:
-        process.terminate()
+        if process.poll() is None:
+            with contextlib.suppress(ProcessLookupError):
+                os.killpg(process.pid, signal.SIGTERM)
         try:
             process.wait(timeout=10)
         except subprocess.TimeoutExpired:
-            process.kill()
+            with contextlib.suppress(ProcessLookupError):
+                os.killpg(process.pid, signal.SIGKILL)
             process.wait()
         raise
+    finally:
+        for signum, previous in previous_handlers.items():
+            signal.signal(signum, previous)
 
 
 def _next_attempt_paths(job_directory: Path) -> tuple[Path, Path, Path]:
@@ -544,6 +655,101 @@ def _calibration_count(args: argparse.Namespace) -> tuple[int | None, str | None
     return count, str(receipt_path.resolve())
 
 
+def _validated_temporal_pose_audit(
+    args: argparse.Namespace,
+) -> dict[str, Any] | None:
+    audit_path = getattr(args, "temporal_pose_audit", None)
+    if audit_path is None:
+        return None
+    audit = _strict_json(audit_path, "temporal-pose variation audit")
+    if audit.get("schema_version") != 1 or audit.get("component") != (
+        "v3-temporal-pose-variation-audit"
+    ):
+        raise OrchestrationError("temporal-pose audit schema/component mismatch")
+    if audit.get("status") != "PASS" or audit.get("temporal_pose_varies") is not True:
+        raise OrchestrationError(
+            "temporal-pose audit must explicitly PASS with temporal_pose_varies=true"
+        )
+    counts = audit.get("counts")
+    if not isinstance(counts, Mapping) or (
+        counts.get("formal_temporal_endpoints") != STAGE_B_RECORDS
+        or counts.get("formal_windows") != STAGE_B_RECORDS
+        or isinstance(counts.get("formal_pose_valid_windows"), bool)
+        or not isinstance(counts.get("formal_pose_valid_windows"), int)
+        or int(counts["formal_pose_valid_windows"]) < 30
+    ):
+        raise OrchestrationError(
+            "temporal-pose audit lacks exact/adequate formal endpoint coverage"
+        )
+    ages = audit.get("ages")
+    if not isinstance(ages, Mapping) or any(
+        not isinstance(ages.get(str(age)), Mapping)
+        or ages[str(age)].get("varies") is not True
+        for age in (1, 2)
+    ):
+        raise OrchestrationError("temporal-pose audit must pass both age-1 and age-2")
+    inputs = audit.get("inputs")
+    if not isinstance(inputs, Mapping):
+        raise OrchestrationError("temporal-pose audit input lineage is missing")
+    validation_identity = inputs.get("validation_manifest")
+    if (
+        not isinstance(validation_identity, Mapping)
+        or Path(str(validation_identity.get("path"))).expanduser().resolve()
+        != args.validation_manifest.resolve()
+        or validation_identity.get("sha256") != _sha256(args.validation_manifest)
+        or validation_identity.get("records") != STAGE_A_RECORDS
+    ):
+        raise OrchestrationError("temporal-pose audit validation manifest mismatch")
+    derived_root = args.validation_derived_cache_root.resolve()
+    if Path(str(inputs.get("derived_root"))).expanduser().resolve() != derived_root:
+        raise OrchestrationError("temporal-pose audit derived root mismatch")
+    expected_receipt = derived_root / "run_receipt.json"
+    expected_manifest = derived_root / "cache_manifest.jsonl"
+    if inputs.get("run_receipt_sha256") != _sha256(expected_receipt):
+        raise OrchestrationError("temporal-pose audit derived receipt hash mismatch")
+    if inputs.get("cache_manifest_sha256") != _sha256(expected_manifest):
+        raise OrchestrationError("temporal-pose audit cache-manifest hash mismatch")
+    receipt = _strict_json(expected_receipt, "audited derived receipt")
+    output = receipt.get("output")
+    if not isinstance(output, Mapping) or output.get(
+        "cache_manifest_sha256"
+    ) != inputs.get("cache_manifest_sha256"):
+        raise OrchestrationError("audited derived receipt/manifest binding mismatch")
+    _, formal_records = _validation_record_sets(args.validation_manifest)
+    expected_ids = [
+        identity.record_id
+        for identity in sorted(
+            formal_records.values(), key=lambda value: value.manifest_index
+        )
+    ]
+    binding = audit.get("formal_endpoint_binding")
+    valid_ids = binding.get("pose_valid_record_ids") if isinstance(binding, Mapping) else None
+    if (
+        not isinstance(binding, Mapping)
+        or binding.get("available") is not True
+        or binding.get("record_ids") != expected_ids
+        or binding.get("record_ids_sha256")
+        != _canonical_sha256(expected_ids, "formal endpoint IDs")
+        or not isinstance(valid_ids, list)
+        or any(not isinstance(value, str) for value in valid_ids)
+        or len(set(valid_ids)) != len(valid_ids)
+        or not set(valid_ids).issubset(set(expected_ids))
+        or len(valid_ids) != int(counts["formal_pose_valid_windows"])
+    ):
+        raise OrchestrationError("temporal-pose audit formal endpoint binding mismatch")
+    return {
+        "path": str(audit_path),
+        "sha256": _sha256(audit_path),
+        "component": audit["component"],
+        "status": audit["status"],
+        "pose_valid_windows": int(counts["formal_pose_valid_windows"]),
+        "derived_root": str(derived_root),
+        "run_receipt_sha256": str(inputs["run_receipt_sha256"]),
+        "cache_manifest_sha256": str(inputs["cache_manifest_sha256"]),
+        "formal_endpoint_ids_sha256": str(binding["record_ids_sha256"]),
+    }
+
+
 def _execution_contract(args: argparse.Namespace) -> dict[str, Any]:
     return {
         "python": str(args.python),
@@ -551,6 +757,11 @@ def _execution_contract(args: argparse.Namespace) -> dict[str, Any]:
         "device": str(args.device),
         "eval_batch_size": args.eval_batch_size,
         "temporal_pose_varies": args.temporal_pose_varies,
+        "temporal_pose_identifiability_source": (
+            "bound_audit_receipt"
+            if getattr(args, "temporal_pose_audit_identity", None) is not None
+            else "operator_assertion_or_unavailable"
+        ),
         "per_record_filename": args.per_record_filename,
         "bootstrap_replicates": args.bootstrap_replicates,
         "bootstrap_random_seed": args.bootstrap_random_seed,
@@ -569,6 +780,13 @@ def _validate_arguments(args: argparse.Namespace) -> None:
         raise OrchestrationError("--eval-batch-size must be positive")
     if args.bootstrap_replicates < 200:
         raise OrchestrationError("--bootstrap-replicates must be at least 200")
+    if args.temporal_pose_varies and getattr(
+        args, "temporal_pose_audit_identity", None
+    ) is None:
+        raise OrchestrationError(
+            "bare --temporal-pose-varies is not formal evidence; pass a hash-bound "
+            "--temporal-pose-audit"
+        )
     per_record = Path(args.per_record_filename)
     if (
         not args.per_record_filename
@@ -620,6 +838,9 @@ class Orchestrator:
         self.run_receipt_path = self.output_root / "run_receipt.json"
         self.source_snapshot = _source_snapshot(args.project_root)
         self.unique_calibrations, self.calibration_receipt = _calibration_count(args)
+        self.temporal_pose_audit = getattr(
+            args, "temporal_pose_audit_identity", None
+        )
         self.input_identities = _input_identities(args)
         self.execution_contract = _execution_contract(args)
         self.state: dict[str, Any] = {}
@@ -648,6 +869,12 @@ class Orchestrator:
             raise OrchestrationError(
                 "manifest, sidecar, or cache-receipt identity changed during orchestration"
             )
+        if self.temporal_pose_audit is not None:
+            current_audit = _validated_temporal_pose_audit(self.args)
+            if current_audit != self.temporal_pose_audit:
+                raise OrchestrationError(
+                    "temporal-pose audit or its derived/manifest lineage changed"
+                )
 
     def _train_artifact_hashes(self, directory: Path) -> dict[str, str]:
         return {
@@ -678,6 +905,13 @@ class Orchestrator:
             if not self.args.resume:
                 raise OrchestrationError(
                     f"orchestration state exists; pass --resume: {self.state_path}"
+                )
+            live_child = _live_recorded_child(self.active_process_path)
+            if live_child is not None:
+                raise OrchestrationError(
+                    "resume refused because the recorded child process is still live: "
+                    f"pid={live_child.get('child_pid')} command="
+                    f"{shlex.join(list(live_child.get('command', [])))}"
                 )
             previous = _strict_json(self.state_path, "orchestration state")
             if previous.get("component") != COMPONENT:
@@ -1021,10 +1255,15 @@ class Orchestrator:
                 "validation_calibration_receipt": self.calibration_receipt,
                 "temporal_pose_varies": self.args.temporal_pose_varies,
                 "temporal_pose_variation_assertion": (
-                    "operator asserted audited variation"
-                    if self.args.temporal_pose_varies
-                    else "not asserted; fail closed as NOT_IDENTIFIABLE"
+                    "validated and hash-bound audit receipt"
+                    if self.temporal_pose_audit is not None
+                    else (
+                        "operator asserted audited variation"
+                        if self.args.temporal_pose_varies
+                        else "not asserted; fail closed as NOT_IDENTIFIABLE"
+                    )
                 ),
+                "temporal_pose_variation_audit": self.temporal_pose_audit,
             },
             "validation_manifest": self.input_identities["validation_manifest"],
             "seeds": seeds,
@@ -1169,6 +1408,13 @@ def run_orchestration(
         args.validation_calibration_receipt = (
             args.validation_calibration_receipt.expanduser().resolve()
         )
+    temporal_pose_audit = getattr(args, "temporal_pose_audit", None)
+    if temporal_pose_audit is not None:
+        args.temporal_pose_audit = temporal_pose_audit.expanduser().resolve()
+        args.temporal_pose_audit_identity = _validated_temporal_pose_audit(args)
+        args.temporal_pose_varies = True
+    else:
+        args.temporal_pose_audit_identity = None
     _validate_arguments(args)
     with _exclusive_lock(args.output_root):
         return Orchestrator(args, executor=executor).run()
@@ -1208,7 +1454,18 @@ def build_parser() -> argparse.ArgumentParser:
         "--temporal-pose-varies",
         action=argparse.BooleanOptionalAction,
         default=False,
-        help="assert only when an external audit proves temporal pose variation",
+        help=(
+            "legacy synthetic-only assertion; formal runs reject it unless "
+            "--temporal-pose-audit is also supplied"
+        ),
+    )
+    parser.add_argument(
+        "--temporal-pose-audit",
+        type=Path,
+        help=(
+            "preferred formal evidence from audit_v3_temporal_pose.py; binds "
+            "the PASS receipt and forces temporal-pose identifiability true"
+        ),
     )
     parser.add_argument(
         "--per-record-filename", default="per_record_metrics.jsonl"

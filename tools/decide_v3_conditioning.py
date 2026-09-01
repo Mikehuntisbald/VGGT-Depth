@@ -17,6 +17,7 @@ import math
 import os
 import random
 import tempfile
+from collections import defaultdict
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -94,13 +95,30 @@ class ArmEvidence:
     temporal_change_percent: float | None
     shared_lineage_sha256: str
     derived_lineage_sha256: str | None
+    derived_lineage: Mapping[str, Any] | None
 
 
 @dataclass(frozen=True, slots=True)
 class PairedRecordDeltas:
-    values: tuple[float, ...]
+    values: Mapping[tuple[str, int], float]
     eligible_count: int
     total_count: int
+
+
+@dataclass(frozen=True, slots=True)
+class ValidationRecordIdentity:
+    sequence_id: str
+    frame_id: int
+    timestamp: float
+    manifest_index: int
+
+    @property
+    def record_id(self) -> str:
+        return f"{self.sequence_id}/{self.frame_id}"
+
+    @property
+    def cluster_key(self) -> tuple[str, int]:
+        return (self.sequence_id, self.frame_id)
 
 
 def _atomic_json(path: Path, payload: Mapping[str, Any]) -> None:
@@ -171,6 +189,224 @@ def _canonical_sha256(value: Any, name: str) -> str:
     except (TypeError, ValueError) as exc:
         raise DecisionInputError(f"{name} is not strict JSON") from exc
     return hashlib.sha256(encoded).hexdigest()
+
+
+def _validation_record_sets(
+    path: Path,
+) -> tuple[
+    Mapping[tuple[str, int], ValidationRecordIdentity],
+    Mapping[tuple[str, int], ValidationRecordIdentity],
+]:
+    """Load exact Stage-A records and formal T=3/five-context endpoints."""
+
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except OSError as exc:
+        raise DecisionInputError(f"cannot read validation manifest: {path}") from exc
+    if len(lines) != STAGE_A_RECORDS or any(not line.strip() for line in lines):
+        raise DecisionInputError(
+            f"formal validation manifest must have {STAGE_A_RECORDS} nonblank rows"
+        )
+    stage_a: dict[tuple[str, int], ValidationRecordIdentity] = {}
+    by_sequence: dict[str, list[ValidationRecordIdentity]] = defaultdict(list)
+    last_timestamp: dict[str, float] = {}
+    for manifest_index, line in enumerate(lines):
+        try:
+            row = json.loads(line)
+        except json.JSONDecodeError as exc:
+            raise DecisionInputError(
+                f"malformed validation manifest row {manifest_index + 1}"
+            ) from exc
+        if not isinstance(row, Mapping):
+            raise DecisionInputError(
+                f"validation manifest row {manifest_index + 1} is not an object"
+            )
+        sequence_id = row.get("sequence_id")
+        frame_id = row.get("frame_id")
+        timestamp = row.get("timestamp")
+        if (
+            not isinstance(sequence_id, str)
+            or not sequence_id
+            or isinstance(frame_id, bool)
+            or not isinstance(frame_id, int)
+            or isinstance(timestamp, bool)
+            or not isinstance(timestamp, (int, float))
+        ):
+            raise DecisionInputError(
+                f"validation identity is malformed on row {manifest_index + 1}"
+            )
+        timestamp_float = _finite_number(
+            timestamp, f"validation[{manifest_index}].timestamp"
+        )
+        previous = last_timestamp.get(sequence_id)
+        if previous is not None and timestamp_float <= previous:
+            raise DecisionInputError(
+                f"validation timestamps are not increasing for {sequence_id!r}"
+            )
+        identity = ValidationRecordIdentity(
+            sequence_id=sequence_id,
+            frame_id=frame_id,
+            timestamp=timestamp_float,
+            manifest_index=manifest_index,
+        )
+        if identity.cluster_key in stage_a:
+            raise DecisionInputError(
+                f"duplicate validation record {identity.cluster_key!r}"
+            )
+        stage_a[identity.cluster_key] = identity
+        by_sequence[sequence_id].append(identity)
+        last_timestamp[sequence_id] = timestamp_float
+
+    # The calibrated derived cache covers endpoints with five-view context
+    # (positions >=4). The T=3 dataset additionally requires the preceding two
+    # student endpoints to have derived entries, so formal scored positions are
+    # >=6 in each sequence.
+    stage_b: dict[tuple[str, int], ValidationRecordIdentity] = {}
+    for records in by_sequence.values():
+        for identity in records[6:]:
+            stage_b[identity.cluster_key] = identity
+    if len(stage_b) != STAGE_B_RECORDS:
+        raise DecisionInputError(
+            f"formal validation manifest yields {len(stage_b)} T=3 endpoints, "
+            f"expected {STAGE_B_RECORDS}"
+        )
+    return stage_a, stage_b
+
+
+def _validate_hash_bound_temporal_audit(
+    identifiability: Mapping[str, Any] | None,
+    *,
+    validation_manifest_path: Path,
+    validation_manifest_sha256: str,
+    formal_records: Mapping[tuple[str, int], ValidationRecordIdentity],
+    evidence_by_seed: Mapping[int, Mapping[str, ArmEvidence]],
+) -> Mapping[str, Any] | None:
+    """Require a live, exact audit chain; a bare boolean is never evidence."""
+
+    if not isinstance(identifiability, Mapping) or (
+        identifiability.get("temporal_pose_varies") is not True
+    ):
+        return None
+    identity = identifiability.get("temporal_pose_variation_audit")
+    if not isinstance(identity, Mapping):
+        return None
+    path_value = identity.get("path")
+    declared_sha256 = identity.get("sha256")
+    if (
+        not isinstance(path_value, str)
+        or not isinstance(declared_sha256, str)
+        or len(declared_sha256) != 64
+    ):
+        raise DecisionInputError("temporal-pose audit identity is malformed")
+    audit_path = Path(path_value).expanduser().resolve()
+    audit = _load_json(
+        audit_path,
+        "temporal-pose variation audit",
+        expected_sha256=declared_sha256,
+    )
+    if (
+        audit.get("schema_version") != 1
+        or audit.get("component") != "v3-temporal-pose-variation-audit"
+        or audit.get("status") != "PASS"
+        or audit.get("temporal_pose_varies") is not True
+    ):
+        raise DecisionInputError("temporal-pose audit is not a PASS v1 receipt")
+    ages = audit.get("ages")
+    if not isinstance(ages, Mapping) or any(
+        not isinstance(ages.get(str(age)), Mapping)
+        or ages[str(age)].get("varies") is not True
+        for age in (1, 2)
+    ):
+        raise DecisionInputError("temporal-pose audit does not pass both ages")
+    inputs = audit.get("inputs")
+    if not isinstance(inputs, Mapping):
+        raise DecisionInputError("temporal-pose audit input lineage is missing")
+    audit_manifest = inputs.get("validation_manifest")
+    if (
+        not isinstance(audit_manifest, Mapping)
+        or Path(str(audit_manifest.get("path"))).expanduser().resolve()
+        != validation_manifest_path
+        or audit_manifest.get("sha256") != validation_manifest_sha256
+        or audit_manifest.get("records") != STAGE_A_RECORDS
+    ):
+        raise DecisionInputError("temporal-pose audit validation manifest differs")
+    derived_root = Path(str(inputs.get("derived_root"))).expanduser().resolve()
+    receipt_path = derived_root / "run_receipt.json"
+    cache_manifest_path = derived_root / "cache_manifest.jsonl"
+    if (
+        not receipt_path.is_file()
+        or not cache_manifest_path.is_file()
+        or inputs.get("run_receipt_sha256")
+        != hashlib.sha256(receipt_path.read_bytes()).hexdigest()
+        or inputs.get("cache_manifest_sha256")
+        != hashlib.sha256(cache_manifest_path.read_bytes()).hexdigest()
+    ):
+        raise DecisionInputError("temporal-pose audit derived inputs changed")
+    receipt = _load_json(receipt_path, "audited derived receipt")
+    output = receipt.get("output")
+    if not isinstance(output, Mapping) or output.get(
+        "cache_manifest_sha256"
+    ) != inputs.get("cache_manifest_sha256"):
+        raise DecisionInputError("audited derived receipt does not bind cache manifest")
+
+    binding = audit.get("formal_endpoint_binding")
+    expected_ids = [
+        identity.record_id
+        for identity in sorted(
+            formal_records.values(), key=lambda value: value.manifest_index
+        )
+    ]
+    if not isinstance(binding, Mapping) or binding.get("available") is not True:
+        raise DecisionInputError("temporal-pose audit lacks formal endpoint binding")
+    record_ids = binding.get("record_ids")
+    valid_ids = binding.get("pose_valid_record_ids")
+    if (
+        record_ids != expected_ids
+        or binding.get("record_ids_sha256")
+        != _canonical_sha256(expected_ids, "formal endpoint IDs")
+        or not isinstance(valid_ids, list)
+        or any(not isinstance(value, str) for value in valid_ids)
+        or len(set(valid_ids)) != len(valid_ids)
+        or not set(valid_ids).issubset(set(expected_ids))
+        or len(valid_ids) < MIN_TEMPORAL_PAIRED_RECORDS
+    ):
+        raise DecisionInputError("temporal-pose audit formal endpoint identities differ")
+    counts = audit.get("counts")
+    if (
+        not isinstance(counts, Mapping)
+        or counts.get("formal_temporal_endpoints") != STAGE_B_RECORDS
+        or counts.get("formal_windows") != STAGE_B_RECORDS
+        or counts.get("formal_pose_valid_windows") != len(valid_ids)
+    ):
+        raise DecisionInputError("temporal-pose audit formal endpoint counts differ")
+
+    for seed, arms in evidence_by_seed.items():
+        for arm_name in ("B0", "B1"):
+            evidence = arms.get(arm_name)
+            if evidence is None:
+                continue
+            lineage = evidence.derived_lineage
+            if (
+                not isinstance(lineage, Mapping)
+                or Path(str(lineage.get("derived_cache_root"))).expanduser().resolve()
+                != derived_root
+                or lineage.get("run_receipt_sha256")
+                != inputs.get("run_receipt_sha256")
+                or lineage.get("cache_manifest_sha256")
+                != inputs.get("cache_manifest_sha256")
+            ):
+                raise DecisionInputError(
+                    f"seed {seed} {arm_name} evaluated derived lineage differs from audit"
+                )
+    return {
+        "path": str(audit_path),
+        "sha256": declared_sha256,
+        "derived_root": str(derived_root),
+        "run_receipt_sha256": inputs["run_receipt_sha256"],
+        "cache_manifest_sha256": inputs["cache_manifest_sha256"],
+        "formal_endpoint_ids_sha256": binding["record_ids_sha256"],
+        "formal_pose_valid_windows": len(valid_ids),
+    }
 
 
 def _metric_value(methods: Mapping[str, Any], method: str, metric: str) -> float:
@@ -286,6 +522,19 @@ def _load_arm_evidence(
         raise DecisionInputError(
             f"{arm} {count_field} must equal {expected_count}, got {report.get(count_field)!r}"
         )
+    per_record_receipt = report.get("per_record_metrics")
+    if not isinstance(per_record_receipt, Mapping):
+        raise DecisionInputError(f"{arm} metrics report lacks per-record binding")
+    receipt_path_value = per_record_receipt.get("path")
+    if (
+        not isinstance(receipt_path_value, str)
+        or Path(receipt_path_value).expanduser().resolve() != records_path
+        or per_record_receipt.get("sha256") != records_sha256
+        or per_record_receipt.get("records") != expected_count
+        or per_record_receipt.get("paired_bootstrap_unit")
+        != "sequence_id/frame_id"
+    ):
+        raise DecisionInputError(f"{arm} metrics/per-record binding differs")
     methods = report.get("methods")
     if not isinstance(methods, Mapping):
         raise DecisionInputError(f"{arm} methods are missing")
@@ -368,9 +617,11 @@ def _load_arm_evidence(
     derived_lineage = report.get("derived_cache_lineage")
     if stage_a:
         derived_lineage_sha256 = None
+        normalized_derived_lineage = None
     else:
         if not isinstance(derived_lineage, Mapping):
             raise DecisionInputError(f"{arm} derived validation lineage is missing")
+        normalized_derived_lineage = dict(derived_lineage)
         derived_lineage_sha256 = _canonical_sha256(
             derived_lineage, f"{arm} derived validation lineage"
         )
@@ -386,6 +637,7 @@ def _load_arm_evidence(
         temporal_change_percent=temporal_change,
         shared_lineage_sha256=shared_lineage_sha256,
         derived_lineage_sha256=derived_lineage_sha256,
+        derived_lineage=normalized_derived_lineage,
     )
 
 
@@ -425,10 +677,8 @@ def _aggregate_checks(
     )
     checks["completeness_non_decreasing"] = completeness_change >= 0.0
     for metric in OUTPUT_RATE_METRICS:
-        control_value = control.metrics[metric]
         candidate_value = candidate.metrics[metric]
         checks[f"{metric}_absolute"] = candidate_value < MAX_OUTPUT_BAD_RATE
-        checks[f"{metric}_vs_control"] = candidate_value <= control_value + 1e-12
     runtime_changes: dict[str, float] = {}
     checks["runtime_protocol_and_forward_calls_match"] = (
         control.runtime_contract_sha256 == candidate.runtime_contract_sha256
@@ -475,11 +725,15 @@ def _optional_record_metric(value: Any, name: str) -> float | None:
 
 
 def _load_record_metrics(
-    path: Path, *, expected_count: int, expected_sha256: str | None
-) -> dict[str, Mapping[str, float | None]]:
+    path: Path,
+    *,
+    expected_records: Mapping[tuple[str, int], ValidationRecordIdentity],
+    expected_method: str,
+    expected_sha256: str | None,
+) -> dict[tuple[str, int], Mapping[str, float | None]]:
     if not path.is_file():
         raise DecisionInputError(f"per-record bootstrap data is unavailable: {path}")
-    records: dict[str, Mapping[str, float | None]] = {}
+    records: dict[tuple[str, int], Mapping[str, float | None]] = {}
     try:
         raw = path.read_bytes()
         actual_sha256 = hashlib.sha256(raw).hexdigest()
@@ -488,9 +742,9 @@ def _load_record_metrics(
         lines = raw.decode("utf-8").splitlines()
     except (OSError, UnicodeDecodeError) as exc:
         raise DecisionInputError(f"cannot read per-record data: {path}") from exc
-    if len(lines) != expected_count:
+    if len(lines) != len(expected_records):
         raise DecisionInputError(
-            f"per-record data must have {expected_count} rows, got {len(lines)}: {path}"
+            f"per-record data must have {len(expected_records)} rows, got {len(lines)}: {path}"
         )
     for line_number, line in enumerate(lines, start=1):
         if not line.strip():
@@ -504,11 +758,42 @@ def _load_record_metrics(
         if not isinstance(row, Mapping):
             raise DecisionInputError(f"per-record row is not an object: {path}:{line_number}")
         record_id = row.get("record_id")
+        sequence_id = row.get("sequence_id")
+        frame_id = row.get("frame_id")
+        timestamp = row.get("timestamp")
+        manifest_index = row.get("manifest_index")
+        method = row.get("method")
         metrics = row.get("metrics")
-        if not isinstance(record_id, str) or not record_id:
-            raise DecisionInputError(f"record_id is missing: {path}:{line_number}")
-        if record_id in records:
-            raise DecisionInputError(f"duplicate record_id {record_id!r}: {path}")
+        if (
+            not isinstance(sequence_id, str)
+            or isinstance(frame_id, bool)
+            or not isinstance(frame_id, int)
+        ):
+            raise DecisionInputError(f"record identity is malformed: {path}:{line_number}")
+        cluster_key = (sequence_id, frame_id)
+        expected = expected_records.get(cluster_key)
+        if expected is None:
+            raise DecisionInputError(
+                f"record is outside exact validation selection: {cluster_key!r}"
+            )
+        if (
+            record_id != expected.record_id
+            or isinstance(timestamp, bool)
+            or not isinstance(timestamp, (int, float))
+            or not math.isclose(
+                _finite_number(timestamp, f"{path}:{line_number}.timestamp"),
+                expected.timestamp,
+                rel_tol=0.0,
+                abs_tol=1e-9,
+            )
+            or manifest_index != expected.manifest_index
+            or method != expected_method
+        ):
+            raise DecisionInputError(
+                f"record metadata differs from validation manifest: {path}:{line_number}"
+            )
+        if cluster_key in records:
+            raise DecisionInputError(f"duplicate record identity {cluster_key!r}: {path}")
         if not isinstance(metrics, Mapping):
             raise DecisionInputError(f"metrics are missing: {path}:{line_number}")
         normalized: dict[str, float | None] = {}
@@ -523,7 +808,9 @@ def _load_record_metrics(
                         name,
                         f"{path}:{line_number}.metrics.{name}",
                     )
-        records[record_id] = normalized
+        records[cluster_key] = normalized
+    if set(records) != set(expected_records):
+        raise DecisionInputError(f"per-record identities do not cover exact selection: {path}")
     return records
 
 
@@ -532,47 +819,50 @@ def _paired_deltas(
     candidate_path: Path,
     *,
     metric: str,
-    expected_count: int,
+    expected_records: Mapping[tuple[str, int], ValidationRecordIdentity],
+    expected_method: str,
     allow_invalid_intersection: bool,
     control_sha256: str | None,
     candidate_sha256: str | None,
 ) -> PairedRecordDeltas:
     control = _load_record_metrics(
         control_path,
-        expected_count=expected_count,
+        expected_records=expected_records,
+        expected_method=expected_method,
         expected_sha256=control_sha256,
     )
     candidate = _load_record_metrics(
         candidate_path,
-        expected_count=expected_count,
+        expected_records=expected_records,
+        expected_method=expected_method,
         expected_sha256=candidate_sha256,
     )
     if set(control) != set(candidate):
         raise DecisionInputError(
             f"paired record IDs differ: {control_path} vs {candidate_path}"
         )
-    deltas: list[float] = []
-    for record_id in sorted(control):
-        if metric not in control[record_id] or metric not in candidate[record_id]:
+    deltas: dict[tuple[str, int], float] = {}
+    for cluster_key in sorted(control):
+        if metric not in control[cluster_key] or metric not in candidate[cluster_key]:
             if allow_invalid_intersection:
                 # The evaluator may omit an invalid metric instead of writing
                 # an explicit null/valid=false payload for a safe-mask-empty
                 # window. Both representations mean ineligible for this pair.
                 continue
             raise DecisionInputError(
-                f"paired metric {metric!r} is missing for record {record_id!r}"
+                f"paired metric {metric!r} is missing for record {cluster_key!r}"
             )
-        control_value = control[record_id][metric]
-        candidate_value = candidate[record_id][metric]
+        control_value = control[cluster_key][metric]
+        candidate_value = candidate[cluster_key][metric]
         if control_value is None or candidate_value is None:
             if allow_invalid_intersection:
                 continue
             raise DecisionInputError(
-                f"paired metric {metric!r} is invalid for record {record_id!r}"
+                f"paired metric {metric!r} is invalid for record {cluster_key!r}"
             )
-        deltas.append(candidate_value - control_value)
+        deltas[cluster_key] = candidate_value - control_value
     return PairedRecordDeltas(
-        values=tuple(deltas),
+        values=deltas,
         eligible_count=len(deltas),
         total_count=len(control),
     )
@@ -591,7 +881,7 @@ def _percentile(sorted_values: Sequence[float], quantile: float) -> float:
 
 
 def _bootstrap_ci(
-    deltas_by_seed: Mapping[int, Sequence[float]],
+    deltas_by_seed: Mapping[int, Mapping[tuple[str, int], float]],
     *,
     replicates: int,
     random_seed: int,
@@ -602,26 +892,48 @@ def _bootstrap_ci(
         raise DecisionInputError("bootstrap requires exactly seeds 42,43,44")
     if any(not values for values in deltas_by_seed.values()):
         raise DecisionInputError("bootstrap seed has no paired records")
+    common_clusters = set.intersection(
+        *(set(values) for values in deltas_by_seed.values())
+    )
+    if not common_clusters:
+        raise DecisionInputError("bootstrap has no common sequence/source-frame clusters")
+    clusters_by_sequence: dict[str, list[tuple[str, int]]] = defaultdict(list)
+    for cluster in sorted(common_clusters):
+        clusters_by_sequence[cluster[0]].append(cluster)
+    sequence_ids = sorted(clusters_by_sequence)
     rng = random.Random(random_seed)
-    seeds = list(EXPECTED_SEEDS)
     estimates: list[float] = []
     for _ in range(replicates):
-        sampled_seeds = [rng.choice(seeds) for _ in seeds]
-        seed_means: list[float] = []
-        for seed in sampled_seeds:
-            values = deltas_by_seed[seed]
-            resampled = [rng.choice(values) for _ in values]
-            seed_means.append(sum(resampled) / len(resampled))
+        # Draw one common hierarchical cluster sample for every fixed seed
+        # stratum: sequences first, then source frames within each sequence.
+        # The same keys across seeds preserve paired treatment effects.
+        sampled_clusters: list[tuple[str, int]] = []
+        for _sequence_draw in sequence_ids:
+            sequence_id = rng.choice(sequence_ids)
+            source_frames = clusters_by_sequence[sequence_id]
+            sampled_clusters.extend(
+                rng.choice(source_frames) for _ in range(len(source_frames))
+            )
+        seed_means = [
+            sum(deltas_by_seed[seed][cluster] for cluster in sampled_clusters)
+            / len(sampled_clusters)
+            for seed in EXPECTED_SEEDS
+        ]
         estimates.append(sum(seed_means) / len(seed_means))
     estimates.sort()
     observed_seed_means = [
-        sum(deltas_by_seed[seed]) / len(deltas_by_seed[seed])
+        sum(deltas_by_seed[seed][cluster] for cluster in common_clusters)
+        / len(common_clusters)
         for seed in EXPECTED_SEEDS
     ]
     return {
         "replicates": replicates,
         "random_seed": random_seed,
         "observed_mean_delta": sum(observed_seed_means) / len(observed_seed_means),
+        "cluster_unit": "sequence_id/source_frame_id",
+        "cluster_sampling": "joint_across_fixed_seed_strata; sequence_then_source_frame",
+        "common_clusters": len(common_clusters),
+        "sequences": len(sequence_ids),
         "ci95_lower": _percentile(estimates, 0.025),
         "ci95_upper": _percentile(estimates, 0.975),
     }
@@ -634,7 +946,7 @@ def _comparison_decision(
     candidate_arm: str,
     primary_metric: str,
     minimum_improvement_percent: float,
-    expected_count: int,
+    expected_records: Mapping[tuple[str, int], ValidationRecordIdentity],
     require_t3_gate: bool,
     allow_invalid_record_intersection: bool,
     bootstrap_replicates: int,
@@ -645,7 +957,7 @@ def _comparison_decision(
         reasons.append("final decision requires exactly seeds 42,43,44")
         return {"status": "NO-GO", "reasons": reasons, "fail_closed": True}
     aggregate_by_seed: dict[str, Any] = {}
-    deltas_by_seed: dict[int, Sequence[float]] = {}
+    deltas_by_seed: dict[int, Mapping[tuple[str, int], float]] = {}
     paired_coverage_by_seed: dict[str, Any] = {}
     for seed in EXPECTED_SEEDS:
         arms = evidence_by_seed[seed]
@@ -667,7 +979,8 @@ def _comparison_decision(
                 arms[control_arm].records_path,
                 arms[candidate_arm].records_path,
                 metric=primary_metric,
-                expected_count=expected_count,
+                expected_records=expected_records,
+                expected_method=arms[control_arm].method,
                 allow_invalid_intersection=allow_invalid_record_intersection,
                 control_sha256=arms[control_arm].records_sha256,
                 candidate_sha256=arms[candidate_arm].records_sha256,
@@ -699,8 +1012,37 @@ def _comparison_decision(
             "paired_coverage_by_seed": paired_coverage_by_seed,
             "fail_closed": True,
         }
+    common_clusters = set.intersection(
+        *(set(values) for values in deltas_by_seed.values())
+    )
+    common_fraction = len(common_clusters) / len(expected_records)
+    if allow_invalid_record_intersection and (
+        len(common_clusters) < MIN_TEMPORAL_PAIRED_RECORDS
+        or common_fraction < MIN_TEMPORAL_PAIRED_FRACTION
+    ):
+        return {
+            "status": "NO-GO",
+            "reasons": [
+                "three-seed native temporal cluster intersection has "
+                f"{len(common_clusters)}/{len(expected_records)} eligible records; "
+                f"requires >= {MIN_TEMPORAL_PAIRED_RECORDS} and >= "
+                f"{MIN_TEMPORAL_PAIRED_FRACTION:.0%}"
+            ],
+            "aggregate_by_seed": aggregate_by_seed,
+            "paired_coverage_by_seed": paired_coverage_by_seed,
+            "common_cluster_coverage": {
+                "eligible_records": len(common_clusters),
+                "total_records": len(expected_records),
+                "eligible_fraction": common_fraction,
+            },
+            "fail_closed": True,
+        }
     seed_mean_deltas = {
-        str(seed): sum(values) / len(values) for seed, values in deltas_by_seed.items()
+        str(seed): (
+            sum(values[cluster] for cluster in common_clusters)
+            / len(common_clusters)
+        )
+        for seed, values in deltas_by_seed.items()
     }
     if any(value >= 0.0 for value in seed_mean_deltas.values()):
         reasons.append("paired primary metric does not improve in every seed")
@@ -716,6 +1058,11 @@ def _comparison_decision(
         "reasons": reasons,
         "aggregate_by_seed": aggregate_by_seed,
         "paired_coverage_by_seed": paired_coverage_by_seed,
+        "common_cluster_coverage": {
+            "eligible_records": len(common_clusters),
+            "total_records": len(expected_records),
+            "eligible_fraction": common_fraction,
+        },
         "paired_seed_mean_deltas": seed_mean_deltas,
         "bootstrap": bootstrap,
         "fail_closed": bool(reasons),
@@ -845,6 +1192,9 @@ def decide_manifest(
         != validation_manifest_sha256
     ):
         raise DecisionInputError("validation manifest identity changed")
+    stage_a_records, stage_b_records = _validation_record_sets(
+        validation_manifest_path
+    )
     seeds_payload = manifest.get("seeds")
     if not isinstance(seeds_payload, Mapping):
         raise DecisionInputError("decision manifest seeds are missing")
@@ -907,7 +1257,7 @@ def decide_manifest(
         candidate_arm="A1",
         primary_metric="low_confidence_epe_px",
         minimum_improvement_percent=PRIMARY_IMPROVEMENT_PERCENT,
-        expected_count=STAGE_A_RECORDS,
+        expected_records=stage_a_records,
         require_t3_gate=False,
         allow_invalid_record_intersection=False,
         bootstrap_replicates=bootstrap_replicates,
@@ -934,17 +1284,24 @@ def decide_manifest(
             candidate_arm="A3",
             primary_metric="low_confidence_epe_px",
             minimum_improvement_percent=PRIMARY_IMPROVEMENT_PERCENT,
-            expected_count=STAGE_A_RECORDS,
+            expected_records=stage_a_records,
             require_t3_gate=False,
             allow_invalid_record_intersection=False,
             bootstrap_replicates=bootstrap_replicates,
             bootstrap_random_seed=bootstrap_random_seed + 1,
         )
-    temporal_identifiable = (
-        identifiability.get("temporal_pose_varies") is True
-        if isinstance(identifiability, Mapping)
-        else False
-    )
+    temporal_audit_identity: Mapping[str, Any] | None = None
+    try:
+        temporal_audit_identity = _validate_hash_bound_temporal_audit(
+            identifiability if isinstance(identifiability, Mapping) else None,
+            validation_manifest_path=validation_manifest_path,
+            validation_manifest_sha256=validation_manifest_sha256,
+            formal_records=stage_b_records,
+            evidence_by_seed=evidence_by_seed,
+        )
+    except DecisionInputError as exc:
+        input_errors.append(str(exc))
+    temporal_identifiable = temporal_audit_identity is not None
     if not temporal_identifiable:
         temporal_pose: dict[str, Any] = {
             "status": "NOT_IDENTIFIABLE",
@@ -957,7 +1314,7 @@ def decide_manifest(
             candidate_arm="B1",
             primary_metric="temporal_residual_error_native_px",
             minimum_improvement_percent=MIN_TEMPORAL_POSE_IMPROVEMENT_PERCENT,
-            expected_count=STAGE_B_RECORDS,
+            expected_records=stage_b_records,
             require_t3_gate=True,
             allow_invalid_record_intersection=True,
             bootstrap_replicates=bootstrap_replicates,
@@ -1058,13 +1415,15 @@ def decide_manifest(
         "claim_boundary": (
             "Same-family FFS pseudo-GT engineering evidence only. Missing seeds, "
             "ineligible evaluations, or missing paired per-record data fail closed. "
-            "Bootstrap units are record IDs; overlapping temporal windows are not "
-            "claimed to be independent video-level samples, and native B0/B1 pixel "
-            "support may differ within an eligible record."
+            "The bootstrap jointly draws the same sequence/source-frame clusters "
+            "across fixed seed strata. Overlapping windows remain engineering "
+            "evidence rather than independent paper-level video samples, and native "
+            "B0/B1 pixel support may differ within an eligible record."
         ),
         "inputs": {
             "manifest_path": str(manifest_file),
             "manifest_sha256": hashlib.sha256(manifest_file.read_bytes()).hexdigest(),
+            "temporal_pose_variation_audit": temporal_audit_identity,
         },
     }
     # A partial component result remains visible, but an incomplete formal

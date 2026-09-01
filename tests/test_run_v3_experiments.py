@@ -1,6 +1,12 @@
 from __future__ import annotations
 
 import json
+import hashlib
+import multiprocessing as mp
+import os
+import signal
+import sys
+import time
 from pathlib import Path
 from typing import Any
 
@@ -11,6 +17,7 @@ from tools.run_v3_experiments import (
     CUDA_OOM_PATTERN,
     OrchestrationError,
     ProcessResult,
+    _default_executor,
     build_parser,
     run_orchestration,
 )
@@ -19,15 +26,45 @@ from tools.run_v3_experiments import (
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 
+def _executor_worker(queue: Any) -> None:
+    _default_executor(
+        [sys.executable, "-c", "import time; time.sleep(60)"],
+        PROJECT_ROOT,
+        lambda pid: queue.put(pid),
+        lambda _text: None,
+    )
+
+
 def _touch(path: Path, text: str = "fixture\n") -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(text, encoding="utf-8")
     return path
 
 
+def _validation_manifest_text() -> str:
+    return "".join(
+        json.dumps(
+            {
+                "sequence_id": "validation-sequence",
+                "frame_id": index,
+                "timestamp": float(index),
+                "left_path": f"left/{index}.png",
+                "right_path": f"right/{index}.png",
+                "K": [[100.0, 0.0, 50.0], [0.0, 100.0, 25.0], [0.0, 0.0, 1.0]],
+                "baseline_m": 0.1,
+                "gt_disparity_path": None,
+            }
+        )
+        + "\n"
+        for index in range(244)
+    )
+
+
 def _arguments(tmp_path: Path, *extra: str) -> Any:
     train_manifest = _touch(tmp_path / "inputs" / "train.jsonl")
-    validation_manifest = _touch(tmp_path / "inputs" / "validation.jsonl")
+    validation_manifest = _touch(
+        tmp_path / "inputs" / "validation.jsonl", _validation_manifest_text()
+    )
     train_sidecar = _touch(tmp_path / "inputs" / "train_calibration.jsonl")
     validation_sidecar = _touch(tmp_path / "inputs" / "validation_calibration.jsonl")
     receipt = validation_sidecar.with_suffix(".receipt.json")
@@ -224,7 +261,130 @@ def test_dry_run_writes_ordered_plan_without_launching(tmp_path: Path) -> None:
     assert state["status"] == "DRY_RUN"
     assert [entry["arm"] for entry in state["plan"][:6]] == list(ARM_ORDER)
     assert [entry["seed"] for entry in state["plan"][:6]] == [42] * 6
+    assert "tools/audit_v3_temporal_pose.py" in state["source_snapshot"]["files"]
     assert not list((tmp_path / "run").rglob("process_attempt_*.log"))
+
+
+def test_dry_run_binds_temporal_pose_variation_audit(tmp_path: Path) -> None:
+    args = _arguments(tmp_path, "--dry-run")
+    derived_root = Path(args.validation_derived_cache_root)
+    manifest = _touch(derived_root / "cache_manifest.jsonl", "{}\n")
+    receipt = _touch(
+        derived_root / "run_receipt.json",
+        json.dumps(
+            {"output": {"cache_manifest_sha256": hashlib.sha256(manifest.read_bytes()).hexdigest()}}
+        ),
+    )
+    formal_ids = [f"validation-sequence/{index}" for index in range(6, 244)]
+    audit_path = tmp_path / "inputs" / "temporal_pose_audit.json"
+    audit_path.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "component": "v3-temporal-pose-variation-audit",
+                "status": "PASS",
+                "temporal_pose_varies": True,
+                "counts": {
+                    "formal_temporal_endpoints": 238,
+                    "formal_windows": 238,
+                    "formal_pose_valid_windows": 30,
+                },
+                "ages": {"1": {"varies": True}, "2": {"varies": True}},
+                "formal_endpoint_binding": {
+                    "available": True,
+                    "record_ids": formal_ids,
+                    "record_ids_sha256": hashlib.sha256(
+                        json.dumps(
+                            formal_ids, sort_keys=True, separators=(",", ":")
+                        ).encode("utf-8")
+                    ).hexdigest(),
+                    "pose_valid_record_ids": formal_ids[:30],
+                },
+                "inputs": {
+                    "derived_root": str(derived_root.resolve()),
+                    "run_receipt_sha256": hashlib.sha256(
+                        receipt.read_bytes()
+                    ).hexdigest(),
+                    "cache_manifest_sha256": hashlib.sha256(
+                        manifest.read_bytes()
+                    ).hexdigest(),
+                    "validation_manifest": {
+                        "path": str(Path(args.validation_manifest).resolve()),
+                        "sha256": hashlib.sha256(
+                            Path(args.validation_manifest).read_bytes()
+                        ).hexdigest(),
+                        "records": 244,
+                    },
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    args.temporal_pose_audit = audit_path
+
+    assert run_orchestration(args) is None
+
+    state = json.loads((tmp_path / "run" / "orchestration_state.json").read_text())
+    identity = state["input_identities"]["temporal_pose_variation_audit"]
+    assert identity["path"] == str(audit_path.resolve())
+    assert state["execution_contract"]["temporal_pose_varies"] is True
+    assert state["execution_contract"]["temporal_pose_identifiability_source"] == (
+        "bound_audit_receipt"
+    )
+
+
+def test_temporal_pose_audit_rejects_derived_hash_drift(tmp_path: Path) -> None:
+    args = _arguments(tmp_path, "--dry-run")
+    derived_root = Path(args.validation_derived_cache_root)
+    _touch(derived_root / "run_receipt.json", "changed\n")
+    _touch(derived_root / "cache_manifest.jsonl", "{}\n")
+    formal_ids = [f"validation-sequence/{index}" for index in range(6, 244)]
+    audit_path = tmp_path / "inputs" / "temporal_pose_audit.json"
+    audit_path.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "component": "v3-temporal-pose-variation-audit",
+                "status": "PASS",
+                "temporal_pose_varies": True,
+                "counts": {
+                    "formal_temporal_endpoints": 238,
+                    "formal_windows": 238,
+                    "formal_pose_valid_windows": 30,
+                },
+                "ages": {"1": {"varies": True}, "2": {"varies": True}},
+                "formal_endpoint_binding": {
+                    "available": True,
+                    "record_ids": formal_ids,
+                    "record_ids_sha256": hashlib.sha256(
+                        json.dumps(
+                            formal_ids, sort_keys=True, separators=(",", ":")
+                        ).encode("utf-8")
+                    ).hexdigest(),
+                    "pose_valid_record_ids": formal_ids[:30],
+                },
+                "inputs": {
+                    "derived_root": str(derived_root.resolve()),
+                    "run_receipt_sha256": "0" * 64,
+                    "cache_manifest_sha256": hashlib.sha256(
+                        (derived_root / "cache_manifest.jsonl").read_bytes()
+                    ).hexdigest(),
+                    "validation_manifest": {
+                        "path": str(Path(args.validation_manifest).resolve()),
+                        "sha256": hashlib.sha256(
+                            Path(args.validation_manifest).read_bytes()
+                        ).hexdigest(),
+                        "records": 244,
+                    },
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    args.temporal_pose_audit = audit_path
+
+    with pytest.raises(OrchestrationError, match="receipt hash mismatch"):
+        run_orchestration(args)
 
 
 def test_cuda_oom_fallback_and_same_a3_stage_b_lineage(tmp_path: Path) -> None:
@@ -232,7 +392,6 @@ def test_cuda_oom_fallback_and_same_a3_stage_b_lineage(tmp_path: Path) -> None:
         tmp_path,
         "--additional-seeds",
         "never",
-        "--temporal-pose-varies",
     )
     executor = FakeExecutor(oom_a0_high=True)
 
@@ -307,3 +466,72 @@ def test_formal_runner_rejects_treatment_override_and_resume_dry_run(
 def test_bare_non_cuda_out_of_memory_text_is_not_a_fallback_trigger() -> None:
     assert CUDA_OOM_PATTERN.search("torch.OutOfMemoryError: host allocation failed") is None
     assert CUDA_OOM_PATTERN.search("RuntimeError: CUDA out of memory") is not None
+
+
+def test_bare_temporal_pose_assertion_is_rejected(tmp_path: Path) -> None:
+    args = _arguments(tmp_path, "--dry-run", "--temporal-pose-varies")
+
+    with pytest.raises(OrchestrationError, match="not formal evidence"):
+        run_orchestration(args)
+
+
+def test_resume_refuses_live_recorded_orphan_child(tmp_path: Path) -> None:
+    first_args = _arguments(tmp_path, "--additional-seeds", "never")
+    run_orchestration(first_args, executor=FakeExecutor())
+    cmdline = [
+        value.decode("utf-8", errors="surrogateescape")
+        for value in Path(f"/proc/{os.getpid()}/cmdline").read_bytes().split(b"\0")
+        if value
+    ]
+    active = tmp_path / "run" / "active_process.json"
+    active.write_text(
+        json.dumps(
+            {
+                "status": "RUNNING",
+                "child_pid": os.getpid(),
+                "command": cmdline,
+            }
+        ),
+        encoding="utf-8",
+    )
+    resumed = _arguments(tmp_path, "--additional-seeds", "never", "--resume")
+
+    with pytest.raises(OrchestrationError, match="still live"):
+        run_orchestration(resumed, executor=FakeExecutor())
+
+
+def test_cache_manifest_drift_is_detected_between_subprocesses(tmp_path: Path) -> None:
+    args = _arguments(tmp_path, "--additional-seeds", "never")
+    derived_manifest = Path(args.validation_derived_cache_root) / "cache_manifest.jsonl"
+    derived_manifest.write_text("initial\n", encoding="utf-8")
+    executor = FakeExecutor()
+
+    class MutatingExecutor:
+        def __call__(self, command, cwd, on_started, emit):
+            result = executor(command, cwd, on_started, emit)
+            if Path(command[1]).name == "train.py" and _arm(list(command)) == "A0":
+                derived_manifest.write_text("changed\n", encoding="utf-8")
+            return result
+
+    with pytest.raises(OrchestrationError, match="identity changed"):
+        run_orchestration(args, executor=MutatingExecutor())
+
+
+def test_sigterm_is_forwarded_to_child_process_group() -> None:
+    context = mp.get_context("spawn")
+    queue = context.Queue()
+    worker = context.Process(target=_executor_worker, args=(queue,))
+    worker.start()
+    child_pid = queue.get(timeout=10)
+    os.kill(worker.pid, signal.SIGTERM)
+    worker.join(timeout=15)
+
+    assert not worker.is_alive()
+    for _ in range(100):
+        try:
+            os.kill(child_pid, 0)
+        except ProcessLookupError:
+            break
+        time.sleep(0.01)
+    else:
+        pytest.fail(f"forwarded child process {child_pid} is still live")
