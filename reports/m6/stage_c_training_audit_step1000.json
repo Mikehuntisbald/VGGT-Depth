@@ -1,0 +1,154 @@
+{
+  "checkpoint_validation": {
+    "base_checkpoint": {
+      "completion": {
+        "actual_step": 15000,
+        "canonical_required_steps": 15000,
+        "complete": true,
+        "configured_steps": 15000,
+        "declared_temporal_steps": 15000,
+        "required_for_this_run": true,
+        "required_steps": 15000
+      },
+      "path": "/home/haoyi/ffs_omega_tsr/outputs/ffs_omega_tsr_x2/stage_b/final.pt",
+      "sha256": "1b9a35ebc77784c7ef62c6d03af4fc956b2f28406dc94789056d14fa35ae8637",
+      "step": 15000
+    },
+    "completion": {
+      "actual_step": 1000,
+      "base_complete": true,
+      "canonical_schedule": true,
+      "configured_steps": 5000,
+      "cuda_bf16_eligible": true,
+      "execution_complete": false,
+      "formal_training_complete": false,
+      "strict_determinism_eligible": true
+    },
+    "data_cursor": {
+      "batch_offset_in_epoch": 1226,
+      "batches_per_epoch": 1387,
+      "completed_micro_steps": 4000,
+      "drop_last": true,
+      "epoch": 2,
+      "grad_accumulation": 4
+    },
+    "geometry_contract": {
+      "calibration_note": "K_right/P_right are retained as diagnostics but are not used for row mapping when they conflict with audited stored-image correspondences",
+      "coordinate_frame": "shared cropped HR rectified-image pixels",
+      "evidence": "required pixel-level epipolar rectification audit receipt",
+      "horizontal_correspondence": "u_right=u_left-disparity-delta",
+      "runtime_right_row_offset_hr_px": 0.0,
+      "runtime_right_row_scale": 1.0,
+      "version": "audited_same_row_rectified_pixels_v1",
+      "vertical_correspondence": "v_right=v_left"
+    },
+    "rectification_audit": {
+      "contract_version": "audited_same_row_rectified_pixels_v1",
+      "counts": {
+        "covered_frames": 96,
+        "ransac_inliers": 71436,
+        "ratio_matches": 98095,
+        "sampled_frames": 96
+      },
+      "manifest_sha256": {
+        "train": "596702933688f695d9aac480d9f01e5764f40a4d7b28d72d73c550eb209b301c",
+        "validation": "014bd75de8ffbf74530c64eac76394a30bfc62d65b2da02397de2fb5c984760c"
+      },
+      "path": "/home/haoyi/ffs_omega_tsr/reports/m6/epipolar_rectification_audit.json",
+      "pixel_evidence": {
+        "coverage_fraction": 1.0,
+        "median_right_y_minus_left_y_px": -0.0723114013671875,
+        "p95_abs_right_y_minus_left_y_px": 2.0238914489746094
+      },
+      "sha256": "3eb3e8853e4723b9e0703aeaffd36b9ef482b311ff5b9cff5a79e28e60e84429",
+      "status": "PASS"
+    },
+    "runtime_source_bundle": {
+      "all_files_match_checkpoint_git_tree": true,
+      "bundle_sha256": "6a2cb37fb56dd79661c75d16c2128bc5355b857ea371d2b2c5de488e63acc4e5",
+      "file_count": 52,
+      "git_hash": "4e6b7eb488201227e46b30e2ac90d34991466f2c"
+    },
+    "training_runtime": {
+      "cuda_version": "12.8",
+      "device": "cuda:0",
+      "device_capability": [
+        12,
+        0
+      ],
+      "device_name": "NVIDIA GeForce RTX 5090",
+      "formal_cuda_bf16_eligible": true,
+      "native_cuda_bf16": true,
+      "strict_determinism": true,
+      "torch_version": "2.10.0+cu128"
+    },
+    "training_state": {
+      "expected_learning_rate": 0.0001939666081493406,
+      "optimizer": "AdamW",
+      "optimizer_parameter_tensors": 17,
+      "optimizer_steps_consistent": true,
+      "rng_schema_consistent": true,
+      "scheduler_learning_rate_consistent": true,
+      "scheduler_progress_consistent": true
+    }
+  },
+  "completion": {
+    "formal_training_complete": false,
+    "receipt_present": false,
+    "receipt_valid": false,
+    "summary": null
+  },
+  "component": "ffs-omega-tsr-epipolar-training-audit",
+  "files": {
+    "final_checkpoint": null,
+    "latest_checkpoint": {
+      "byte_size": 897194,
+      "checkpoint_interval": 500,
+      "config_sha256": "b02473a3d1df02ef527769d34d62729389ff205cdcdfc82feb8b5787415364f7",
+      "configured_steps": 5000,
+      "elapsed_seconds": 1044.0649511170004,
+      "git_hash": "4e6b7eb488201227e46b30e2ac90d34991466f2c",
+      "learning_rate": 0.0001939666081493406,
+      "parameter_count": 69905,
+      "path": "/home/haoyi/ffs_omega_tsr/outputs/ffs_omega_tsr_x2/stage_c/latest.pt",
+      "sha256": "9e6a92759321678e2a81090b06d910bf09d35d8ae8ef187f4459138f2b43e33d",
+      "step": 1000
+    },
+    "run_summary": null,
+    "training_log": {
+      "byte_size": 305362,
+      "complete_records": 1026,
+      "path": "/home/haoyi/ffs_omega_tsr/outputs/ffs_omega_tsr_x2/stage_c/train.jsonl",
+      "sha256": "1cf9647bdd29ccd9dc930e7ed81b3463f71f0865de7f3d26ac5ea4144f52213e"
+    }
+  },
+  "log_validation": {
+    "elapsed_resume_boundaries": [],
+    "elapsed_seconds_last": 1070.7264950210001,
+    "finite": true,
+    "first_step": 1,
+    "last_step": 1026,
+    "latest_checkpoint_lag_steps": 26,
+    "learning_rate_schedule_exact": true,
+    "maximum_allowed_lag_steps": 500,
+    "records": 1026,
+    "steps_continuous": true,
+    "warnings": []
+  },
+  "output_dir": "/home/haoyi/ffs_omega_tsr/outputs/ffs_omega_tsr_x2/stage_c",
+  "read_only": true,
+  "resume": {
+    "declared_by_completion_summary": false,
+    "detected": false,
+    "elapsed_reset_boundaries": [],
+    "final_segment_start_step": null
+  },
+  "safe_load": {
+    "arbitrary_pickle_globals_enabled": false,
+    "symlink_artifacts_allowed": false,
+    "torch_weights_only": true
+  },
+  "schema_version": 1,
+  "status": "IN_PROGRESS",
+  "training_status": "IN_PROGRESS"
+}
