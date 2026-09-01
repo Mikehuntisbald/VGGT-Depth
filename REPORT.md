@@ -553,9 +553,10 @@ used 1,649 trusted teacher pixels, produced finite loss 0.0422251, saved every
 required model/optimizer/scheduler/scaler/config/Git field, and reproduced all
 18 refiner tensors bit-for-bit across two same-seed runs. This is execution
 evidence only because its one-step Stage-B base was trained on the validation
-cache. Formal Stage-C training has since started from the audited final Stage-B
-checkpoint in a frozen source worktree; its completion and held-out evaluation
-remain pending. Evidence: `reports/m6/stage_c_integration_smoke.json`.
+cache. Formal Stage-C training subsequently completed from the audited final
+Stage-B checkpoint in its frozen source worktree; the final result is reported
+below. Evidence for this earlier smoke remains
+`reports/m6/stage_c_integration_smoke.json`.
 
 A subsequent calibration audit caught an important coordinate discrepancy:
 all manifests advertise `K_right.cy-K_left.cy=+5.4` HR px, while actual
@@ -602,6 +603,61 @@ candidate is valid and 50.29% inside the narrow candidate-boundary band, with
 zero non-finite coordinates. Evidence:
 `reports/m6/stage_c_geometry_smoke.json`.
 
+The canonical Stage-C run completed all 5,000 optimizer steps with only the
+69,905-parameter epipolar refiner trainable. Its read-only training audit is
+PASS: 5,000 continuous finite log records, exact learning-rate schedule, zero
+checkpoint lag, strict deterministic RTX 5090 BF16 eligibility, the audited
+same-row geometry contract, and a byte-identical 52-file source bundle at
+`4e6b7eb488201227e46b30e2ac90d34991466f2c`. The final checkpoint SHA-256 is
+`b4e916ac0b8150d374d85efa0389e29b0ad455b5064d0693901d272ac278a31a`;
+the audit SHA-256 is
+`abac5ed1d306e00a63436c761048bca1a7868de2f9827b1bbaf25925f91f1113`.
+
+The strict final evaluator covers all 238 eligible windows from the 244-frame
+manifest and compares raw refined output against the raw Stage-B T3+VGGT base
+on identical metric domains. Boundary EPE improves from 0.924297 to 0.899512
+px (-2.6815%), Bad-1 from 0.81482% to 0.73637% (-9.6281%), overall EPE from
+0.156247 to 0.147610 px (-5.5280%), low-confidence EPE from 0.197665 to
+0.185228 px (-6.2917%), and trusted-region EPE from 0.109230 to 0.105157 px
+(-3.7288%). Thus the boundary, Bad-1, and trusted-region requirements pass.
+
+The required raw output-health gates fail: negative disparity is 4.41968%,
+invalid output is 4.41968%, and both exceed the 0.5% ceiling, although NaN and
+Inf remain zero. Invalid-region completeness also regresses from 0.647186 to
+0.497462 (-23.1346%). The clamp-to-zero row has zero negative disparity but
+retains 4.41968% zero/invalid and is explicitly not an acceptance owner.
+Therefore the complete eligible producer is formally
+`STAGE_C_M5_GATE_FAIL`; training-audit PASS must not be confused with the M5
+performance result. The metrics remain same-family FFS pseudo-GT engineering
+evidence. No refined TEPE is available or claimed, no paper/independent GT is
+present, and point-to-plane is `NOT_AVAILABLE`. Evidence:
+`reports/m6/stage_c_eval_final.json` (SHA-256
+`e674ce00ed77df1c611e255daeafcb91bf610aca95776db33b97ca0958d8c5f3`)
+and the bound metrics JSON (SHA-256
+`c060d3e0213db33d7643004b76d9bd2592a164278e1451f987d92735e66edf11`).
+
+The delivery diagnostics are also complete and independently hashed. The
+Stage-B diagnostic metrics JSON has SHA-256
+`4d598da6bcf8a698bcbc0d7816eabe2d30d96257bbf014bfd033017891435954`;
+its methods, comparisons, coverage, checkpoints, target, and postprocess
+sections are structurally identical to the formal Stage-B metrics. Its single
+H.264 flicker video is 2304×816 at 5 fps, 238 frames / 47.6 seconds,
+16,244,022 bytes, with SHA-256
+`0e21ad8924702946a782fbd16e39a4a910a2fe554d7e0a4c726951db9b787901`.
+Four ranked failure criteria each retain their top four bundles and one
+calibrated PLY per bundle, totaling 16 bundles and 16 PLY; the four selection
+receipts and complete bundle/PLY manifests are bound in the M7 receipt.
+
+The Stage-C frozen-evaluator posthoc receipt has SHA-256
+`e66df1ba7d5e93a6d7ef8a447267fcdbb7c138c75c1ef90491e3fd6486d399e5`
+and binds four base/refined pairs, eight PLY total. Parsed formal metric sections
+remain identical to the original Stage-C evaluator output. These videos,
+failure bundles, and point clouds are diagnostic delivery artifacts: they do
+not participate in metrics, repair M5 gates, supply paper GT, or make
+point-to-plane available. Exact per-selection hashes, aggregate manifest
+contracts, file/point counts, and claim boundaries are in
+`reports/m7/delivery_artifacts.json`.
+
 ## Tests
 
 ```text
@@ -637,9 +693,9 @@ cross-checks.
 
 | Blocker | Required resolution |
 |---|---|
-| Formal Stage C | the strict 5,000-step run is active from the audited final Stage-B checkpoint in a frozen source worktree; completion receipt and full held-out evaluation remain pending |
-| Output health | final raw Stage-B has 2.7845% negative disparity; `clamp_min(0)` removes negative values but leaves the same 2.7845% honestly invalid, so a matched positivity/output-validity resolution is still required |
-| Independent accuracy | Stage-A and Stage-B engineering metrics use same-family FFS pseudo-GT; add real GT or an independent benchmark before paper claims |
+| M5 gate recovery | Stage-C improves boundary/Bad-1/EPE but raises raw negative/invalid output to 4.41968% and reduces hole completeness by 23.1346%; any positivity/completeness change requires a new matched run rather than promoting clamp0 |
+| Refined temporal evidence | the frozen Stage-C evaluator does not compute refined TEPE, so no Stage-C temporal-improvement claim is currently available |
+| Independent 3D accuracy | Stage-A/B/C engineering metrics use same-family FFS pseudo-GT and point-to-plane is unavailable; add real GT or an independent benchmark with valid correspondences/normals before paper or 3D-accuracy claims |
 
 ## Claim boundary
 
@@ -655,5 +711,10 @@ holdout evaluation now prove the final internal pseudo-GT go/no-go result:
 temporal, low-confidence, completeness, and trusted-region gates pass, while
 raw sign health and physical invalid-rate health fail. `final_acceptance_eligible`
 means the formal coverage and schedules are complete; it does not mean every
-metric threshold passes. No current artifact proves independent-GT accuracy,
-point-cloud accuracy, Stage-C final performance, or paper-level performance.
+metric threshold passes. The completed 5,000-step Stage-C run and full
+238-window audit prove its final raw pseudo-GT spatial effects: boundary,
+Bad-1, EPE, low-confidence, and trusted-region errors improve, but raw output
+health fails and invalid-region completeness regresses, yielding
+`STAGE_C_M5_GATE_FAIL`. They do not prove refined temporal improvement because
+refined TEPE is unavailable. No current artifact proves independent-GT
+accuracy, point-to-plane accuracy, or paper-level performance.

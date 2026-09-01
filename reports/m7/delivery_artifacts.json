@@ -1,0 +1,238 @@
+{
+  "schema_version": 1,
+  "component": "ffs-omega-tsr-delivery-diagnostic-artifacts",
+  "status": "DELIVERY_DIAGNOSTICS_VERIFIED",
+  "read_only_source_audit": true,
+  "claim_boundary": {
+    "formal_stage_b_metrics_owner": "outputs/ffs_omega_tsr_x2/stage_b_eval/metrics.json",
+    "formal_stage_c_metrics_owner": "outputs/ffs_omega_tsr_x2/stage_c_eval/metrics.json",
+    "diagnostic_artifacts_change_formal_metrics": false,
+    "temporal_flicker_video_metric_participation": "NONE",
+    "failure_bundles_classification": "RANKED_DIAGNOSTIC_VISUALIZATIONS",
+    "stage_c_pointcloud_classification": "POSTHOC_DIAGNOSTIC",
+    "stage_c_posthoc_accuracy_metrics": "NOT_COMPUTED_OR_CLAIMED_BY_POSTHOC_WRAPPER",
+    "point_to_plane": "NOT_AVAILABLE",
+    "paper_accuracy": false,
+    "paper_ground_truth": false,
+    "note": "These hashes bind delivery and diagnostic files only. They do not change formal Stage-B or Stage-C metrics, repair failed gates, provide independent ground truth, or establish point-to-plane accuracy."
+  },
+  "aggregate_manifest_contract": {
+    "root": "outputs/ffs_omega_tsr_x2",
+    "ordering": "ascending relative POSIX path",
+    "entry_encoding": "UTF-8(relative_path + NUL + file_sha256 + NUL + decimal_byte_size + LF)",
+    "digest": "SHA-256 of the concatenated encoded entries"
+  },
+  "formal_metrics": {
+    "stage_b": {
+      "path": "outputs/ffs_omega_tsr_x2/stage_b_eval/metrics.json",
+      "sha256": "2ba036ad502cc26dab531a40ea6d4cbe361f179d8b035374c43a6aecda922fd8",
+      "report_path": "reports/m4/stage_b_eval_final.json",
+      "report_sha256": "942c231787654602a66394fd8ab124839ffc0f12d09953885ab4d6f08b567220"
+    },
+    "stage_c": {
+      "path": "outputs/ffs_omega_tsr_x2/stage_c_eval/metrics.json",
+      "sha256": "c060d3e0213db33d7643004b76d9bd2592a164278e1451f987d92735e66edf11"
+    }
+  },
+  "formal_metric_consistency": {
+    "stage_b_diagnostics_equal_formal": true,
+    "stage_b_equal_sections": [
+      "methods",
+      "comparisons",
+      "formal_temporal_coverage",
+      "checkpoint",
+      "spatial_checkpoint",
+      "target",
+      "postprocess_contract"
+    ],
+    "stage_c_posthoc_equal_formal": true,
+    "stage_c_all_json_equal_except_elapsed_seconds": true,
+    "stage_c_formal_elapsed_seconds": 22.485401113999615,
+    "stage_c_posthoc_elapsed_seconds": 24.79296173199873,
+    "stage_c_equal_sections": [
+      "methods",
+      "comparisons",
+      "canonical_coverage",
+      "formal_coverage",
+      "stage_b_base_checkpoint",
+      "stage_c_checkpoint",
+      "claims",
+      "target",
+      "postprocess_contract"
+    ],
+    "comparison_method": "parsed JSON structural equality"
+  },
+  "stage_b_diagnostics": {
+    "metrics": {
+      "path": "outputs/ffs_omega_tsr_x2/stage_b_eval_diagnostics/metrics.json",
+      "sha256": "4d598da6bcf8a698bcbc0d7816eabe2d30d96257bbf014bfd033017891435954",
+      "byte_size": 100190,
+      "status": "FINAL_CHECKPOINT_EVALUATION_COMPLETE",
+      "records_evaluated": 238,
+      "checkpoint_sha256": "1b9a35ebc77784c7ef62c6d03af4fc956b2f28406dc94789056d14fa35ae8637",
+      "evaluator_git_hash": "aebf7d51b7ac259faf0e1529c76b08244d3a3315",
+      "eval_py_sha256": "00586de7d6ec48f65f86185bc5ebd917f91ed6bce0465cb1c2cb91d32a40e09d"
+    },
+    "metrics_csv": {
+      "path": "outputs/ffs_omega_tsr_x2/stage_b_eval_diagnostics/metrics.csv",
+      "sha256": "80da4e6c34693419c3a96442bf4a2d547c6f2f71ad2e463f69f856d8b82dc10d",
+      "byte_size": 7967,
+      "byte_identical_to_formal_metrics_csv": true
+    },
+    "temporal_flicker_video": {
+      "status": "COMPLETE",
+      "path": "outputs/ffs_omega_tsr_x2/stage_b_eval_diagnostics/temporal_flicker_videos/uvc_20260706_183939_677_2560x800_60fps.mp4",
+      "sha256": "0e21ad8924702946a782fbd16e39a4a910a2fe554d7e0a4c726951db9b787901",
+      "byte_size": 16244022,
+      "codec": "h264",
+      "width": 2304,
+      "height": 816,
+      "fps": 5,
+      "frame_count": 238,
+      "duration_seconds": 47.6,
+      "sequence_id": "uvc_20260706_183939_677_2560x800_60fps",
+      "backend": "direct_ffmpeg_rgb24",
+      "metric_participation": "NONE",
+      "metadata_probe": "/usr/bin/ffprobe"
+    },
+    "failure_sample_bundles": {
+      "status": "COMPLETE",
+      "classification": "POSTHOC_DIAGNOSTIC",
+      "metric_participation": "NONE",
+      "selection_uses_ranked_per_sample_diagnostics": true,
+      "criteria_count": 4,
+      "samples_per_criterion": 4,
+      "bundle_count": 16,
+      "files_per_bundle": 15,
+      "png_count": 224,
+      "point_cloud_count": 16,
+      "ply_header_vertex_count_matches_data_rows": true,
+      "coordinate_frame": "left_camera_frame",
+      "coordinate_units": "meters",
+      "criteria": {
+        "boundary_epe_px": {
+          "selection_path": "outputs/ffs_omega_tsr_x2/stage_b_eval_diagnostics/failures/boundary_epe_px/selection.json",
+          "selection_sha256": "7e4f14fae61b31b4bc658af92775735aabfc5d45bc05e1129321f2bfa1af0384",
+          "selection_byte_size": 4382,
+          "selected_samples": 4,
+          "bundle_count": 4,
+          "bundle_file_count": 60,
+          "bundle_byte_size": 88581949,
+          "point_cloud_count": 4,
+          "point_cloud_byte_size": 82624791,
+          "point_count": 1179554
+        },
+        "low_confidence_epe_px": {
+          "selection_path": "outputs/ffs_omega_tsr_x2/stage_b_eval_diagnostics/failures/low_confidence_epe_px/selection.json",
+          "selection_sha256": "38316ba1e402d313b28a19b03cd8f725bb481d24f16f985b25d86b3ed4ff54ee",
+          "selection_byte_size": 4460,
+          "selected_samples": 4,
+          "bundle_count": 4,
+          "bundle_file_count": 60,
+          "bundle_byte_size": 77641195,
+          "point_cloud_count": 4,
+          "point_cloud_byte_size": 72922981,
+          "point_count": 1098487
+        },
+        "raw_negative_rate": {
+          "selection_path": "outputs/ffs_omega_tsr_x2/stage_b_eval_diagnostics/failures/raw_negative_rate/selection.json",
+          "selection_sha256": "f8126a184b111cbb94b81e732008d5e0d71c29ff93e093f77984f8f7ba1172ec",
+          "selection_byte_size": 4370,
+          "selected_samples": 4,
+          "bundle_count": 4,
+          "bundle_file_count": 60,
+          "bundle_byte_size": 66757445,
+          "point_cloud_count": 4,
+          "point_cloud_byte_size": 60133265,
+          "point_count": 914492
+        },
+        "strict_temporal_error_px": {
+          "selection_path": "outputs/ffs_omega_tsr_x2/stage_b_eval_diagnostics/failures/strict_temporal_error_px/selection.json",
+          "selection_sha256": "6739d21458d3a8f0f1874567ac97b41b37d1ad0f78e01096b583541ff44202c7",
+          "selection_byte_size": 4499,
+          "selected_samples": 4,
+          "bundle_count": 4,
+          "bundle_file_count": 60,
+          "bundle_byte_size": 89113821,
+          "point_cloud_count": 4,
+          "point_cloud_byte_size": 81644983,
+          "point_count": 1177655
+        }
+      },
+      "selection_manifest": {
+        "file_count": 4,
+        "byte_size": 17711,
+        "sha256": "7b2ee24b98f143fb151c8defaab21027e09a63255b835b631d4124a8e535cc76"
+      },
+      "bundle_file_manifest": {
+        "file_glob": "stage_b_eval_diagnostics/failures/*/*/*",
+        "file_count": 240,
+        "byte_size": 322094410,
+        "sha256": "cecb1b2129c23e64254a14ae369e4476a1026e8eaf17350048c0636063409a49"
+      },
+      "point_cloud_manifest": {
+        "file_glob": "stage_b_eval_diagnostics/failures/*/*/point_cloud_camera_frame.ply",
+        "file_count": 16,
+        "byte_size": 297326020,
+        "point_count": 4370188,
+        "sha256": "daa8a6460b5384d96e87c1131069a2a83b7097334d2e8dd128e6bf757179b177"
+      },
+      "target": "trusted_hr_ffs_teacher_pseudo_gt",
+      "paper_accuracy": false,
+      "paper_ground_truth": false
+    }
+  },
+  "stage_c_posthoc_pointclouds": {
+    "receipt": {
+      "path": "outputs/ffs_omega_tsr_x2/stage_c_posthoc_pointclouds/posthoc_pointcloud_receipt.json",
+      "sha256": "e66df1ba7d5e93a6d7ef8a447267fcdbb7c138c75c1ef90491e3fd6486d399e5",
+      "byte_size": 5808,
+      "status": "POSTHOC_DIAGNOSTIC_COMPLETE"
+    },
+    "posthoc_metrics": {
+      "path": "outputs/ffs_omega_tsr_x2/stage_c_posthoc_pointclouds/metrics.json",
+      "sha256": "ebf5f52c82fbc5652c8841092e52c65986a154f3223797ea21d71e3d0017f8b2",
+      "byte_size": 103329,
+      "formal_metrics_owner": false
+    },
+    "posthoc_metrics_csv": {
+      "path": "outputs/ffs_omega_tsr_x2/stage_c_posthoc_pointclouds/metrics.csv",
+      "sha256": "bacc0648316d295adf2fa1d908d40733f61d35d143bf5e2efe65b2338e913ebe",
+      "byte_size": 3380,
+      "formal_metrics_owner": false
+    },
+    "frozen_evaluator": {
+      "git_hash": "4e6b7eb488201227e46b30e2ac90d34991466f2c",
+      "eval_epipolar_sha256": "d88f69bc49ff8410c3628f5d6db3c9595a4ac791e07d0e72870ee3914468204e"
+    },
+    "checkpoint_lineage": {
+      "stage_b_sha256": "1b9a35ebc77784c7ef62c6d03af4fc956b2f28406dc94789056d14fa35ae8637",
+      "stage_c_sha256": "b4e916ac0b8150d374d85efa0389e29b0ad455b5064d0693901d272ac278a31a"
+    },
+    "sample_count": 4,
+    "point_cloud_count": 8,
+    "ply_header_vertex_count_matches_data_rows": true,
+    "base_point_cloud_count": 4,
+    "refined_point_cloud_count": 4,
+    "coordinate_frame": "left_camera_frame",
+    "coordinate_units": "meters",
+    "base_point_count": 1082517,
+    "refined_point_count": 910996,
+    "total_point_count": 1993513,
+    "visualization_bundle_manifest": {
+      "file_glob": "stage_c_posthoc_pointclouds/visualizations/*/*",
+      "bundle_count": 4,
+      "file_count": 56,
+      "byte_size": 137790620,
+      "sha256": "a6981d2dd3b7dcbfe04ecc3868fa3e948d7a7075b1db4182d396640da5e600a1"
+    },
+    "point_cloud_manifest": {
+      "file_glob": "stage_c_posthoc_pointclouds/visualizations/*/*_point_cloud_camera_frame.ply",
+      "file_count": 8,
+      "byte_size": 131893529,
+      "sha256": "8f1e5722b701ea365cc4e82648806477c85d216bffb743709e34741609721754"
+    },
+    "accuracy_metrics": "NOT_COMPUTED_OR_CLAIMED_BY_POSTHOC_WRAPPER",
+    "point_to_plane": "NOT_AVAILABLE"
+  }
+}

@@ -20,6 +20,8 @@ the formal Stage-A spatial run has a conditional pseudo-GT engineering PASS.
 Formal Stage-B completed all 15,000 steps and its final training audit passes.
 On the complete held-out pseudo-GT domain, its temporal, low-confidence,
 completeness, and trusted-region gates pass; raw output health remains a fail.
+Formal Stage-C also completed 5,000 steps with a passing training audit, but
+its complete held-out result is **STAGE_C_M5_GATE_FAIL**.
 
 - Three isolated cu128 environments pass RTX 5090/SM120 FP16 and BF16 CUDA
   checks; both upstream repositories are clean pinned submodules.
@@ -44,9 +46,9 @@ completeness, and trusted-region gates pass; raw output health remains a fail.
   transport and HR temporal loss.
 - A separate 69,905-parameter HR local epipolar refiner, audited same-row pixel
   contract, training entrypoint, and strict held-out evaluator are implemented.
-  CPU one-step and CUDA BF16 dry-run artifacts are integration evidence only.
-  Formal Stage-C training is now active from the audited final Stage-B
-  checkpoint in a frozen source worktree; completion evidence remains pending.
+  The formal CUDA BF16 run completed 5,000 steps from the audited Stage-B final;
+  its training audit passes and final checkpoint SHA-256 is
+  `b4e916ac0b8150d374d85efa0389e29b0ad455b5064d0693901d272ac278a31a`.
 - Formal Stage-A completed 5,000 steps at 3.682 step/s. On all 244 held-out
   frames at full 800×1280 resolution, low-confidence EPE improves 11.996%,
   invalid-region completeness improves 725.3%, and trusted-region EPE improves
@@ -60,6 +62,18 @@ completeness, and trusted-region gates pass; raw output health remains a fail.
   FFS pseudo-GT engineering metrics, not paper accuracy. Raw T3+VGGT still has
   2.784% negative disparity; `clamp_min(0)` removes the sign violation but
   leaves the same 2.784% zero/invalid, so the all-gates result remains a fail.
+- On all 238 formal Stage-C windows, raw epipolar refinement improves boundary
+  EPE by 2.6815%, Bad-1 by 9.6281%, overall EPE by 5.5280%, low-confidence EPE
+  by 6.2917%, and trusted-region EPE by 3.7288%. It nevertheless raises raw
+  negative/invalid disparity to 4.41968% and reduces invalid-region completeness
+  by 23.1346%, so M5 fails. Clamp-to-zero is diagnostic only and cannot own an
+  acceptance gate. No refined TEPE is available or claimed; the target remains
+  same-family FFS pseudo-GT, and point-to-plane is unavailable.
+- Delivery diagnostics are complete: one 238-frame H.264 temporal flicker MP4,
+  four failure criteria with four ranked bundles and one PLY each (16/16), and
+  four Stage-C base/refined PLY pairs (8 files). They are visualization/posthoc
+  artifacts only; exact hashes and counts are in
+  `reports/m7/delivery_artifacts.json` and do not alter formal metrics.
 
 The M0 fallback remains historical and confined to the separate NGC interface
 probe; it is not used by M1 caches. See [`REPORT.md`](REPORT.md) for exact
@@ -130,7 +144,7 @@ src/losses/          training losses (M4-M6)
 src/metrics/         evaluation metrics (M4-M7)
 tools/               environment and backbone smoke tools
 tests/               executable contracts
-reports/m0..m6/      structured milestone receipts
+reports/m0..m7/      structured milestone and delivery receipts
 ```
 
 The GitHub FFS source and VGGT-Ω research materials have non-commercial-use
