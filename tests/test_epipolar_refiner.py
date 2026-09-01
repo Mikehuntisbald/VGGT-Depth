@@ -6,6 +6,7 @@ import torch
 from models.epipolar_refiner import (
     HREpipolarRefiner,
     groupwise_epipolar_correlation,
+    rectified_vertical_affine_from_intrinsics,
 )
 
 
@@ -64,6 +65,44 @@ def test_fractional_disparity_uses_bilinear_right_feature_sampling() -> None:
     assert valid[0, 0, 0, 4]
     # At left x=4, the right feature is sampled at x=2.5.
     torch.testing.assert_close(correlation[0, 0, 0, 0, 4], torch.tensor(2.5))
+
+
+def test_rectified_vertical_principal_point_offset_samples_correct_right_row() -> None:
+    height = 9
+    feature_right_hr = torch.eye(height).T.reshape(1, height, height, 1)
+    feature_left_hr = torch.zeros_like(feature_right_hr)
+    # A left row v corresponds to right row v+2.
+    feature_left_hr[:, :, :-2] = feature_right_hr[:, :, 2:]
+    disparity_hr_px = torch.zeros(1, 1, height, 1)
+
+    correlation, valid = groupwise_epipolar_correlation(
+        feature_left_hr,
+        feature_right_hr,
+        disparity_hr_px,
+        candidate_offsets_hr_px=(0.0,),
+        num_groups=1,
+        right_row_offset_hr_px=torch.tensor([2.0]),
+    )
+
+    assert valid[0, 0, :-2, 0].all()
+    assert not valid[0, 0, -2:, 0].any()
+    assert torch.all(correlation[0, 0, 0, :-2, 0] > 0)
+
+
+def test_vertical_affine_uses_cropped_left_and_right_intrinsics_with_sign() -> None:
+    intrinsics_left = torch.tensor(
+        [[[800.0, 0.0, 300.0], [0.0, 800.0, 100.0], [0.0, 0.0, 1.0]]]
+    )
+    intrinsics_right = torch.tensor(
+        [[[800.0, 0.0, 300.0], [0.0, 800.0, 105.4], [0.0, 0.0, 1.0]]]
+    )
+
+    scale, offset = rectified_vertical_affine_from_intrinsics(
+        intrinsics_left, intrinsics_right
+    )
+
+    torch.testing.assert_close(scale, torch.tensor([1.0]))
+    torch.testing.assert_close(offset, torch.tensor([5.4]))
 
 
 def test_groupwise_correlation_averages_channels_inside_each_group_only() -> None:
@@ -126,6 +165,8 @@ def test_refiner_cpu_shapes_parameter_budget_and_initial_no_op() -> None:
     assert output.candidate_valid_mask.shape == (2, 5, 9, 13)
     assert output.candidate_valid_mask.dtype == torch.bool
     assert output.confidence.shape == (2, 1, 9, 13)
+    torch.testing.assert_close(output.right_row_scale, torch.ones(2))
+    torch.testing.assert_close(output.right_row_offset_hr_px, torch.zeros(2))
     torch.testing.assert_close(output.correction_hr_px, torch.zeros_like(output.correction_hr_px))
     torch.testing.assert_close(
         output.corrected_disparity_hr_px, predicted_disparity_hr_px

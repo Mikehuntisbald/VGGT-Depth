@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+import json
 from pathlib import Path
 
 import pytest
@@ -15,6 +16,7 @@ from models.epipolar_refiner import HREpipolarRefiner
 from models.epipolar_stage import FrozenTemporalEpipolarStage
 from test_temporal_training_dataset import _make_temporal_cache
 from train import build_model
+from eval import _run_temporal_endpoint_ablation
 
 
 def _config() -> object:
@@ -56,9 +58,13 @@ def test_exact_frozen_stage_b_endpoint_predictor_cpu_shape(tmp_path: Path) -> No
         disparity = train_epipolar.predict_frozen_stage_b_endpoint(
             base, batch, config=config
         )
+        evaluation_disparity = _run_temporal_endpoint_ablation(
+            base, batch, config=config
+        ).vggt_on.disparity_hr_px
 
     assert disparity.shape == (1, 1, 4, 8)
     assert torch.isfinite(disparity).all()
+    assert torch.equal(disparity, evaluation_disparity)
 
 
 class _TinyBase(nn.Module):
@@ -91,12 +97,22 @@ def _tiny_batch() -> dict[str, torch.Tensor]:
     left = torch.rand((1, 3, 3, 6, 10), generator=generator)
     right = torch.rand((1, 3, 6, 10), generator=generator)
     target = torch.full((1, 3, 1, 6, 10), 2.0)
+    intrinsics = torch.tensor(
+        [[100.0, 0.0, 5.0], [0.0, 100.0, 3.0], [0.0, 0.0, 1.0]]
+    )
     return {
         "rgb_hr_sequence": left,
         "rgb_right_hr": right,
         "teacher_disparity_hr_px_sequence": target,
         "teacher_confidence_sequence": torch.ones_like(target),
         "teacher_trusted_mask_sequence": torch.ones_like(target, dtype=torch.bool),
+        "K_hr_sequence": intrinsics.reshape(1, 1, 3, 3).repeat(1, 3, 1, 1),
+        "K_right_hr": intrinsics.reshape(1, 3, 3),
+        "epipolar_right_row_scale": torch.ones(1),
+        "epipolar_right_row_offset_hr_px": torch.zeros(1),
+        "epipolar_right_row_mapping_source": [
+            "audited_same_row_rectified_pixels_v1"
+        ],
     }
 
 
@@ -145,4 +161,30 @@ def test_optimizer_cannot_include_frozen_base_parameters() -> None:
     with pytest.raises(ValueError, match="exactly"):
         train_epipolar.run_one_epipolar_optimizer_step(
             stage, _tiny_batch(), _config(), optimizer
+        )
+
+
+def test_formal_rectification_audit_is_bound_and_fail_closed(tmp_path: Path) -> None:
+    repository = Path(__file__).parents[1]
+    receipt_path = repository / "reports" / "m6" / "epipolar_rectification_audit.json"
+    receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+    expected_train_sha256 = receipt["manifests"]["train"]["sha256"]
+    audit = train_epipolar._validated_rectification_audit(
+        receipt_path,
+        expected_train_manifest_sha256=expected_train_sha256,
+    )
+
+    assert audit["status"] == "PASS"
+    assert audit["contract_version"] == "audited_same_row_rectified_pixels_v1"
+    assert audit["counts"]["sampled_frames"] == 96
+    assert audit["pixel_evidence"]["p95_abs_right_y_minus_left_y_px"] < 3.0
+
+    tampered = json.loads(receipt_path.read_text(encoding="utf-8"))
+    tampered["status"] = "FAIL"
+    tampered_path = tmp_path / "tampered.json"
+    tampered_path.write_text(json.dumps(tampered) + "\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="did not publish"):
+        train_epipolar._validated_rectification_audit(
+            tampered_path,
+            expected_train_manifest_sha256=expected_train_sha256,
         )

@@ -9,6 +9,12 @@
     "paper_ground_truth": false,
     "reason": "The one-step Stage-B base checkpoint was trained on the same validation cache. This receipt proves execution, freezing, lineage checks, checkpoint schema and deterministic refiner updates only."
   },
+  "current_compatibility": {
+    "strict_stage_c_evaluator_accepts": false,
+    "reason": "This historical smoke predates the required audited_same_row_rectified_pixels_v1 receipt binding and is retained only as execution evidence.",
+    "superseding_receipt": "reports/m6/epipolar_rectification_audit.json",
+    "superseding_receipt_sha256": "3eb3e8853e4723b9e0703aeaffd36b9ef482b311ff5b9cff5a79e28e60e84429"
+  },
   "source": {
     "git_hash": "b92c0a1e5960fb82d1be3c2c140d26ec12acc4df",
     "base_checkpoint": "/tmp/ffs_omega_tsr_stage_b_smoke.Isxf9q/final.pt",

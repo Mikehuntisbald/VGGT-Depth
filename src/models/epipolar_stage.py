@@ -10,6 +10,7 @@ from typing import Any
 import torch
 from torch import Tensor, nn
 
+from geometry.epipolar import EPIPOLAR_PIXEL_ROW_CONTRACT_VERSION
 from losses.disparity import disparity_loss, finite_masked_mean
 
 from .epipolar_refiner import (
@@ -132,6 +133,47 @@ class FrozenTemporalEpipolarStage(nn.Module):
                 f"right RGB shape {tuple(rgb_right_hr.shape)} does not match "
                 f"endpoint left RGB {tuple(rgb_left_hr.shape)}"
             )
+        intrinsics_left_sequence = batch.get("K_hr_sequence")
+        intrinsics_right_hr = batch.get("K_right_hr")
+        if not isinstance(intrinsics_left_sequence, Tensor) or (
+            intrinsics_left_sequence.shape
+            != (rgb_left_hr.shape[0], 3, 3, 3)
+        ):
+            raise ValueError("batch K_hr_sequence must have shape [B,3,3,3]")
+        if not isinstance(intrinsics_right_hr, Tensor) or (
+            intrinsics_right_hr.shape != (rgb_left_hr.shape[0], 3, 3)
+        ):
+            raise ValueError("batch K_right_hr must have shape [B,3,3]")
+        if intrinsics_left_sequence.device != rgb_left_hr.device or (
+            intrinsics_right_hr.device != rgb_left_hr.device
+        ):
+            raise ValueError("RGB and stereo intrinsics must share a device")
+        right_row_scale = batch.get("epipolar_right_row_scale")
+        right_row_offset_hr_px = batch.get("epipolar_right_row_offset_hr_px")
+        row_mapping_source = batch.get("epipolar_right_row_mapping_source")
+        if not isinstance(right_row_scale, Tensor) or (
+            right_row_scale.shape != (rgb_left_hr.shape[0],)
+        ):
+            raise ValueError("batch epipolar_right_row_scale must have shape [B]")
+        if not isinstance(right_row_offset_hr_px, Tensor) or (
+            right_row_offset_hr_px.shape != (rgb_left_hr.shape[0],)
+        ):
+            raise ValueError(
+                "batch epipolar_right_row_offset_hr_px must have shape [B]"
+            )
+        if right_row_scale.device != rgb_left_hr.device or (
+            right_row_offset_hr_px.device != rgb_left_hr.device
+        ):
+            raise ValueError("RGB and explicit epipolar row mapping must share a device")
+        if not isinstance(row_mapping_source, list) or len(row_mapping_source) != (
+            rgb_left_hr.shape[0]
+        ):
+            raise ValueError("batch epipolar row-mapping provenance is malformed")
+        if any(
+            source != EPIPOLAR_PIXEL_ROW_CONTRACT_VERSION
+            for source in row_mapping_source
+        ):
+            raise ValueError("batch epipolar row-mapping contract mismatch")
 
         # The no-grad island is unconditional, not caller-dependent. This
         # prevents Stage-B activation graphs or parameter gradients even if a
@@ -156,6 +198,8 @@ class FrozenTemporalEpipolarStage(nn.Module):
             rgb_left_hr,
             rgb_right_hr,
             base_disparity_hr_px,
+            right_row_scale=right_row_scale,
+            right_row_offset_hr_px=right_row_offset_hr_px,
         )
         return EpipolarStageOutput(
             base_disparity_hr_px=base_disparity_hr_px,

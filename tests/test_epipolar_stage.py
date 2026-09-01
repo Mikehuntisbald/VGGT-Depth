@@ -38,9 +38,22 @@ def _stage() -> tuple[FrozenTemporalEpipolarStage, list[tuple[bool, bool]]]:
 
 
 def _batch(batch_size: int = 2) -> dict[str, torch.Tensor]:
+    intrinsics = torch.tensor(
+        [[100.0, 0.0, 5.0], [0.0, 100.0, 3.0], [0.0, 0.0, 1.0]]
+    )
     return {
         "rgb_hr_sequence": torch.rand(batch_size, 3, 3, 6, 10),
         "rgb_right_hr": torch.rand(batch_size, 3, 6, 10),
+        "K_hr_sequence": intrinsics.reshape(1, 1, 3, 3).repeat(
+            batch_size, 3, 1, 1
+        ),
+        "K_right_hr": intrinsics.reshape(1, 3, 3).repeat(batch_size, 1, 1),
+        "epipolar_right_row_scale": torch.ones(batch_size),
+        "epipolar_right_row_offset_hr_px": torch.zeros(batch_size),
+        "epipolar_right_row_mapping_source": [
+            "audited_same_row_rectified_pixels_v1"
+        ]
+        * batch_size,
     }
 
 
@@ -57,6 +70,10 @@ def test_stage_freezes_base_and_only_refiner_receives_gradients() -> None:
     assert output.base_disparity_hr_px.shape == (2, 1, 6, 10)
     assert output.refined_disparity_hr_px.shape == (2, 1, 6, 10)
     assert output.correction_hr_px.shape == (2, 1, 6, 10)
+    torch.testing.assert_close(output.refinement.right_row_scale, torch.ones(2))
+    torch.testing.assert_close(
+        output.refinement.right_row_offset_hr_px, torch.zeros(2)
+    )
     assert not output.base_disparity_hr_px.requires_grad
 
     target = torch.ones_like(output.refined_disparity_hr_px) * 2.0

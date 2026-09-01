@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import copy
+import hashlib
 import json
 import math
 import sys
@@ -38,6 +39,7 @@ from eval import (  # noqa: E402
     _validate_formal_temporal_coverage,
     _validated_raw_vggt_receipt,
 )
+from geometry.epipolar import EPIPOLAR_GEOMETRY_CONTRACT  # noqa: E402
 from models.epipolar_refiner import HREpipolarRefiner  # noqa: E402
 from models.epipolar_stage import (  # noqa: E402
     EpipolarStageLoss,
@@ -65,6 +67,10 @@ from utils.seed import seed_data_worker, seed_everything  # noqa: E402
 
 
 STAGE_C_DEFAULTS: dict[str, Any] = {
+    "data": {
+        "epipolar_rectification_audit_path": None,
+        "epipolar_rectification_audit": None,
+    },
     "model": {
         "epipolar_offsets_hr_px": [-2, -1, 0, 1, 2],
         "epipolar_feature_channels": 32,
@@ -72,6 +78,7 @@ STAGE_C_DEFAULTS: dict[str, Any] = {
         "epipolar_head_channels": 48,
         "epipolar_correction_limit_hr_px": 2.0,
         "epipolar_confidence_temperature": 1.0,
+        "epipolar_vertical_geometry": EPIPOLAR_GEOMETRY_CONTRACT["version"],
     },
     "train": {
         "steps_epipolar": 5000,
@@ -98,6 +105,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--observation-cache-root", type=Path)
     parser.add_argument("--teacher-cache-root", type=Path)
     parser.add_argument("--derived-cache-root", type=Path)
+    parser.add_argument("--rectification-audit", type=Path)
     parser.add_argument("--output", type=Path)
     parser.add_argument("--device", default="auto")
     parser.add_argument("--run-steps", type=int, help="bounded optimizer steps")
@@ -156,6 +164,11 @@ def validate_epipolar_config(config: DictConfig) -> None:
         raise ValueError("Stage C requires the trained history/pose base path")
     if not bool(config.model.epipolar_refinement):
         raise ValueError("Stage-C config must enable epipolar_refinement")
+    if (
+        str(config.model.epipolar_vertical_geometry)
+        != EPIPOLAR_GEOMETRY_CONTRACT["version"]
+    ):
+        raise ValueError("Stage-C vertical epipolar geometry contract mismatch")
     if bool(config.train.compile_model):
         raise ValueError("torch.compile remains disabled for initial Stage C")
     offsets = [float(value) for value in config.model.epipolar_offsets_hr_px]
@@ -214,6 +227,132 @@ def _resolved_dict(config: DictConfig) -> dict[str, Any]:
     if not isinstance(value, dict):
         raise TypeError("resolved config must be a mapping")
     return value
+
+
+def _validated_rectification_audit(
+    path: str | Path,
+    *,
+    expected_train_manifest_sha256: str,
+) -> dict[str, Any]:
+    """Validate and compact the required same-row pixel audit receipt."""
+
+    receipt_path = Path(path).expanduser().resolve()
+    if not receipt_path.is_file():
+        raise FileNotFoundError(
+            f"epipolar rectification audit receipt is missing: {receipt_path}"
+        )
+    try:
+        receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ValueError(f"cannot parse epipolar rectification audit: {exc}") from exc
+    if not isinstance(receipt, Mapping):
+        raise ValueError("epipolar rectification audit must be a JSON object")
+    if receipt.get("schema_version") != 1 or receipt.get("component") != (
+        "pixel-level-epipolar-rectification-audit"
+    ):
+        raise ValueError("epipolar rectification audit schema/component mismatch")
+    if receipt.get("status") != "PASS" or receipt.get("published_contract") != (
+        EPIPOLAR_GEOMETRY_CONTRACT["version"]
+    ):
+        raise ValueError("epipolar rectification audit did not publish the required contract")
+    manifests = receipt.get("manifests")
+    if not isinstance(manifests, Mapping) or not isinstance(
+        manifests.get("train"), Mapping
+    ) or not isinstance(manifests.get("validation"), Mapping):
+        raise ValueError("epipolar rectification audit manifest binding is missing")
+    if manifests["train"].get("sha256") != expected_train_manifest_sha256:
+        raise ValueError("epipolar rectification audit train manifest SHA mismatch")
+    if manifests.get("train_validation_sequence_disjoint") is not True:
+        raise ValueError("epipolar rectification audit lacks train/validation isolation")
+    threshold_checks = receipt.get("threshold_checks")
+    if not isinstance(threshold_checks, list) or not threshold_checks or any(
+        not isinstance(check, Mapping) or check.get("passed") is not True
+        for check in threshold_checks
+    ):
+        raise ValueError("epipolar rectification audit threshold checks did not all pass")
+    global_result = receipt.get("global")
+    metadata_vs_pixels = receipt.get("metadata_vs_pixels")
+    for name, value in (
+        ("algorithm", receipt.get("algorithm")),
+        ("thresholds", receipt.get("thresholds")),
+        ("sampling", receipt.get("sampling")),
+        ("global", global_result),
+        ("metadata_vs_pixels", metadata_vs_pixels),
+    ):
+        if not isinstance(value, Mapping):
+            raise ValueError(f"epipolar rectification audit {name} is missing")
+    if metadata_vs_pixels.get("conclusion") != (
+        "INCONSISTENT_WITH_AUDITED_PIXEL_COORDINATES"
+    ):
+        raise ValueError("epipolar metadata/pixel-coordinate diagnosis is missing")
+    counts = global_result.get("counts")
+    dy = global_result.get("dy_right_minus_left_px")
+    absolute_dy = dy.get("absolute") if isinstance(dy, Mapping) else None
+    signed_dy = dy.get("signed") if isinstance(dy, Mapping) else None
+    if not all(isinstance(value, Mapping) for value in (counts, absolute_dy, signed_dy)):
+        raise ValueError("epipolar rectification audit aggregate evidence is malformed")
+    sampled_frames = global_result.get("sampled_frames")
+    covered_frames = global_result.get("covered_frames")
+    ratio_matches = counts.get("ratio_matches")
+    ransac_inliers = counts.get("ransac_inliers")
+    for name, value in (
+        ("sampled_frames", sampled_frames),
+        ("covered_frames", covered_frames),
+        ("ratio_matches", ratio_matches),
+        ("ransac_inliers", ransac_inliers),
+    ):
+        if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+            raise ValueError(f"epipolar rectification audit {name} is invalid")
+    if covered_frames != sampled_frames:
+        raise ValueError("epipolar rectification audit does not cover every sampled frame")
+    pixel_values = {
+        "coverage_fraction": global_result.get("coverage_fraction"),
+        "median_right_y_minus_left_y_px": signed_dy.get("p50"),
+        "p95_abs_right_y_minus_left_y_px": absolute_dy.get("p95"),
+    }
+    if any(
+        isinstance(value, bool)
+        or not isinstance(value, (int, float))
+        or not math.isfinite(float(value))
+        for value in pixel_values.values()
+    ):
+        raise ValueError("epipolar rectification audit pixel evidence is non-finite")
+    sample_identity = receipt["sampling"].get("sample_identity_sha256")
+    required_hashes = (
+        manifests["train"].get("sha256"),
+        manifests["validation"].get("sha256"),
+        sample_identity,
+    )
+    if any(
+        not isinstance(value, str)
+        or len(value) != 64
+        or any(character not in "0123456789abcdef" for character in value)
+        for value in required_hashes
+    ):
+        raise ValueError("epipolar rectification audit SHA-256 binding is malformed")
+    return {
+        "path": str(receipt_path),
+        "sha256": sha256_file(receipt_path),
+        "schema_version": 1,
+        "component": receipt["component"],
+        "status": receipt["status"],
+        "contract_version": receipt["published_contract"],
+        "manifest_sha256": {
+            "train": manifests["train"]["sha256"],
+            "validation": manifests["validation"]["sha256"],
+        },
+        "algorithm": dict(receipt["algorithm"]),
+        "thresholds": dict(receipt["thresholds"]),
+        "counts": {
+            "sampled_frames": sampled_frames,
+            "covered_frames": covered_frames,
+            "ratio_matches": ratio_matches,
+            "ransac_inliers": ransac_inliers,
+        },
+        "pixel_evidence": pixel_values,
+        "metadata_vs_pixels": dict(metadata_vs_pixels),
+        "sample_identity_sha256": sample_identity,
+    }
 
 
 def _resolve_device(value: str) -> torch.device:
@@ -410,11 +549,97 @@ def _validate_base_data_lineage(
         current_raw["config"] != saved_raw["config"]
     ):
         raise ValueError("Stage-C raw VGGT identity/config differs from Stage B")
+    endpoint_indices = {
+        int(window.student_indices[-1]) for window in temporal.windows
+    }
+    ffs_artifacts, right_source_digest = _ffs_artifact_lineage(
+        temporal,
+        endpoint_indices=endpoint_indices,
+    )
     return {
         "manifest_sha256": manifest_sha256,
         "raw_vggt_identity": current_raw["identity"],
         "raw_vggt_receipt_sha256": current_raw["receipt_sha256"],
         "derived_cache_lineage": dict(temporal.cache_lineage_summary),
+        "ffs_cache_artifacts": ffs_artifacts,
+        "endpoint_right_source_digest": right_source_digest,
+    }
+
+
+def _ffs_artifact_lineage(
+    temporal: CachedTemporalTrainingDataset,
+    *,
+    endpoint_indices: set[int],
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Bind FFS receipts/manifests and endpoint right-image identities."""
+
+    artifacts: dict[str, Any] = {}
+    observation_rows: list[dict[str, Any]] | None = None
+    roots = {
+        "observation": temporal.observation_cache_root,
+        "teacher": temporal.spatial_dataset.teacher_cache_root,
+    }
+    for role, root in roots.items():
+        receipt_path = root / "run_receipt.json"
+        manifest_path = root / "cache_manifest.jsonl"
+        if not receipt_path.is_file() or not manifest_path.is_file():
+            raise FileNotFoundError(f"Stage-C {role} receipt/manifest is missing")
+        try:
+            rows = [
+                json.loads(line)
+                for line in manifest_path.read_text(encoding="utf-8").splitlines()
+            ]
+        except (OSError, json.JSONDecodeError) as exc:
+            raise ValueError(f"cannot parse Stage-C {role} cache manifest: {exc}") from exc
+        if len(rows) != len(temporal.records):
+            raise ValueError(f"Stage-C {role} cache manifest coverage is incomplete")
+        for index, (row, record) in enumerate(
+            zip(rows, temporal.records, strict=True)
+        ):
+            if not isinstance(row, Mapping) or row.get("selection_index") != index:
+                raise ValueError(f"Stage-C {role} cache selection order mismatch")
+            source = row.get("source")
+            if not isinstance(source, Mapping) or (
+                source.get("manifest_record") != record.to_dict()
+            ):
+                raise ValueError(f"Stage-C {role} cache source record mismatch")
+        artifacts[role] = {
+            "root": str(root),
+            "run_receipt_sha256": sha256_file(receipt_path),
+            "cache_manifest_sha256": sha256_file(manifest_path),
+            "records": len(rows),
+        }
+        if role == "observation":
+            observation_rows = rows
+
+    assert observation_rows is not None
+    digest_rows: list[tuple[int, str, int, str]] = []
+    for index in sorted(endpoint_indices):
+        row = observation_rows[index]
+        source = row["source"]
+        right_sha256 = source.get("right_sha256")
+        if not isinstance(right_sha256, str) or len(right_sha256) != 64:
+            raise ValueError("Stage-C observation right source SHA-256 is malformed")
+        try:
+            int(right_sha256, 16)
+        except ValueError as exc:
+            raise ValueError(
+                "Stage-C observation right source SHA-256 is malformed"
+            ) from exc
+        record = temporal.records[index]
+        digest_rows.append(
+            (index, record.sequence_id, record.frame_id, right_sha256)
+        )
+    encoded = json.dumps(
+        digest_rows,
+        separators=(",", ":"),
+        ensure_ascii=True,
+        allow_nan=False,
+    ).encode("utf-8")
+    return artifacts, {
+        "algorithm": "sha256(canonical_json([manifest_index,sequence_id,frame_id,right_sha256]))",
+        "records": len(digest_rows),
+        "sha256": hashlib.sha256(encoded).hexdigest(),
     }
 
 
@@ -501,6 +726,7 @@ def run(args: argparse.Namespace) -> int:
         "data.observation_cache_root": args.observation_cache_root,
         "data.teacher_cache_root": args.teacher_cache_root,
         "data.derived_geometry_cache_root": args.derived_cache_root,
+        "data.epipolar_rectification_audit_path": args.rectification_audit,
         "train.epipolar_output_dir": args.output,
         "train.initialization_checkpoint": args.init_from,
     }
@@ -512,6 +738,21 @@ def run(args: argparse.Namespace) -> int:
     validate_epipolar_config(config)
     seed_everything(int(config.seed), deterministic=True)
     dataset, observation_identity, teacher_identity = _build_temporal_dataset(config)
+    rectification_audit_path = _required_path(
+        config, "data.epipolar_rectification_audit_path", directory=False
+    )
+    rectification_audit = _validated_rectification_audit(
+        rectification_audit_path,
+        expected_train_manifest_sha256=sha256_file(
+            dataset.temporal_dataset.manifest_path
+        ),
+    )
+    OmegaConf.update(
+        config,
+        "data.epipolar_rectification_audit",
+        rectification_audit,
+        merge=False,
+    )
     OmegaConf.update(
         config,
         "data.observation_cache_identity",
@@ -608,6 +849,8 @@ def run(args: argparse.Namespace) -> int:
                     "base_checkpoint": base_metadata,
                     "base_lineage": base_lineage,
                     "raw_lineage": raw_lineage,
+                    "geometry_contract": EPIPOLAR_GEOMETRY_CONTRACT,
+                    "rectification_audit": rectification_audit,
                     "supervision": PSEUDO_GT_SUPERVISION,
                     "loss": dry_loss.detached_scalars(),
                 },
@@ -691,6 +934,8 @@ def run(args: argparse.Namespace) -> int:
         },
         "base_lineage": base_lineage,
         "raw_lineage": raw_lineage,
+        "geometry_contract": EPIPOLAR_GEOMETRY_CONTRACT,
+        "rectification_audit": rectification_audit,
         "supervision": PSEUDO_GT_SUPERVISION,
         "parameter_count": stage.trainable_parameter_count,
         "trainable_refiner_parameter_count": stage.trainable_parameter_count,

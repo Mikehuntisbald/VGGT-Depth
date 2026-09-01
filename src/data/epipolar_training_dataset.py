@@ -20,10 +20,13 @@ from torch.utils.data import Dataset
 
 from .cache_dataset import CacheMismatchError, sha256_file
 from .collate import collate_temporal_training_samples
+from .manifest import ManifestRecord
 from .temporal_training_dataset import (
     CachedTemporalTrainingDataset,
     TemporalTrainingSample,
 )
+from geometry.camera import crop_intrinsics
+from geometry.epipolar import EPIPOLAR_PIXEL_ROW_CONTRACT_VERSION
 
 
 @dataclass(frozen=True, slots=True)
@@ -40,6 +43,11 @@ class EpipolarTrainingSample:
     right_path: str
     right_sha256: str
     crop_hr_px: Mapping[str, int]
+    K_right_hr: Tensor
+    right_intrinsics_source: str
+    right_row_scale: float
+    right_row_offset_hr_px: float
+    right_row_mapping_source: str
 
 
 def _resolve_source_path(path_text: str, manifest_directory: Path) -> Path:
@@ -97,6 +105,25 @@ def _load_cropped_rgb(path: Path, crop: Mapping[str, int]) -> Tensor:
         .to(dtype=torch.float32)
         .div_(255.0)
     )
+
+
+def _cropped_right_intrinsics(
+    record: ManifestRecord,
+    crop: Mapping[str, int],
+) -> tuple[Tensor, str]:
+    """Return calibrated right intrinsics in the shared HR crop frame."""
+
+    source = "manifest.K_right" if "K_right" in record.extras else "manifest.K"
+    value = record.extras.get("K_right", record.K)
+    try:
+        matrix = np.asarray(value, dtype=np.float64)
+        cropped = crop_intrinsics(matrix, crop["x"], crop["y"])
+    except (KeyError, TypeError, ValueError) as exc:
+        raise CacheMismatchError(
+            f"invalid right rectified intrinsics for {record.sequence_id}/"
+            f"{record.frame_id}: {exc}"
+        ) from exc
+    return torch.as_tensor(cropped, dtype=torch.float32), source
 
 
 class EpipolarTrainingDataset(Dataset[EpipolarTrainingSample]):
@@ -160,6 +187,9 @@ class EpipolarTrainingDataset(Dataset[EpipolarTrainingSample]):
             raise CacheMismatchError("temporal crop metadata must contain integers")
         crop_dict = dict(crop)
         rgb_right_hr = _load_cropped_rgb(right_path, crop_dict)
+        K_right_hr, right_intrinsics_source = _cropped_right_intrinsics(
+            record, crop_dict
+        )
         expected_shape = temporal.rgb_hr_sequence[-1].shape
         if rgb_right_hr.shape != expected_shape:
             raise CacheMismatchError(
@@ -172,6 +202,14 @@ class EpipolarTrainingDataset(Dataset[EpipolarTrainingSample]):
             right_path=str(right_path),
             right_sha256=actual_right_sha256,
             crop_hr_px=crop_dict,
+            K_right_hr=K_right_hr,
+            right_intrinsics_source=right_intrinsics_source,
+            # The saved rectified JPEG coordinate contract is audited from
+            # actual correspondences. K_right remains diagnostic because its
+            # cy is inconsistent with the stored pixel rows in this dataset.
+            right_row_scale=1.0,
+            right_row_offset_hr_px=0.0,
+            right_row_mapping_source=EPIPOLAR_PIXEL_ROW_CONTRACT_VERSION,
         )
 
 
@@ -196,11 +234,25 @@ def collate_epipolar_training_samples(
     batch["right_path"] = [sample.right_path for sample in samples]
     batch["right_sha256"] = [sample.right_sha256 for sample in samples]
     batch["epipolar_crop_hr_px"] = [dict(sample.crop_hr_px) for sample in samples]
+    batch["K_right_hr"] = torch.stack([sample.K_right_hr for sample in samples])
+    batch["right_intrinsics_source"] = [
+        sample.right_intrinsics_source for sample in samples
+    ]
+    batch["epipolar_right_row_scale"] = torch.tensor(
+        [sample.right_row_scale for sample in samples], dtype=torch.float32
+    )
+    batch["epipolar_right_row_offset_hr_px"] = torch.tensor(
+        [sample.right_row_offset_hr_px for sample in samples], dtype=torch.float32
+    )
+    batch["epipolar_right_row_mapping_source"] = [
+        sample.right_row_mapping_source for sample in samples
+    ]
     return batch
 
 
 __all__ = [
     "EpipolarTrainingDataset",
     "EpipolarTrainingSample",
+    "EPIPOLAR_PIXEL_ROW_CONTRACT_VERSION",
     "collate_epipolar_training_samples",
 ]

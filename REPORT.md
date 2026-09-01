@@ -442,6 +442,18 @@ evidence only because its one-step Stage-B base was trained on the validation
 cache; formal Stage-C training waits for the completed Stage-B checkpoint.
 Evidence: `reports/m6/stage_c_integration_smoke.json`.
 
+A subsequent calibration audit caught an important coordinate discrepancy:
+all manifests advertise `K_right.cy-K_left.cy=+5.4` HR px, while actual
+rectified JPEG correspondences are near the same row. Across 96 deterministic
+train/validation frames, 98,095 ratio-test matches produced 71,436 RANSAC
+inliers; global median `right_y-left_y` is -0.0723 px and p95 absolute residual
+is 2.0239 px. All three sequences pass predeclared 1.25 px median / 3.0 px p95
+gates, whereas metadata disagrees with observed pixels by 5.4723 px. Stage C
+therefore binds `audited_same_row_rectified_pixels_v1`, uses explicit row
+scale 1 / offset 0, retains `K_right` only as a diagnostic, and rejects the
+legacy smoke checkpoint because it predates this receipt binding. Evidence:
+`reports/m6/epipolar_rectification_audit.json`.
+
 ## Tests
 
 ```text

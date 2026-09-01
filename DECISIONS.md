@@ -230,3 +230,14 @@
 - Consequence: smoke fixtures may remain partial only behind an explicit non-holdout smoke flag; formal results fail closed. The raw cache producer now requires `available_windows == selected_windows` for canonical completeness, and the canonical validation-derived receipt cryptographically binds the complete raw receipt.
 - Revisit trigger: the cache schema directly embeds and cryptographically binds full raw lineage in every canonical derived receipt.
 - Evidence: `tests/test_evaluation.py`, `tests/test_derive_geometry_manifest.py`, `reports/m4/stage_b_eval_smoke.json`.
+
+## D-022 — Stored rectified pixels own the Stage-C row-coordinate contract
+
+- Date: 2026-09-01
+- Status: accepted
+- Context: every formal manifest reports `K_right.cy - K_left.cy = +5.4` HR px, but the saved `left_rect.jpg`/`right_rect.jpg` pairs do not exhibit that shift. A deterministic 96-frame SIFT plus fundamental-matrix RANSAC audit measured global median `right_y-left_y = -0.0723` px and p95 absolute residual 2.0239 px; all three sequences pass the predeclared 1.25/3.0 px gates. Applying the metadata shift would move real correspondences in the wrong direction.
+- Decision: Stage C uses the explicit versioned `audited_same_row_rectified_pixels_v1` runtime contract (`row_scale=1`, `row_offset=0`). `K_right` and `P_right` remain diagnostics and are never silently applied as an image shift. Training and evaluation must bind the exact pixel-audit receipt SHA and reject legacy checkpoints without it.
+- Rationale: correspondence must be defined in the coordinate system of the tensors actually sampled. A calibration field that conflicts by 5.4723 px with 71,436 RANSAC inliers cannot override stored-pixel evidence.
+- Consequence: the local refiner remains 1D horizontal as specified; residual vertical mismatch is reported rather than learned as disparity. The original Stage-C smoke remains execution evidence only and is not accepted by the strict evaluator because it predates the receipt binding.
+- Revisit trigger: the image producer is corrected and regenerated pairs pass a new versioned pixel audit consistent with their calibrated right projection.
+- Evidence: `reports/m6/epipolar_rectification_audit.json`, `tests/test_audit_epipolar_rectification.py`, sign tests in `tests/test_epipolar_refiner.py`.
