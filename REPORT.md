@@ -431,6 +431,21 @@ stratified visualization set now contains two valid-geometry/history examples
 and two explicit pose-rejected fail-closed examples. Evidence:
 `reports/m4/stage_b_eval_step5000.json`.
 
+The training process was later found externally terminated after its last
+atomic checkpoint at step 7,000. The interrupted log contained complete but
+uncheckpointed records through step 7,144 and a partial JSON record for step
+7,145. The original log was archived, the formal log was rolled back to its
+checkpoint boundary, and training resumed from the preserved step-7,000
+artifact using a detached worktree at the original training commit
+`3e0df0b543f5000d0bf8490740b5f34ad979e3b6`. Optimizer state, scheduler,
+all RNG states, and the deterministic data cursor were restored. Recomputed
+steps 7,001–7,144 match the interrupted trajectory exactly for learning rate,
+gradient norm, and every loss component (144/144 records, maximum absolute
+difference zero). Only wall-clock `elapsed_seconds` restarts at the resume
+boundary. The resumable artifact SHA-256 is
+`da502de3f0d2b39982e10005a217f49f78bfb8b51ea96e6117069ce6dc2dbd29`;
+evidence: `reports/m4/stage_b_resume_step7000.json`.
+
 Stage-C now has a separate training entrypoint that runs the full frozen
 VGGT-on Stage-B endpoint through the exact three-step causal unroll, loads the
 rectified right endpoint with the identical HR crop, and optimizes only the
@@ -454,14 +469,18 @@ scale 1 / offset 0, retains `K_right` only as a diagnostic, and rejects the
 legacy smoke checkpoint because it predates this receipt binding. Evidence:
 `reports/m6/epipolar_rectification_audit.json`.
 
-After binding that receipt, a new Stage-C smoke used the formal train-side
-step-5,000 Stage-B checkpoint and all exact train cache artifacts. It verified
-the observation/teacher receipt and manifest hashes, a 2,775-endpoint right
-source digest, frozen 1,619,882-parameter base, and a non-empty 1,219-pixel
-teacher mask. One CPU optimizer step produced finite loss 0.00284933 and a
-real correction-head update; two runs reproduced all 18 refiner tensors
-bit-for-bit. It remains acceptance-ineligible because the base is incomplete
-and Stage C ran only one step. Evidence:
+After binding that receipt, the current Stage-C producer used the formal
+train-side step-7,000 Stage-B checkpoint and all exact train cache artifacts.
+Its checkpoint now binds a clean 51-file runtime source bundle, actual device,
+PyTorch/CUDA versions, native-BF16 capability and autocast state. A one-step
+CPU integration smoke used 1,219 trusted pixels, produced finite loss
+0.00411383 and updated the correction head, but its receipt explicitly marks
+`formal_cuda_bf16_eligible=false`. An independent CUDA dry-run on the RTX 5090
+executed BF16 autocast with capability 12.0 and CUDA 12.8, produced finite loss
+0.00409022, and records `formal_cuda_bf16_eligible=true`; it made no optimizer
+update. Both remain acceptance-ineligible because the base is incomplete and
+neither is a formal Stage-C training result. Earlier two-run CPU integration
+still establishes bit-exact refiner determinism. Evidence:
 `reports/m6/stage_c_geometry_smoke.json`.
 
 ## Tests

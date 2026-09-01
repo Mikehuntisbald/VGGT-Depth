@@ -241,3 +241,25 @@
 - Consequence: the local refiner remains 1D horizontal as specified; residual vertical mismatch is reported rather than learned as disparity. The original Stage-C smoke remains execution evidence only and is not accepted by the strict evaluator because it predates the receipt binding.
 - Revisit trigger: the image producer is corrected and regenerated pairs pass a new versioned pixel audit consistent with their calibrated right projection.
 - Evidence: `reports/m6/epipolar_rectification_audit.json`, `tests/test_audit_epipolar_rectification.py`, sign tests in `tests/test_epipolar_refiner.py`.
+
+## D-023 — Formal Stage-C training is native CUDA BF16 only
+
+- Date: 2026-09-01
+- Status: accepted
+- Context: a CPU integration checkpoint and a formal RTX 5090 BF16 training checkpoint have the same model-state shape, so model tensors alone cannot establish the declared execution environment.
+- Decision: every Stage-C dry-run/checkpoint records a typed `training_runtime` receipt. Formal eligibility requires an explicit CUDA device, native (not emulated) BF16 support on that exact device, and BF16 autocast. CPU is allowed only with `--allow-cpu-smoke` for a dry-run or exactly one optimizer step and is always acceptance-ineligible.
+- Rationale: execution provenance must be machine-checkable; a CPU smoke must never be promoted into a formal 5090 training claim.
+- Consequence: the strict evaluator fails closed on missing/malformed runtime receipts and refuses full holdout evaluation of CPU smoke artifacts. A CUDA dry-run validates the environment but not optimization or accuracy.
+- Revisit trigger: the formal training precision/device contract changes or a separately declared FP32 reference run is added.
+- Evidence: `reports/m6/stage_c_geometry_smoke.json`, `tests/test_epipolar_train.py`, `tests/test_epipolar_evaluation.py`.
+
+## D-024 — Resume formal training only from an atomic checkpoint boundary
+
+- Date: 2026-09-01
+- Status: accepted
+- Context: Stage-B was externally terminated after atomically saving step 7,000, while its append-only log contained uncheckpointed records through step 7,144 and a partial step-7,145 record.
+- Decision: archive the interrupted log, truncate the formal log to the checkpointed step, preserve the checkpoint by hash, and resume with the original training commit in a detached worktree. Treat post-checkpoint log records as diagnostic evidence only until their trajectory is recomputed.
+- Rationale: appending directly to an ahead-of-checkpoint or truncated log creates duplicate/corrupt records and falsely implies optimizer state that was never durably saved.
+- Consequence: steps 7,001–7,144 were recomputed and matched all recorded LR, gradient and loss values exactly; only per-process elapsed time resets. The formal log remains one continuous optimizer-step sequence.
+- Revisit trigger: the trainer gains a journaled log/checkpoint transaction or a tested automatic log-reconciliation command.
+- Evidence: `reports/m4/stage_b_resume_step7000.json`.

@@ -1,0 +1,68 @@
+{
+  "schema_version": 1,
+  "component": "stage-b-exact-resume-audit",
+  "status": "VERIFIED_IN_PROGRESS",
+  "claim_boundary": {
+    "training_complete": false,
+    "accuracy_claim": false,
+    "purpose": "prove that an externally interrupted formal run resumed exactly from its last atomic checkpoint"
+  },
+  "interruption": {
+    "cause": "unknown_external_process_termination",
+    "checkpoint_completed_step": 7000,
+    "last_complete_uncheckpointed_log_step": 7144,
+    "truncated_log_step": 7145,
+    "uncommitted_steps_recomputed": [7001, 7144]
+  },
+  "resume_source": {
+    "checkpoint": "outputs/ffs_omega_tsr_x2/stage_b/resume_step7000.pt",
+    "checkpoint_sha256": "da502de3f0d2b39982e10005a217f49f78bfb8b51ea96e6117069ce6dc2dbd29",
+    "checkpoint_git_hash": "3e0df0b543f5000d0bf8490740b5f34ad979e3b6",
+    "source_worktree": "/tmp/ffs_omega_tsr_stageb_source_3e0df0b",
+    "source_worktree_git_hash": "3e0df0b543f5000d0bf8490740b5f34ad979e3b6",
+    "optimizer_state_entries": 54,
+    "optimizer_state_step": 7000,
+    "scheduler_last_epoch": 7000,
+    "learning_rate": 0.0001161686144493481
+  },
+  "data_cursor": {
+    "dataset_windows": 2775,
+    "micro_batch_size": 2,
+    "gradient_accumulation": 4,
+    "batches_per_epoch": 1387,
+    "start_micro_step": 28000,
+    "resume_epoch": 20,
+    "skipped_batches_in_resume_epoch": 260,
+    "next_optimizer_step": 7001
+  },
+  "trajectory_reproduction": {
+    "compared_step_range": [7001, 7144],
+    "compared_steps": 144,
+    "fields": [
+      "learning_rate",
+      "gradient_norm",
+      "loss.disparity",
+      "loss.epipolar",
+      "loss.gate_regularizer",
+      "loss.gradient",
+      "loss.measurement",
+      "loss.temporal",
+      "loss.total",
+      "loss.uncertainty_nll",
+      "stage",
+      "step"
+    ],
+    "mismatched_steps": [],
+    "maximum_absolute_difference": 0.0,
+    "elapsed_seconds_excluded": true,
+    "result": "BIT_EXACT_REPRODUCTION"
+  },
+  "log_repair": {
+    "formal_log": "outputs/ffs_omega_tsr_x2/stage_b/train.jsonl",
+    "archived_interrupted_log": "outputs/ffs_omega_tsr_x2/stage_b/train.interrupted_after_step7000.20260901T092149.jsonl",
+    "archived_interrupted_log_sha256": "b33af93be6110a03926e376267d34c687e21b2fc6ee143e9cee9314cc6783955",
+    "formal_log_truncated_to_complete_step": 7000,
+    "append_resumed_from_step": 7001,
+    "note": "elapsed_seconds restarts at the resume boundary; optimization state and numerical trajectory do not"
+  }
+}
