@@ -10,6 +10,7 @@ from metrics.spring_arms import (
     spring_disparity_row,
     spring_map_bundle,
 )
+from tools.compose_spring_screening_report import map_arm
 
 
 def _record(root: Path, frame_id: int = 2) -> dict[str, object]:
@@ -78,3 +79,28 @@ def test_aggregate_spring_rows_pixel_weights_output_health_rates() -> None:
     assert aggregate["overall_epe"] == 2.0
     assert aggregate["negative_rate"] == 0.75
     assert aggregate["invalid_rate"] == 0.75
+
+
+def test_composer_prefers_complete_native_side_channel_and_keeps_buckets() -> None:
+    report = {
+        "spring_native_metrics": {
+            "status": "AVAILABLE",
+            "methods": {
+                "T3": {
+                    "overall_epe": 1.0,
+                    "high_detail_epe": 2.0,
+                    "matched_epe": 3.0,
+                }
+            },
+            "topk_diagnostics": {
+                "age_2_survival_rate": 0.5,
+                "gain_by_fractional_phase_bucket": {"phase_lt_0.25": 0.1},
+            },
+        }
+    }
+    mapped = map_arm("S3", report)
+    assert mapped["overall_epe"] == 1.0
+    assert mapped["high_detail_epe"] == 2.0
+    assert mapped["matched_epe"] == 3.0
+    assert mapped["age_2_survival_rate"] == 0.5
+    assert mapped["gain_by_fractional_phase_bucket"] == {"phase_lt_0.25": 0.1}
