@@ -1,5 +1,5 @@
 {
-  "schema_version": 2,
+  "schema_version": 3,
   "component": "stage-c-audited-geometry-and-runtime-integration-smoke",
   "status": "INCOMPLETE_BASE_INTEGRATION_PASS",
   "claim_boundary": {
@@ -7,16 +7,16 @@
     "formal_holdout": false,
     "paper_accuracy": false,
     "paper_ground_truth": false,
-    "reason": "The base is the formal train-lineage Stage-B step-7000 checkpoint, not the completed 15000-step checkpoint. The CPU artifact is a one-step integration smoke and is explicitly ineligible for formal training; the CUDA artifact is a no-update BF16 dry-run."
+    "reason": "The base is the formal train-lineage Stage-B step-7500 checkpoint, not the completed 15000-step checkpoint. The CPU artifact is a bounded fresh-step plus exact-resume integration smoke and is explicitly ineligible for formal training; the CUDA artifact is a no-update BF16 dry-run."
   },
   "source": {
-    "git_hash": "abe4b80ba7355ad7ab6d47d94ed4dd2a74d4775c",
-    "runtime_source_bundle_sha256": "bcc317fa0f0dda5935ccc791a57cadfcc47cfab28139ef367d00d5a5ee9cc8bc",
+    "git_hash": "00f802ba454c4aa193d4423bc583bc6916ba2505",
+    "runtime_source_bundle_sha256": "fc41f61e83353c67c9771d8a3112174830d852e56e3d361457050cbbdcd34cc5",
     "runtime_source_file_count": 51,
     "runtime_relevant_paths_clean": true,
-    "base_checkpoint": "/tmp/ffs_omega_tsr_stage_b_step7000.pt",
-    "base_checkpoint_sha256": "da502de3f0d2b39982e10005a217f49f78bfb8b51ea96e6117069ce6dc2dbd29",
-    "base_checkpoint_step": 7000,
+    "base_checkpoint": "outputs/ffs_omega_tsr_x2/stage_b/step7500.pt",
+    "base_checkpoint_sha256": "1eee0863bf7e96efb22551d389466d499f219404fad12554fd315d5674fb26a5",
+    "base_checkpoint_step": 7500,
     "base_parameter_count": 1619882,
     "base_parameters_frozen": true,
     "trainable_refiner_parameter_count": 69905
@@ -43,21 +43,46 @@
     "endpoint_right_source_records": 2775,
     "endpoint_right_source_digest_sha256": "ae283814edd4e51f3c05187dd2694a4f6cf7bf7e7df09db3fe4b7f1055fd4384"
   },
-  "cpu_one_step_smoke": {
+  "cpu_resume_contract_smoke": {
     "device": "cpu",
-    "optimizer_steps": 1,
+    "optimizer_steps": 2,
+    "segments": [
+      {"mode": "fresh", "start_step": 0, "end_step": 1},
+      {"mode": "exact_resume", "start_step": 1, "end_step": 2}
+    ],
     "formal_cuda_bf16_eligible": false,
     "autocast_enabled": false,
     "crop_hr_hw": [32, 64],
     "crop_mode": "fixed",
-    "valid_supervision_pixels": 1219,
-    "loss_total": 0.004113834351301193,
-    "loss_disparity": 0.004113834351301193,
-    "loss_correction_regularizer": 0.0,
+    "latest_valid_supervision_pixels": 1888,
+    "latest_loss_total": 0.08002878725528717,
+    "latest_loss_disparity": 0.08002802729606628,
+    "latest_loss_correction_regularizer": 0.00007605616701766849,
     "correction_head_updated": true,
     "model_state_tensor_count": 18,
-    "checkpoint": "/tmp/ffs_omega_tsr_stage_c_geometry_smoke_v4/final.pt",
-    "checkpoint_sha256": "de8aa33256c041f595ed3c996a5e55cae31010e7450d61d6fea3feb11630319e"
+    "data_cursor": {
+      "completed_micro_steps": 2,
+      "epoch": 0,
+      "batch_offset_in_epoch": 2,
+      "grad_accumulation": 1
+    },
+    "scheduler_last_epoch": 2,
+    "scheduler_step_count": 3,
+    "log_steps": [1, 2],
+    "final_checkpoint_published": false,
+    "run_summary_published": false,
+    "latest_checkpoint": "/tmp/ffs_stagec_contract_00f802b/latest.pt",
+    "latest_checkpoint_sha256": "7af1d21b08b2602c6367d51d5a9309d3943f18141bef91185a584a44f656529e",
+    "training_log": "/tmp/ffs_stagec_contract_00f802b/train.jsonl",
+    "training_log_sha256": "b98e46f4952e924ab20de8581aa2ae0f4e5871b9a308d5e8db2fd9a355d5d185",
+    "strict_limited_evaluation": {
+      "status": "LIMITED_SMOKE_ONLY",
+      "acceptance_eligible": false,
+      "windows_evaluated": 1,
+      "metrics_json": "/tmp/ffs_stagec_contract_00f802b_eval/metrics.json",
+      "metrics_json_sha256": "e8b59a5be24e917003faec630b3fae235eb996ab3ffa6fd67109814bdbfa2d62",
+      "metrics_csv_sha256": "1ae8914d880dd943a173679df88f9a74522364e4cc461decfe8944123a3f920a"
+    }
   },
   "cuda_bf16_dry_run": {
     "device": "cuda:0",
@@ -72,9 +97,10 @@
     "optimizer_steps": 0,
     "crop_hr_hw": [32, 64],
     "valid_supervision_pixels": 1219,
-    "loss_total": 0.0040902248583734035,
-    "receipt": "/tmp/ffs_omega_tsr_stage_c_cuda_dryrun_abe4b80.json",
-    "receipt_sha256": "15c7aabef0f872aae3084199580ab00637dfea18860d8f08405a00d57eff8bad"
+    "loss_total": 0.005800995510071516,
+    "base_completion": false,
+    "receipt": "/tmp/ffs_stagec_cuda_dryrun_00f802b.json",
+    "receipt_sha256": "0dcf0196664527a4813ea6d78e6a6a321f1e4efdb09ae7b5970733a71b8ffedf"
   },
   "prior_determinism_check": {
     "git_hash": "f73ea6b91e11d199aa3433de0ab08ffc0972845d",
