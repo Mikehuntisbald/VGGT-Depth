@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import csv
 import hashlib
 import json
 from pathlib import Path
@@ -21,12 +22,72 @@ def _write_json(path: Path, value: dict) -> None:
     )
 
 
+def _write_metrics_csv(path: Path, methods: dict) -> None:
+    metric_names = sorted(auditor.REQUIRED_METRICS)
+    fields = ["method", "target_type", "paper_ground_truth", "point_to_plane"]
+    for name in metric_names:
+        fields.extend((name, f"{name}_valid", f"{name}_count", f"{name}_numerator"))
+    with path.open("w", encoding="utf-8", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=fields)
+        writer.writeheader()
+        for method_name in (
+            auditor.RAW_BASE,
+            auditor.CLAMP_BASE,
+            auditor.RAW_REFINED,
+            auditor.CLAMP_REFINED,
+        ):
+            method = methods[method_name]
+            row = {
+                "method": method_name,
+                "target_type": auditor.PSEUDO_GT_TARGET,
+                "paper_ground_truth": False,
+                "point_to_plane": "NOT_AVAILABLE",
+            }
+            for name in metric_names:
+                metric = method[name]
+                row[name] = metric["value"]
+                row[f"{name}_valid"] = metric["valid"]
+                row[f"{name}_count"] = metric["count"]
+                row[f"{name}_numerator"] = metric["numerator"]
+            writer.writerow(row)
+
+
 def _metric(value: float, count: int) -> dict:
     return {
         "value": value,
         "numerator": value * count,
         "count": count,
         "valid": True,
+    }
+
+
+def _invalid_metric(count: int = 0) -> dict:
+    return {
+        "value": None,
+        "numerator": None,
+        "count": count,
+        "valid": False,
+    }
+
+
+def _horizontal_record(domain: int, *, left_oob: int) -> dict:
+    finite = domain
+    in_bounds = finite - left_oob
+    return {
+        "domain_pixel_count": domain,
+        "finite_count": finite,
+        "nonfinite_count": 0,
+        "in_bounds_count": in_bounds,
+        "oob_count": left_oob,
+        "left_oob_count": left_oob,
+        "right_oob_count": 0,
+        "finite_rate": finite / domain if domain else None,
+        "nonfinite_rate": 0.0 if domain else None,
+        "in_bounds_rate": in_bounds / domain if domain else None,
+        "oob_rate": left_oob / domain if domain else None,
+        "left_oob_rate": left_oob / domain if domain else None,
+        "right_oob_rate": 0.0 if domain else None,
+        "valid": domain > 0,
     }
 
 
@@ -218,7 +279,9 @@ def _build_artifacts(
 
     validation_manifest = inputs / "val.jsonl"
     validation_manifest.write_text('{"frame": 1}\n', encoding="utf-8")
-    train_manifest_sha = "a" * 64
+    training_manifest = inputs / "train.jsonl"
+    training_manifest.write_text('{"frame": 2}\n', encoding="utf-8")
+    train_manifest_sha = _sha(training_manifest)
     monkeypatch.setattr(auditor, "FORMAL_TRAIN_MANIFEST_SHA256", train_manifest_sha)
 
     coverage_files = {}
@@ -226,6 +289,68 @@ def _build_artifacts(
         path = inputs / f"{name}.json"
         path.write_text(f"{name}\n", encoding="utf-8")
         coverage_files[name] = path
+
+    train_derived_manifest = inputs / "train_derived_manifest.jsonl"
+    train_derived_manifest.write_text("train-derived-manifest\n", encoding="utf-8")
+    train_derived_receipt = inputs / "train_derived_receipt.json"
+    train_derived_receipt.write_text("train-derived-receipt\n", encoding="utf-8")
+    monkeypatch.setattr(
+        auditor,
+        "FORMAL_TRAIN_DERIVED_MANIFEST_SHA256",
+        _sha(train_derived_manifest),
+    )
+    monkeypatch.setattr(
+        auditor,
+        "FORMAL_TRAIN_DERIVED_RECEIPT_SHA256",
+        _sha(train_derived_receipt),
+    )
+
+    raw_identity = {"component": "vggt-omega", "checkpoint_sha256": "d" * 64}
+    raw_roots: dict[str, Path] = {}
+    raw_receipts: dict[str, Path] = {}
+    for prefix, manifest_sha, selected in (
+        ("training", train_manifest_sha, 2_779),
+        ("validation", _sha(validation_manifest), 240),
+    ):
+        raw_root = inputs / f"{prefix}_raw_vggt"
+        raw_root.mkdir()
+        raw_manifest = raw_root / "cache_manifest.jsonl"
+        raw_manifest.write_text(f"{prefix}-raw-manifest\n", encoding="utf-8")
+        raw_receipt = raw_root / "run_receipt.json"
+        _write_json(
+            raw_receipt,
+            {
+                "schema_version": 1,
+                "manifest_sha256": manifest_sha,
+                "selected_windows": selected,
+                "identity": raw_identity,
+            },
+        )
+        raw_roots[prefix] = raw_root
+        raw_receipts[prefix] = raw_receipt
+    monkeypatch.setattr(
+        auditor,
+        "FORMAL_TRAIN_RAW_VGGT_RECEIPT_SHA256",
+        _sha(raw_receipts["training"]),
+    )
+    monkeypatch.setattr(
+        auditor,
+        "FORMAL_TRAIN_RAW_VGGT_MANIFEST_SHA256",
+        _sha(raw_roots["training"] / "cache_manifest.jsonl"),
+    )
+    monkeypatch.setattr(
+        auditor,
+        "FORMAL_VALIDATION_RAW_VGGT_RECEIPT_SHA256",
+        _sha(raw_receipts["validation"]),
+    )
+    monkeypatch.setattr(
+        auditor,
+        "FORMAL_VALIDATION_RAW_VGGT_MANIFEST_SHA256",
+        _sha(raw_roots["validation"] / "cache_manifest.jsonl"),
+    )
+    coverage_files["raw_manifest"] = (
+        raw_roots["validation"] / "cache_manifest.jsonl"
+    )
 
     evaluator = inputs / "eval_epipolar_snapshot.py"
     evaluator.write_text("# formal evaluator snapshot\n", encoding="utf-8")
@@ -466,11 +591,13 @@ def _build_artifacts(
         else ("LIMITED_SMOKE_ONLY" if limited else "INTERMEDIATE_CHECKPOINT_EVALUATION")
     )
     raw_lineage = {
-        "raw_vggt_identity": {"checkpoint_sha256": "d" * 64},
+        "raw_vggt_identity": raw_identity,
         "raw_vggt_receipt_sha256": auditor.FORMAL_TRAIN_RAW_VGGT_RECEIPT_SHA256,
         "derived_cache_lineage": {
             "run_receipt_sha256": auditor.FORMAL_TRAIN_DERIVED_RECEIPT_SHA256,
             "cache_manifest_sha256": auditor.FORMAL_TRAIN_DERIVED_MANIFEST_SHA256,
+            "run_receipt_path": str(train_derived_receipt),
+            "cache_manifest_path": str(train_derived_manifest),
             "selected_records": 2_779,
         },
     }
@@ -560,7 +687,49 @@ def _build_artifacts(
         },
         "methods": methods,
         "comparisons": comparisons,
-        "refinement_statistics": {},
+        "refinement_statistics": {
+            "candidate_coverage_rate": {
+                "value": (windows * 384 * 768 - 100)
+                / (windows * 384 * 768),
+                "numerator": float(windows * 384 * 768 - 100),
+                "count": windows * 384 * 768,
+                "valid": True,
+            },
+            "correction_signed_hr_px": {
+                "count": windows * 384 * 768 - 100,
+                "mean": -0.1,
+                "minimum": -0.5,
+                "maximum": 0.25,
+                "valid": True,
+            },
+            "correction_absolute_hr_px": {
+                "count": windows * 384 * 768 - 100,
+                "mean": 0.2,
+                "minimum": 0.0,
+                "maximum": 0.5,
+                "valid": True,
+            },
+            "confidence": {
+                "count": windows * 384 * 768 - 100,
+                "mean": 0.7,
+                "minimum": 0.1,
+                "maximum": 1.0,
+                "valid": True,
+            },
+            "correction_nonzero_rate": {
+                "value": (windows * 384 * 768 - 200)
+                / (windows * 384 * 768 - 100),
+                "numerator": float(windows * 384 * 768 - 200),
+                "count": windows * 384 * 768 - 100,
+                "valid": True,
+            },
+            "correction_saturated_rate": {
+                "value": 10.0 / (windows * 384 * 768 - 100),
+                "numerator": 10.0,
+                "count": windows * 384 * 768 - 100,
+                "valid": True,
+            },
+        },
         "runtime_geometry_statistics": {
             "contract": {
                 "version": "audited_same_row_rectified_pixels_v1",
@@ -591,6 +760,23 @@ def _build_artifacts(
                 "role": "DIAGNOSTIC_ONLY",
                 "changes_training_mask": False,
                 "changes_accuracy_metrics": False,
+                "methods": {
+                    method_name: {
+                        "all_pixels": _horizontal_record(
+                            windows * 384 * 768, left_oob=100
+                        ),
+                        "candidate_any_valid": _horizontal_record(
+                            windows * 384 * 768 - 100, left_oob=50
+                        ),
+                        "teacher_trusted": _horizontal_record(
+                            10_000, left_oob=10
+                        ),
+                        "candidate_boundary_band": _horizontal_record(
+                            200, left_oob=50
+                        ),
+                    }
+                    for method_name in (auditor.RAW_BASE, auditor.RAW_REFINED)
+                },
             },
         },
         "windows_evaluated": windows,
@@ -675,6 +861,7 @@ def _build_artifacts(
         "stage_b_base_checkpoint": base_identity,
         "lineage": {
             "recomputed_stage_c_training": {
+                "manifest_path": str(training_manifest),
                 "manifest_sha256": train_manifest_sha,
                 "derived_endpoint_records": 2_779,
                 "evaluable_t3_windows": 2_775,
@@ -691,12 +878,25 @@ def _build_artifacts(
                 "same_manifest": False,
                 "sequence_overlap": [],
                 "training_manifest_sha256": train_manifest_sha,
+                "training_manifest_path": str(training_manifest),
                 "evaluation_manifest_sha256": _sha(validation_manifest),
                 "evaluation_raw_vggt": {
                     "receipt_sha256": (
                         auditor.FORMAL_VALIDATION_RAW_VGGT_RECEIPT_SHA256
                     ),
                     "manifest_sha256": _sha(validation_manifest),
+                    "receipt_path": str(raw_receipts["validation"]),
+                    "root": str(raw_roots["validation"]),
+                    "identity": raw_identity,
+                },
+                "training_raw_vggt": {
+                    "receipt_sha256": (
+                        auditor.FORMAL_TRAIN_RAW_VGGT_RECEIPT_SHA256
+                    ),
+                    "manifest_sha256": train_manifest_sha,
+                    "receipt_path": str(raw_receipts["training"]),
+                    "root": str(raw_roots["training"]),
+                    "identity": raw_identity,
                 },
             },
             "stage_c_and_base": {
@@ -742,6 +942,7 @@ def _build_artifacts(
         "resolved_config": {"data": {"manifest_path": str(validation_manifest)}},
     }
     _write_json(evaluation / "metrics.json", metrics)
+    _write_metrics_csv(evaluation / "metrics.csv", methods)
 
     _patch_formal_hashes(
         monkeypatch,
@@ -831,7 +1032,11 @@ def test_epe_regression_is_reported_but_does_not_override_m5_primary_gate(
     )
     metrics["comparisons"]["raw_epe_change"] = recomputed
     metrics["comparisons"]["raw_all_metric_changes"]["epe_px"] = recomputed
+    metrics["comparisons"]["paired_pixel_changes"][
+        "paired_epe_improvement_hr_px"
+    ] = _metric(-0.01, refined["epe_px"]["count"])
     _write_json(metrics_path, metrics)
+    _write_metrics_csv(paths["evaluation"] / "metrics.csv", metrics["methods"])
 
     report = _audit(paths, complete=True)
 
@@ -914,6 +1119,7 @@ def test_limited_empty_boundary_domain_is_valid_report_but_ineligible(
         "boundary_epe_px"
     ] = clamp_change
     _write_json(metrics_path, metrics)
+    _write_metrics_csv(paths["evaluation"] / "metrics.csv", metrics["methods"])
 
     report = _audit(paths, complete=False)
 
@@ -980,6 +1186,184 @@ def test_clamp_source_and_runtime_tampering_are_rejected(
 
     with pytest.raises(auditor.EpipolarEvaluationAuditError):
         _audit(paths, complete=True)
+
+
+@pytest.mark.parametrize(
+    "tamper",
+    [
+        "refinement",
+        "paired",
+        "paired_improvement",
+        "horizontal",
+        "lineage_bytes",
+        "metrics_csv",
+    ],
+)
+def test_archival_statistics_lineage_and_csv_tampering_are_rejected(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    tamper: str,
+) -> None:
+    paths = _build_artifacts(tmp_path, monkeypatch, complete=True)
+    metrics_path = paths["evaluation"] / "metrics.json"
+    metrics = json.loads(metrics_path.read_text(encoding="utf-8"))
+    if tamper == "refinement":
+        metrics["refinement_statistics"]["confidence"]["count"] += 1
+        _write_json(metrics_path, metrics)
+    elif tamper == "paired":
+        record = metrics["comparisons"]["paired_pixel_changes"][
+            "paired_unchanged_rate"
+        ]
+        record["numerator"] += 1.0
+        record["value"] = record["numerator"] / record["count"]
+        _write_json(metrics_path, metrics)
+    elif tamper == "paired_improvement":
+        record = metrics["comparisons"]["paired_pixel_changes"][
+            "paired_epe_improvement_hr_px"
+        ]
+        record["numerator"] += 1.0
+        record["value"] = record["numerator"] / record["count"]
+        _write_json(metrics_path, metrics)
+    elif tamper == "horizontal":
+        metrics["runtime_geometry_statistics"][
+            "horizontal_correspondence_health"
+        ]["methods"][auditor.RAW_REFINED]["all_pixels"]["oob_count"] += 1
+        _write_json(metrics_path, metrics)
+    elif tamper == "lineage_bytes":
+        receipt = Path(
+            metrics["lineage"]["held_out_validation"]["training_raw_vggt"][
+                "receipt_path"
+            ]
+        )
+        receipt.write_text(receipt.read_text(encoding="utf-8") + " ", encoding="utf-8")
+    else:
+        csv_path = paths["evaluation"] / "metrics.csv"
+        rows = list(csv.DictReader(csv_path.read_text(encoding="utf-8").splitlines()))
+        rows[0]["epe_px"] = "999.0"
+        with csv_path.open("w", encoding="utf-8", newline="") as handle:
+            writer = csv.DictWriter(handle, fieldnames=list(rows[0]))
+            writer.writeheader()
+            writer.writerows(rows)
+
+    with pytest.raises(auditor.EpipolarEvaluationAuditError):
+        _audit(paths, complete=True)
+
+
+def test_refinement_audit_accepts_real_mixed_paired_validity(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    paths = _build_artifacts(tmp_path, monkeypatch, complete=True)
+    metrics = json.loads(
+        (paths["evaluation"] / "metrics.json").read_text(encoding="utf-8")
+    )
+    candidate_count = int(
+        metrics["refinement_statistics"]["candidate_coverage_rate"]["numerator"]
+    )
+    metrics["refinement_statistics"]["correction_signed_hr_px"][
+        "count"
+    ] = candidate_count - 1
+    metrics["refinement_statistics"]["correction_absolute_hr_px"][
+        "count"
+    ] = candidate_count - 1
+    paired_count = 10_000
+    mixed_paired = {
+        "paired_epe_improvement_hr_px": _invalid_metric(paired_count),
+        "paired_refined_better_rate": _invalid_metric(paired_count),
+        "paired_refined_worse_rate": _invalid_metric(paired_count),
+        "paired_unchanged_rate": _invalid_metric(paired_count),
+        "paired_finite_coverage_rate": {
+            "value": 9_999 / paired_count,
+            "numerator": 9_999.0,
+            "count": paired_count,
+            "valid": True,
+        },
+        "paired_nonfinite_rate": {
+            "value": 1 / paired_count,
+            "numerator": 1.0,
+            "count": paired_count,
+            "valid": True,
+        },
+    }
+    parsed_methods = {
+        "methods": {
+            auditor.RAW_REFINED: {"epe_px": _invalid_metric(paired_count)},
+        },
+        "paired_pixel_changes": mixed_paired,
+    }
+
+    receipt = auditor._validate_refinement_statistics(
+        metrics,
+        parsed_methods=parsed_methods,
+        windows_evaluated=238,
+    )
+
+    assert receipt["paired"]["status"] == "AUDITED"
+    assert receipt["paired"]["finite_count"] == 9_999
+    assert receipt["paired"]["nonfinite_count"] == 1
+    assert receipt["paired"]["outcome_partition"]["status"] == "NOT_AUDITABLE"
+    assert receipt["paired"]["mean_improvement"]["status"] == "NOT_AUDITABLE"
+    assert receipt["correction_domain"]["nonfinite_correction_count"] == 1
+
+    mixed_paired["paired_finite_coverage_rate"] = {
+        "value": 9_998 / paired_count,
+        "numerator": 9_998.0,
+        "count": paired_count,
+        "valid": True,
+    }
+    with pytest.raises(
+        auditor.EpipolarEvaluationAuditError,
+        match="finite/nonfinite counts do not partition",
+    ):
+        auditor._validate_refinement_statistics(
+            metrics,
+            parsed_methods=parsed_methods,
+            windows_evaluated=238,
+        )
+
+
+def test_refinement_audit_accepts_empty_candidate_domain_as_not_auditable(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    paths = _build_artifacts(tmp_path, monkeypatch, complete=True)
+    metrics = json.loads(
+        (paths["evaluation"] / "metrics.json").read_text(encoding="utf-8")
+    )
+    statistics = metrics["refinement_statistics"]
+    expected_pixels = 238 * 384 * 768
+    statistics["candidate_coverage_rate"] = _metric(0.0, expected_pixels)
+    empty_statistic = {
+        "count": 0,
+        "mean": None,
+        "minimum": None,
+        "maximum": None,
+        "valid": False,
+    }
+    for name in (
+        "correction_signed_hr_px",
+        "correction_absolute_hr_px",
+        "confidence",
+    ):
+        statistics[name] = dict(empty_statistic)
+    statistics["correction_nonzero_rate"] = _invalid_metric()
+    statistics["correction_saturated_rate"] = _invalid_metric()
+    parsed_methods = {
+        "methods": metrics["methods"],
+        "paired_pixel_changes": metrics["comparisons"]["paired_pixel_changes"],
+    }
+
+    receipt = auditor._validate_refinement_statistics(
+        metrics,
+        parsed_methods=parsed_methods,
+        windows_evaluated=238,
+    )
+
+    assert receipt["candidate_valid_pixels"] == 0
+    assert receipt["correction_domain"] == {
+        "status": "NOT_AUDITABLE",
+        "reason": "empty candidate-valid domain",
+    }
 
 
 def test_cli_refuses_to_write_report_inside_evaluation_directory(

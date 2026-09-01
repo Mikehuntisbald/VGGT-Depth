@@ -63,6 +63,31 @@ The full-corpus raw base and clamp0-base rows must exactly reproduce the
 canonical Stage-B `T3_VGGT` and `T3_VGGT_clamp0` rows. Clamp0 remains a physical
 postprocess diagnostic and never owns acceptance.
 
+For archival integrity the auditor also:
+
+- checks correction/confidence/candidate-coverage domains and paired
+  better/worse/unchanged/finite count conservation;
+- checks every horizontal correspondence method/domain count partition and
+  its derived rates without letting that diagnostic alter accuracy masks;
+- reopens the recorded train/validation raw-VGGT receipts/manifests and
+  train/validation derived receipts/manifests, then verifies their bytes;
+- parses `metrics.csv`, requires all four method rows to match `metrics.json`,
+  and recomputes raw/clamp comparisons from the CSV rows;
+- records both `metrics.json` and `metrics.csv` SHA-256 values in the audit.
+
+The saturation threshold cannot be reconstructed from aggregate correction
+statistics alone. The report labels that check `NOT_AUDITABLE` instead of
+guessing a per-pixel result.
+
+The evaluator's legal degenerate schemas are preserved: an empty candidate
+domain is reported as `NOT_AUDITABLE`, and paired finite/nonfinite coverage is
+still audited when any nonfinite pair makes the strict outcome and mean
+improvement aggregates invalid. For an all-finite paired domain, outcome counts
+must partition the domain and mean improvement must equal raw base EPE minus raw
+refined EPE on that exact domain. Finite correction/confidence aggregate counts
+are also preserved as subsets of candidate coverage; nonfinite values are
+reported rather than turning a legal evaluator record into a schema error.
+
 All accuracy targets are trusted HR FFS pseudo-GT. Therefore every report keeps
 `paper_ground_truth=false`, `paper_accuracy=false`, and
 `paper_claim_eligible=false`. The evaluator does not publish a refined Stage-C

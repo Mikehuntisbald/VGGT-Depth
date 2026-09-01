@@ -15,6 +15,7 @@ tampered artifact set.
 from __future__ import annotations
 
 import argparse
+import csv
 import hashlib
 import json
 import math
@@ -109,6 +110,9 @@ FORMAL_VALIDATION_RAW_PAYLOAD_DIGEST_SHA256 = (
 )
 FORMAL_TRAIN_RAW_VGGT_RECEIPT_SHA256 = (
     "37ea38ef0a35ec816e180091d323d95cbe8b895b90a440c2e8aaf3ec1c64590d"
+)
+FORMAL_TRAIN_RAW_VGGT_MANIFEST_SHA256 = (
+    "6adc9f7381d7a8eba1282601558bc4b2e6dca3ceef28fc9b82594eb325b9b08d"
 )
 FORMAL_TRAIN_DERIVED_RECEIPT_SHA256 = (
     "3cd6edf37636690c613d268d6c5bcbfaa004c1a330e1970ad6cd8e34fe989db7"
@@ -1411,12 +1415,562 @@ def _validate_runtime_geometry(
         and health.get("changes_accuracy_metrics") is False,
         "runtime geometry diagnostic/metric ownership differs",
     )
+    health_methods = health.get("methods")
+    expected_methods = {RAW_BASE, RAW_REFINED}
+    expected_domains = {
+        "all_pixels",
+        "candidate_any_valid",
+        "teacher_trusted",
+        "candidate_boundary_band",
+    }
+    count_fields = {
+        "domain_pixel_count",
+        "finite_count",
+        "nonfinite_count",
+        "in_bounds_count",
+        "oob_count",
+        "left_oob_count",
+        "right_oob_count",
+    }
+    rate_fields = {
+        "finite_rate",
+        "nonfinite_rate",
+        "in_bounds_rate",
+        "oob_rate",
+        "left_oob_rate",
+        "right_oob_rate",
+    }
+    _require(
+        isinstance(health_methods, Mapping)
+        and set(health_methods) == expected_methods,
+        "horizontal correspondence method set differs",
+    )
+    audited_domains: dict[str, dict[str, Any]] = {}
+    for method_name in sorted(expected_methods):
+        method_domains = health_methods[method_name]
+        _require(
+            isinstance(method_domains, Mapping)
+            and set(method_domains) == expected_domains,
+            f"horizontal correspondence domains differ for {method_name}",
+        )
+        audited_domains[method_name] = {}
+        for domain_name in sorted(expected_domains):
+            record = method_domains[domain_name]
+            _require(
+                isinstance(record, Mapping)
+                and set(record) == count_fields | rate_fields | {"valid"},
+                f"horizontal correspondence record differs: {method_name}.{domain_name}",
+            )
+            counts = {
+                name: _nonnegative_int(
+                    record.get(name),
+                    f"horizontal {method_name}.{domain_name}.{name}",
+                )
+                for name in count_fields
+            }
+            denominator = counts["domain_pixel_count"]
+            _require(
+                counts["finite_count"] + counts["nonfinite_count"]
+                == denominator
+                and counts["in_bounds_count"] + counts["oob_count"]
+                == counts["finite_count"]
+                and counts["left_oob_count"] + counts["right_oob_count"]
+                == counts["oob_count"],
+                f"horizontal correspondence counts do not partition: {method_name}.{domain_name}",
+            )
+            _require(
+                record.get("valid") is (denominator > 0),
+                f"horizontal correspondence validity differs: {method_name}.{domain_name}",
+            )
+            for count_name in count_fields - {"domain_pixel_count"}:
+                rate_name = count_name.removesuffix("_count") + "_rate"
+                expected_rate = (
+                    counts[count_name] / denominator if denominator else None
+                )
+                if expected_rate is None:
+                    _require(
+                        record.get(rate_name) is None,
+                        "horizontal empty-domain rate must be null: "
+                        f"{method_name}.{domain_name}.{rate_name}",
+                    )
+                else:
+                    _require(
+                        math.isclose(
+                            _finite_float(
+                                record.get(rate_name),
+                                f"horizontal {method_name}.{domain_name}.{rate_name}",
+                            ),
+                            expected_rate,
+                            rel_tol=1e-12,
+                            abs_tol=1e-15,
+                        ),
+                        "horizontal correspondence rate differs: "
+                        f"{method_name}.{domain_name}.{rate_name}",
+                    )
+            audited_domains[method_name][domain_name] = {
+                **counts,
+                "valid": denominator > 0,
+            }
+    expected_all_pixels = windows_evaluated * 384 * 768
+    _require(
+        all(
+            audited_domains[method]["all_pixels"]["domain_pixel_count"]
+            == expected_all_pixels
+            for method in expected_methods
+        ),
+        "horizontal all-pixel domain differs from evaluated crop coverage",
+    )
+    for domain_name in expected_domains:
+        _require(
+            audited_domains[RAW_BASE][domain_name]["domain_pixel_count"]
+            == audited_domains[RAW_REFINED][domain_name]["domain_pixel_count"],
+            f"horizontal base/refined domain differs: {domain_name}",
+        )
+    base_domains = audited_domains[RAW_BASE]
+    _require(
+        base_domains["candidate_boundary_band"]["domain_pixel_count"]
+        <= base_domains["candidate_any_valid"]["domain_pixel_count"]
+        <= base_domains["all_pixels"]["domain_pixel_count"]
+        and base_domains["teacher_trusted"]["domain_pixel_count"]
+        <= base_domains["all_pixels"]["domain_pixel_count"],
+        "horizontal named domains violate subset/count bounds",
+    )
     return {
         "contract_version": contract["version"],
         "right_row_scale": row_scale,
         "right_row_offset_hr_px": row_offset,
         "horizontal_correspondence_role": "DIAGNOSTIC_ONLY",
         "changes_accuracy_metrics": False,
+        "domains": audited_domains,
+    }
+
+
+def _validate_refinement_statistics(
+    metrics: Mapping[str, Any],
+    *,
+    parsed_methods: Mapping[str, Any],
+    windows_evaluated: int,
+) -> dict[str, Any]:
+    statistics = metrics.get("refinement_statistics")
+    _require(isinstance(statistics, Mapping), "refinement statistics are missing")
+    expected_fields = {
+        "correction_signed_hr_px",
+        "correction_absolute_hr_px",
+        "confidence",
+        "correction_nonzero_rate",
+        "correction_saturated_rate",
+        "candidate_coverage_rate",
+    }
+    _require(
+        set(statistics) == expected_fields,
+        "refinement statistics fields are missing or non-canonical",
+    )
+
+    def finite_stat(value: object, name: str) -> dict[str, Any]:
+        _require(
+            isinstance(value, Mapping),
+            f"refinement statistic {name} is missing",
+        )
+        _require(
+            set(value) == {"count", "mean", "minimum", "maximum", "valid"}
+            and type(value.get("valid")) is bool,
+            f"refinement statistic {name} schema differs",
+        )
+        count = _nonnegative_int(value.get("count"), f"refinement {name}.count")
+        if value.get("valid") is False:
+            _require(
+                count == 0
+                and value.get("mean") is None
+                and value.get("minimum") is None
+                and value.get("maximum") is None,
+                f"invalid refinement statistic {name} must be empty/null",
+            )
+            return {
+                "count": 0,
+                "mean": None,
+                "minimum": None,
+                "maximum": None,
+                "valid": False,
+            }
+        _require(
+            count > 0,
+            f"valid refinement statistic {name} must be non-empty",
+        )
+        mean = _finite_float(value.get("mean"), f"refinement {name}.mean")
+        minimum = _finite_float(value.get("minimum"), f"refinement {name}.minimum")
+        maximum = _finite_float(value.get("maximum"), f"refinement {name}.maximum")
+        _require(
+            minimum <= mean <= maximum,
+            f"refinement {name} min/mean/max are inconsistent",
+        )
+        return {
+            "count": count,
+            "mean": mean,
+            "minimum": minimum,
+            "maximum": maximum,
+            "valid": True,
+        }
+
+    candidate = _metric(
+        statistics.get("candidate_coverage_rate"),
+        name="refinement candidate_coverage_rate",
+    )
+    nonzero = _metric(
+        statistics.get("correction_nonzero_rate"),
+        name="refinement correction_nonzero_rate",
+    )
+    saturated = _metric(
+        statistics.get("correction_saturated_rate"),
+        name="refinement correction_saturated_rate",
+    )
+    signed = finite_stat(
+        statistics.get("correction_signed_hr_px"),
+        "correction_signed_hr_px",
+    )
+    absolute = finite_stat(
+        statistics.get("correction_absolute_hr_px"),
+        "correction_absolute_hr_px",
+    )
+    confidence = finite_stat(statistics.get("confidence"), "confidence")
+    expected_pixels = windows_evaluated * 384 * 768
+    candidate_count = int(candidate["numerator"])
+    _require(
+        candidate["count"] == expected_pixels
+        and float(candidate["numerator"]).is_integer()
+        and 0 <= candidate_count <= expected_pixels,
+        "candidate coverage count/numerator is inconsistent",
+    )
+    correction_records = (signed, absolute, confidence)
+    if candidate_count == 0:
+        _require(
+            all(
+                record["valid"] is False and record["count"] == 0
+                for record in correction_records
+            )
+            and nonzero["valid"] is False
+            and nonzero["count"] == 0
+            and saturated["valid"] is False
+            and saturated["count"] == 0,
+            "empty candidate domain must use empty refinement statistics",
+        )
+        correction_domain: dict[str, Any] = {
+            "status": "NOT_AUDITABLE",
+            "reason": "empty candidate-valid domain",
+        }
+    else:
+        _require(
+            signed["valid"] is absolute["valid"]
+            and signed["count"] == absolute["count"]
+            and signed["count"] <= candidate_count
+            and confidence["count"] <= candidate_count
+            and nonzero["valid"] is True
+            and saturated["valid"] is True
+            and nonzero["count"]
+            == saturated["count"]
+            == candidate_count,
+            "refinement statistic domains do not match candidate coverage",
+        )
+        if signed["valid"]:
+            _require(
+                0.0 <= absolute["minimum"] <= absolute["maximum"] <= 2.0
+                and abs(signed["minimum"]) <= 2.0
+                and abs(signed["maximum"]) <= 2.0
+                and math.isclose(
+                    absolute["maximum"],
+                    max(abs(signed["minimum"]), abs(signed["maximum"])),
+                    rel_tol=1e-9,
+                    abs_tol=1e-12,
+                )
+                and absolute["mean"] + 1e-12 >= abs(signed["mean"]),
+                "signed/absolute correction statistics violate bounded identities",
+            )
+        if confidence["valid"]:
+            _require(
+                0.0 <= confidence["minimum"] <= confidence["maximum"] <= 1.0,
+                "refinement confidence is outside [0,1]",
+            )
+        _require(
+            0.0
+            <= float(saturated["numerator"])
+            <= float(nonzero["numerator"])
+            <= candidate_count
+            and float(nonzero["numerator"]).is_integer()
+            and float(saturated["numerator"]).is_integer(),
+            "refinement nonzero/saturated counts are inconsistent",
+        )
+        correction_domain = {
+            "status": "AUDITED",
+            "domain_count": candidate_count,
+            "finite_correction_count": signed["count"],
+            "nonfinite_correction_count": candidate_count - signed["count"],
+            "finite_confidence_count": confidence["count"],
+            "nonfinite_confidence_count": candidate_count - confidence["count"],
+            "correction_aggregate": {
+                "status": "AUDITED" if signed["valid"] else "NOT_AUDITABLE",
+                "reason": None if signed["valid"] else "no finite corrections",
+            },
+            "confidence_aggregate": {
+                "status": "AUDITED" if confidence["valid"] else "NOT_AUDITABLE",
+                "reason": None if confidence["valid"] else "no finite confidences",
+            },
+        }
+
+    paired = parsed_methods.get("paired_pixel_changes")
+    _require(isinstance(paired, Mapping), "paired pixel diagnostics are missing")
+    paired_values = list(paired.values())
+    if all(value.get("valid") is False for value in paired_values):
+        _require(
+            all(value.get("count") == 0 for value in paired_values),
+            "invalid paired diagnostics must share an empty domain",
+        )
+        paired_receipt: dict[str, Any] = {
+            "status": "NOT_AUDITABLE",
+            "reason": "empty paired target domain",
+        }
+    else:
+        counts = {int(value["count"]) for value in paired_values}
+        _require(len(counts) == 1, "paired diagnostics use different domains")
+        paired_count = counts.pop()
+        _require(paired_count > 0, "non-empty paired diagnostics have zero domain")
+        improvement = paired["paired_epe_improvement_hr_px"]
+        better = paired["paired_refined_better_rate"]
+        worse = paired["paired_refined_worse_rate"]
+        unchanged = paired["paired_unchanged_rate"]
+        finite = paired["paired_finite_coverage_rate"]
+        nonfinite = paired["paired_nonfinite_rate"]
+        _require(
+            finite["valid"] is True and nonfinite["valid"] is True,
+            "non-empty paired finite/nonfinite coverage must remain auditable",
+        )
+        finite_count = float(finite["numerator"])
+        nonfinite_count = float(nonfinite["numerator"])
+        _require(
+            finite_count.is_integer()
+            and nonfinite_count.is_integer()
+            and math.isclose(
+                finite_count + nonfinite_count,
+                float(paired_count),
+                rel_tol=0.0,
+                abs_tol=1e-9,
+            ),
+            "paired finite/nonfinite counts do not partition the target domain",
+        )
+        teacher_trusted = parsed_methods["methods"][RAW_REFINED][
+            "epe_px"
+        ]["count"]
+        _require(
+            paired_count == teacher_trusted,
+            "paired diagnostics differ from the raw trusted target domain",
+        )
+        outcome_names = (
+            "paired_epe_improvement_hr_px",
+            "paired_refined_better_rate",
+            "paired_refined_worse_rate",
+            "paired_unchanged_rate",
+        )
+        if nonfinite_count > 0:
+            _require(
+                finite_count < paired_count
+                and all(paired[name]["valid"] is False for name in outcome_names),
+                "nonfinite paired domain must invalidate strict outcome metrics",
+            )
+            outcome_receipt: dict[str, Any] = {
+                "status": "NOT_AUDITABLE",
+                "reason": "nonfinite pair invalidates strict outcome aggregates",
+            }
+            improvement_receipt: dict[str, Any] = {
+                "status": "NOT_AUDITABLE",
+                "reason": "nonfinite pair invalidates aggregate mean improvement",
+            }
+        else:
+            _require(
+                finite_count == paired_count
+                and all(paired[name]["valid"] is True for name in outcome_names),
+                "all-finite paired domain must expose valid strict outcomes",
+            )
+            better_count = float(better["numerator"])
+            worse_count = float(worse["numerator"])
+            unchanged_count = float(unchanged["numerator"])
+            _require(
+                better_count.is_integer()
+                and worse_count.is_integer()
+                and unchanged_count.is_integer()
+                and math.isclose(
+                    better_count + worse_count + unchanged_count,
+                    float(paired_count),
+                    rel_tol=0.0,
+                    abs_tol=1e-9,
+                ),
+                "paired better/worse/unchanged counts do not partition finite pairs",
+            )
+            base_epe = parsed_methods["methods"][RAW_BASE]["epe_px"]
+            refined_epe = parsed_methods["methods"][RAW_REFINED]["epe_px"]
+            _require(
+                base_epe["valid"] is True
+                and refined_epe["valid"] is True
+                and base_epe["count"] == refined_epe["count"] == paired_count,
+                "all-finite paired domain differs from raw EPE domains",
+            )
+            expected_improvement = float(base_epe["numerator"]) - float(
+                refined_epe["numerator"]
+            )
+            _require(
+                math.isclose(
+                    float(improvement["numerator"]),
+                    expected_improvement,
+                    rel_tol=1e-9,
+                    abs_tol=1e-8,
+                ),
+                "paired mean improvement differs from raw base/refined EPE",
+            )
+            outcome_receipt = {
+                "status": "AUDITED",
+                "better_plus_worse_plus_unchanged_equals_domain": True,
+            }
+            improvement_receipt = {
+                "status": "AUDITED",
+                "matches_raw_epe_numerator_difference": True,
+            }
+        paired_receipt = {
+            "status": "AUDITED",
+            "domain_count": paired_count,
+            "finite_plus_nonfinite_equals_domain": True,
+            "finite_count": int(finite_count),
+            "nonfinite_count": int(nonfinite_count),
+            "outcome_partition": outcome_receipt,
+            "mean_improvement": improvement_receipt,
+        }
+    return {
+        "candidate_coverage": candidate,
+        "candidate_valid_pixels": candidate_count,
+        "signed_correction": signed,
+        "absolute_correction": absolute,
+        "confidence": confidence,
+        "correction_nonzero_rate": nonzero,
+        "correction_saturated_rate": saturated,
+        "correction_domain": correction_domain,
+        "paired": paired_receipt,
+        "saturation_threshold_recomputable_from_aggregates": {
+            "status": "NOT_AUDITABLE",
+            "reason": "aggregate statistics do not retain per-pixel corrections",
+        },
+    }
+
+
+def _validate_metrics_csv(
+    path: Path,
+    *,
+    parsed_methods: Mapping[str, Any],
+) -> dict[str, Any]:
+    payload = _read_regular_file(path, "Stage-C metrics.csv")
+    try:
+        text = payload.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise EpipolarEvaluationAuditError("Stage-C metrics.csv is not UTF-8") from exc
+    metric_names = sorted(REQUIRED_METRICS)
+    expected_fields = [
+        "method",
+        "target_type",
+        "paper_ground_truth",
+        "point_to_plane",
+    ]
+    for name in metric_names:
+        expected_fields.extend(
+            (name, f"{name}_valid", f"{name}_count", f"{name}_numerator")
+        )
+    try:
+        reader = csv.DictReader(text.splitlines(), strict=True)
+        _require(
+            reader.fieldnames == expected_fields,
+            "Stage-C metrics.csv header/schema differs from metrics.json",
+        )
+        rows = list(reader)
+    except csv.Error as exc:
+        raise EpipolarEvaluationAuditError(
+            f"cannot parse strict Stage-C metrics.csv: {exc}"
+        ) from exc
+    expected_order = [RAW_BASE, CLAMP_BASE, RAW_REFINED, CLAMP_REFINED]
+    _require(
+        [row.get("method") for row in rows] == expected_order,
+        "Stage-C metrics.csv method order/set differs",
+    )
+    csv_methods: dict[str, dict[str, Any]] = {}
+    for row in rows:
+        method_name = str(row["method"])
+        _require(
+            row.get("target_type") == PSEUDO_GT_TARGET
+            and row.get("paper_ground_truth") == "False"
+            and row.get("point_to_plane") == "NOT_AVAILABLE"
+            and None not in row,
+            f"Stage-C metrics.csv claim columns differ for {method_name}",
+        )
+        csv_methods[method_name] = {}
+        for name in metric_names:
+            expected = parsed_methods["methods"][method_name][name]
+            valid_text = row.get(f"{name}_valid")
+            count_text = row.get(f"{name}_count")
+            _require(
+                valid_text in {"True", "False"},
+                f"CSV {method_name}.{name} valid is malformed",
+            )
+            try:
+                count = int(str(count_text))
+            except (TypeError, ValueError) as exc:
+                raise EpipolarEvaluationAuditError(
+                    f"CSV {method_name}.{name} count is malformed"
+                ) from exc
+            valid = valid_text == "True"
+            if valid:
+                try:
+                    value = float(str(row.get(name)))
+                    numerator = float(str(row.get(f"{name}_numerator")))
+                except (TypeError, ValueError) as exc:
+                    raise EpipolarEvaluationAuditError(
+                        f"CSV {method_name}.{name} numeric value is malformed"
+                    ) from exc
+                _require(
+                    math.isfinite(value) and math.isfinite(numerator),
+                    f"CSV {method_name}.{name} is non-finite",
+                )
+            else:
+                _require(
+                    row.get(name) == "" and row.get(f"{name}_numerator") == "",
+                    f"CSV invalid metric {method_name}.{name} must use empty value/numerator",
+                )
+                value = None
+                numerator = None
+            parsed = {
+                "value": value,
+                "numerator": numerator,
+                "count": count,
+                "valid": valid,
+            }
+            _require(
+                parsed == expected,
+                f"Stage-C metrics.csv differs from metrics.json: {method_name}.{name}",
+            )
+            csv_methods[method_name][name] = parsed
+    for name in REQUIRED_METRICS:
+        raw_change = _metric_change(csv_methods[RAW_BASE][name], csv_methods[RAW_REFINED][name])
+        clamp_change = _metric_change(
+            csv_methods[CLAMP_BASE][name], csv_methods[CLAMP_REFINED][name]
+        )
+        _require(
+            raw_change == parsed_methods["raw_changes"][name]
+            and clamp_change == parsed_methods["clamp0_changes"][name],
+            f"CSV-derived comparison differs from JSON comparison: {name}",
+        )
+    return {
+        "path": str(path.resolve()),
+        "sha256": _sha256_bytes(payload),
+        "byte_size": len(payload),
+        "rows": len(rows),
+        "methods_match_json": True,
+        "raw_and_clamp_comparisons_match_json": True,
+        "comparison_columns": {
+            "status": "NOT_PRESENT_BY_SCHEMA",
+            "audit_method": "recomputed_from_four_method_rows",
+        },
     }
 
 
@@ -1617,6 +2171,7 @@ def _validate_lineage(
         "Stage-C held-out video-isolation lineage differs",
     )
     evaluation_raw_vggt = held_out.get("evaluation_raw_vggt")
+    training_raw_vggt = held_out.get("training_raw_vggt")
     _require(
         isinstance(evaluation_raw_vggt, Mapping)
         and evaluation_raw_vggt.get("receipt_sha256")
@@ -1624,6 +2179,14 @@ def _validate_lineage(
         and evaluation_raw_vggt.get("manifest_sha256")
         == FORMAL_VALIDATION_MANIFEST_SHA256,
         "Stage-C held-out raw VGGT receipt lineage differs",
+    )
+    _require(
+        isinstance(training_raw_vggt, Mapping)
+        and training_raw_vggt.get("receipt_sha256")
+        == FORMAL_TRAIN_RAW_VGGT_RECEIPT_SHA256
+        and training_raw_vggt.get("manifest_sha256")
+        == FORMAL_TRAIN_MANIFEST_SHA256,
+        "Stage-C training raw VGGT receipt lineage differs",
     )
     _require(
         stage_lineage.get("sequence_overlap") == []
@@ -1692,6 +2255,98 @@ def _validate_lineage(
         repository_hash == selected["git_hash"] == FORMAL_STAGE_C_TRAINING_GIT_HASH,
         "Stage-C evaluator repository Git hash differs from training checkpoint",
     )
+    external_artifacts: dict[str, Any] = {}
+
+    def verify_bytes(
+        path_value: object,
+        expected_sha256: str,
+        label: str,
+    ) -> dict[str, Any]:
+        return _verify_file_identity(
+            {"path": path_value, "sha256": expected_sha256},
+            expected_path=None,
+            name=label,
+        )
+
+    training_manifest_path = recomputed.get("manifest_path")
+    external_artifacts["training_manifest"] = verify_bytes(
+        training_manifest_path,
+        FORMAL_TRAIN_MANIFEST_SHA256,
+        "Stage-C training manifest",
+    )
+    _require(
+        _resolve_recorded_path(
+            held_out.get("training_manifest_path"), "held-out training manifest"
+        )
+        == Path(external_artifacts["training_manifest"]["path"]),
+        "training manifest paths differ across lineage receipts",
+    )
+    external_artifacts["train_derived_manifest"] = verify_bytes(
+        training_derived.get("cache_manifest_path"),
+        FORMAL_TRAIN_DERIVED_MANIFEST_SHA256,
+        "training derived cache manifest",
+    )
+    external_artifacts["train_derived_receipt"] = verify_bytes(
+        training_derived.get("run_receipt_path"),
+        FORMAL_TRAIN_DERIVED_RECEIPT_SHA256,
+        "training derived run receipt",
+    )
+
+    def verify_raw_vggt(
+        record: Mapping[str, Any],
+        *,
+        receipt_sha256: str,
+        manifest_sha256: str,
+        selected_windows: int,
+        prefix: str,
+    ) -> None:
+        receipt_path = _resolve_recorded_path(
+            record.get("receipt_path"), f"{prefix} raw VGGT receipt"
+        )
+        receipt = _load_json(receipt_path, f"{prefix} raw VGGT receipt")
+        _require(
+            receipt.sha256 == receipt_sha256
+            and receipt.value.get("schema_version") == 1
+            and receipt.value.get("manifest_sha256") == manifest_sha256
+            and receipt.value.get("selected_windows") == selected_windows
+            and receipt.value.get("identity") == record.get("identity"),
+            f"{prefix} raw VGGT receipt content/identity differs",
+        )
+        root = _resolve_recorded_path(record.get("root"), f"{prefix} raw VGGT root")
+        _require(root.is_dir(), f"{prefix} raw VGGT root is missing")
+        manifest_path = root / "cache_manifest.jsonl"
+        expected_manifest_sha = (
+            FORMAL_TRAIN_RAW_VGGT_MANIFEST_SHA256
+            if prefix == "training"
+            else FORMAL_VALIDATION_RAW_VGGT_MANIFEST_SHA256
+        )
+        external_artifacts[f"{prefix}_raw_vggt_receipt"] = receipt.identity()
+        external_artifacts[f"{prefix}_raw_vggt_manifest"] = verify_bytes(
+            str(manifest_path),
+            expected_manifest_sha,
+            f"{prefix} raw VGGT cache manifest",
+        )
+
+    verify_raw_vggt(
+        training_raw_vggt,
+        receipt_sha256=FORMAL_TRAIN_RAW_VGGT_RECEIPT_SHA256,
+        manifest_sha256=FORMAL_TRAIN_MANIFEST_SHA256,
+        selected_windows=FORMAL_TRAIN_DERIVED_RECORDS,
+        prefix="training",
+    )
+    verify_raw_vggt(
+        evaluation_raw_vggt,
+        receipt_sha256=FORMAL_VALIDATION_RAW_VGGT_RECEIPT_SHA256,
+        manifest_sha256=FORMAL_VALIDATION_MANIFEST_SHA256,
+        selected_windows=FORMAL_DERIVED_RECORDS,
+        prefix="validation",
+    )
+    external_artifacts["validation_derived_manifest"] = coverage[
+        "verified_coverage_artifacts"
+    ]["derived_cache_manifest_path"]
+    external_artifacts["validation_derived_receipt"] = coverage[
+        "verified_coverage_artifacts"
+    ]["derived_run_receipt_path"]
     return {
         "stage_c_checkpoint": dict(selected),
         "stage_b_checkpoint": dict(base),
@@ -1707,6 +2362,7 @@ def _validate_lineage(
         "validation_raw_ffs_payloads_hashed": FORMAL_DERIVED_RECORDS,
         "evaluator_path": str(evaluator_path),
         "evaluator_sha256": evaluator_sha,
+        "external_lineage_artifacts": external_artifacts,
     }
 
 
@@ -1870,6 +2526,26 @@ def audit_epipolar_evaluation(
         full_selection=bool(coverage["full_selection"]),
     )
     parsed = _validate_methods(metrics.value, stage_b=stage_b)
+    metrics_csv = _validate_metrics_csv(
+        eval_root / "metrics.csv", parsed_methods=parsed
+    )
+    refinement = _validate_refinement_statistics(
+        metrics.value,
+        parsed_methods=parsed,
+        windows_evaluated=int(coverage["windows_evaluated"]),
+    )
+    geometry_domains = runtime_geometry["domains"]
+    _require(
+        geometry_domains[RAW_BASE]["candidate_any_valid"]["domain_pixel_count"]
+        == refinement["candidate_valid_pixels"],
+        "candidate coverage differs between refinement and geometry diagnostics",
+    )
+    if refinement["paired"]["status"] == "AUDITED":
+        _require(
+            geometry_domains[RAW_BASE]["teacher_trusted"]["domain_pixel_count"]
+            == refinement["paired"]["domain_count"],
+            "teacher-trusted geometry and paired metric domains differ",
+        )
     gate = _gate_report(parsed)
     if not producer_eligible:
         status = "INELIGIBLE_FOR_FINAL_GATE"
@@ -1904,11 +2580,13 @@ def audit_epipolar_evaluation(
         "coverage": coverage,
         "numerical_contract": numerical_contract,
         "runtime_geometry": runtime_geometry,
+        "refinement_statistics": refinement,
         "lineage": lineage,
         "training": training,
         "stage_b_final": stage_b,
         "artifacts": {
             "metrics": metrics.identity(),
+            "metrics_csv": metrics_csv,
             "stage_c_training_audit": training_audit.identity(),
             "stage_c_training_summary": (
                 None if training_summary is None else training_summary.identity()
