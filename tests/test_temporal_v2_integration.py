@@ -87,11 +87,15 @@ def _memory() -> tuple[list[train.TemporalMemoryEntry], tuple[torch.Tensor, ...]
             output=age_two_output,
             rgb_hr=torch.zeros(1, 3, _HEIGHT_HR, _WIDTH_HR),
             time_index=0,
+            intrinsics_hr=_intrinsics_hr(),
+            baseline_m=torch.tensor([0.1]),
         ),
         train.TemporalMemoryEntry(
             output=age_one_output,
             rgb_hr=torch.zeros(1, 3, _HEIGHT_HR, _WIDTH_HR),
             time_index=1,
+            intrinsics_hr=_intrinsics_hr(),
+            baseline_m=torch.tensor([0.1]),
         ),
     ]
     return memory, (*age_one_hidden, *age_two_hidden)
@@ -185,6 +189,51 @@ def test_topk_identity_transport_keeps_age_phase_and_warps_hidden_state() -> Non
     assert all(value.grad is not None for value in hidden_inputs[:2])
     assert all(bool(torch.isfinite(value.grad).all()) for value in hidden_inputs[:2])
     assert all(value.grad is None for value in hidden_inputs[2:])
+
+
+def test_temporal_transport_uses_memory_source_and_current_target_calibration() -> None:
+    memory, _ = _memory()
+    source_k = torch.tensor(
+        [[[4.0, 0.0, 0.0], [0.0, 4.0, 0.0], [0.0, 0.0, 1.0]]]
+    )
+    target_k = torch.tensor(
+        [[[8.0, 0.0, 0.0], [0.0, 8.0, 0.0], [0.0, 0.0, 1.0]]]
+    )
+    memory = [
+        train.TemporalMemoryEntry(
+            output=entry.output,
+            rgb_hr=entry.rgb_hr,
+            time_index=entry.time_index,
+            intrinsics_hr=source_k,
+            baseline_m=torch.tensor([0.1]),
+        )
+        for entry in memory
+    ]
+    transport = train.build_topk_temporal_transport(
+        memory=memory,
+        current_time_index=2,
+        current_rgb_hr=torch.zeros(1, 3, _HEIGHT_HR, _WIDTH_HR),
+        current_ffs_disparity_hr_px=torch.full(
+            (1, 1, _HEIGHT_LR, _WIDTH_LR), 16.0
+        ),
+        current_ffs_confidence=torch.full(
+            (1, 1, _HEIGHT_LR, _WIDTH_LR), 0.5
+        ),
+        intrinsics_current_hr=target_k,
+        baseline_current_m=torch.tensor([0.2]),
+        temporal_extrinsics_camera_from_world=_identity_extrinsics(),
+        temporal_pose_valid=torch.tensor([True]),
+        contract=_history_contract(),
+        scale=2,
+    )
+    assert transport.topk_disparity_history_hr_px is not None
+    selected = transport.topk_disparity_history_hr_px[
+        transport.topk_valid_mask
+    ]
+    assert selected.numel() > 0
+    torch.testing.assert_close(selected, torch.full_like(selected, 16.0))
+    assert transport.warped_hidden_state is not None
+    assert any(bool(state.ne(0).any()) for state in transport.warped_hidden_state)
 
 
 def test_pose_invalid_topk_transport_is_exact_zero_including_hidden_state() -> None:
@@ -306,6 +355,8 @@ def test_reference_identity_warp_and_teacher_temporal_residual_loss() -> None:
             previous_teacher, dtype=torch.bool
         ),
         previous_prediction_disparity_hr_px=previous_teacher + 2.0,
+        intrinsics_previous_hr=_intrinsics_hr(),
+        baseline_previous_m=torch.tensor([0.1]),
         intrinsics_current_hr=_intrinsics_hr(),
         baseline_current_m=torch.tensor([0.1]),
         temporal_extrinsics_camera_from_world=_identity_extrinsics(),
@@ -360,6 +411,38 @@ def test_reference_identity_warp_and_teacher_temporal_residual_loss() -> None:
     )
 
 
+def test_reference_warp_carries_prediction_on_teacher_dual_calibration_correspondence() -> None:
+    previous_teacher = torch.full((1, 1, _HEIGHT_HR, _WIDTH_HR), 4.0)
+    previous_prediction = torch.full_like(previous_teacher, 6.0)
+    source_k = torch.tensor(
+        [[[4.0, 0.0, 0.0], [0.0, 4.0, 0.0], [0.0, 0.0, 1.0]]]
+    )
+    target_k = torch.tensor(
+        [[[8.0, 0.0, 0.0], [0.0, 8.0, 0.0], [0.0, 0.0, 1.0]]]
+    )
+    result = train.build_reference_temporal_warp(
+        previous_reference_disparity_hr_px=previous_teacher,
+        previous_reference_confidence=torch.ones_like(previous_teacher),
+        previous_reference_valid_mask=torch.ones_like(
+            previous_teacher, dtype=torch.bool
+        ),
+        previous_prediction_disparity_hr_px=previous_prediction,
+        intrinsics_previous_hr=source_k,
+        baseline_previous_m=torch.tensor([0.1]),
+        intrinsics_current_hr=target_k,
+        baseline_current_m=torch.tensor([0.2]),
+        temporal_extrinsics_camera_from_world=_identity_extrinsics(),
+        temporal_pose_valid=torch.tensor([True]),
+        contract=_history_contract(),
+    )
+    assert result.prediction_disparity_hr_px is not None
+    reference_values = result.disparity_hr_px[result.valid_mask_hr]
+    prediction_values = result.prediction_disparity_hr_px[result.valid_mask_hr]
+    assert reference_values.numel() > 0
+    torch.testing.assert_close(reference_values, torch.full_like(reference_values, 16.0))
+    torch.testing.assert_close(prediction_values, torch.full_like(prediction_values, 24.0))
+
+
 def _history_v2_config_section() -> dict[str, object]:
     return {
         "enabled": True,
@@ -401,20 +484,28 @@ def test_temporal_v2_config_parser_fails_closed() -> None:
         train._validate_common_training_config(invalid_k, total_steps=1)
 
 
-def test_temporal_v2_requires_time_invariant_calibration() -> None:
+def test_temporal_v2_accepts_time_varying_calibration_and_rejects_invalid() -> None:
     intrinsics = _intrinsics_hr().unsqueeze(1).repeat(1, 3, 1, 1)
     baseline = torch.full((1, 3), 0.1)
     train.validate_v2_temporal_calibration(intrinsics, baseline)
 
     changed_intrinsics = intrinsics.clone()
-    changed_intrinsics[:, 1, 0, 0] += 0.01
-    with pytest.raises(ValueError, match="time-invariant cropped K"):
-        train.validate_v2_temporal_calibration(changed_intrinsics, baseline)
+    changed_intrinsics[:, 1, 0, 0] += 1.0
 
     changed_baseline = baseline.clone()
-    changed_baseline[:, 2] += 0.001
-    with pytest.raises(ValueError, match="time-invariant baseline"):
-        train.validate_v2_temporal_calibration(intrinsics, changed_baseline)
+    changed_baseline[:, 2] += 0.05
+    train.validate_v2_temporal_calibration(
+        changed_intrinsics, changed_baseline
+    )
+
+    invalid_intrinsics = changed_intrinsics.clone()
+    invalid_intrinsics[:, 1, 0, 0] = float("nan")
+    with pytest.raises(ValueError, match="finite"):
+        train.validate_v2_temporal_calibration(invalid_intrinsics, baseline)
+    invalid_baseline = changed_baseline.clone()
+    invalid_baseline[:, 2] = 0.0
+    with pytest.raises(ValueError, match="positive"):
+        train.validate_v2_temporal_calibration(intrinsics, invalid_baseline)
 
 
 def test_full_v2_three_step_unroll_has_finite_teacher_residual_and_backward() -> None:

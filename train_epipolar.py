@@ -2149,7 +2149,13 @@ def predict_frozen_stage_b_endpoint(
         )
         if temporal_history_v2.enabled:
             memory.append(
-                TemporalMemoryEntry(output=output, rgb_hr=step["rgb_hr"], time_index=time_index)
+                TemporalMemoryEntry(
+                    output=output,
+                    rgb_hr=step["rgb_hr"],
+                    time_index=time_index,
+                    intrinsics_hr=batch["K_hr_sequence"][:, time_index],
+                    baseline_m=batch["baseline_m_sequence"][:, time_index],
+                )
             )
             memory = memory[-temporal_history_v2.memory_frames :]
             hidden_state = None

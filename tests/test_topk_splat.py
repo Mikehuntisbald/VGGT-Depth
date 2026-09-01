@@ -5,6 +5,7 @@ import pytest
 torch = pytest.importorskip("torch")
 
 from geometry.topk_splat import (
+    TopKSplatResult,
     merge_topk_splat_results,
     topk_z_aware_splat,
 )
@@ -356,6 +357,84 @@ def test_k1_nearest_mode_matches_canonical_single_winner_numerically() -> None:
         torch.testing.assert_close(getattr(v2, field), getattr(canonical, field))
     for field in ("valid_mask", "visibility_mask", "collision_mask"):
         assert torch.equal(getattr(v2, field), getattr(canonical, field))
+
+
+def test_dual_calibration_projects_with_target_k_and_returns_target_disparity() -> None:
+    disparity = torch.tensor([[[[0.1, 0.0, 0.0]]]], dtype=torch.float64)
+    depth = torch.tensor([[[[2.0, 0.0, 0.0]]]], dtype=torch.float64)
+    confidence = torch.ones_like(depth)
+    hidden = torch.tensor([[[[7.0, 0.0, 0.0]]]], requires_grad=True)
+    source_k = _intrinsics(fx_px=2.0).double()
+    target_k = torch.tensor(
+        [[4.0, 0.0, 1.0], [0.0, 3.0, 0.0], [0.0, 0.0, 1.0]],
+        dtype=torch.float64,
+    )
+    identity = torch.eye(4, dtype=torch.float64)
+    result = topk_z_aware_splat(
+        disparity,
+        depth,
+        confidence,
+        source_k,
+        identity,
+        identity,
+        intrinsics_current_grid_3x3=target_k,
+        intrinsics_previous_hr_3x3=source_k,
+        intrinsics_current_hr_3x3=target_k,
+        baseline_previous_m=torch.tensor([0.1], dtype=torch.float64),
+        baseline_current_m=torch.tensor([0.2], dtype=torch.float64),
+        top_k=1,
+        splat_footprint="nearest",
+        previous_hidden_feature=hidden,
+    )
+
+    assert result.valid_mask.tolist() == [[[[False, True, False]]]]
+    assert result.disparity_hr_px[0, 0, 0, 1].item() == pytest.approx(0.4)
+    assert result.projected_uv_grid_px[0, 0, 0, 0, 1].item() == pytest.approx(
+        1.0
+    )
+    assert result.weighted_hidden_feature[0, 0, 0, 1].item() == pytest.approx(
+        7.0
+    )
+    result.weighted_hidden_feature.sum().backward()
+    assert hidden.grad is not None
+    assert hidden.grad[0, 0, 0, 0].item() == pytest.approx(1.0)
+
+
+def test_explicit_same_calibration_matches_legacy_topk() -> None:
+    disparity = torch.tensor([[[[1.0, 2.0, 3.0]]]], dtype=torch.float64)
+    depth = 1.0 / disparity
+    confidence = torch.tensor([[[[0.2, 0.5, 0.9]]]], dtype=torch.float64)
+    calibration = _intrinsics(fx_px=5.0).double()
+    baseline = torch.tensor([0.2], dtype=torch.float64)
+    identity = torch.eye(4, dtype=torch.float64)
+    common = (
+        disparity,
+        depth,
+        confidence,
+        calibration,
+        identity,
+        identity,
+    )
+    legacy = topk_z_aware_splat(
+        *common, top_k=2, splat_footprint="bilinear"
+    )
+    explicit = topk_z_aware_splat(
+        *common,
+        intrinsics_current_grid_3x3=calibration,
+        intrinsics_previous_hr_3x3=calibration,
+        intrinsics_current_hr_3x3=calibration,
+        baseline_previous_m=baseline,
+        baseline_current_m=baseline,
+        top_k=2,
+        splat_footprint="bilinear",
+    )
+    for name in TopKSplatResult.__dataclass_fields__:
+        legacy_value = getattr(legacy, name)
+        explicit_value = getattr(explicit, name)
+        if legacy_value is None:
+            assert explicit_value is None
+        else:
+            torch.testing.assert_close(explicit_value, legacy_value)
 
 
 def test_invalid_arguments_and_merge_contract_fail_loudly() -> None:

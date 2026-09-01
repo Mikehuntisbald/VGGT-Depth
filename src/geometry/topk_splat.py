@@ -27,6 +27,7 @@ from .zbuffer_reproject import (
     WarpResult,
     _batched_homogeneous_extrinsics,
     _batched_intrinsics,
+    _batched_positive_scalar,
     _image_tensor,
     _validate_rotation,
 )
@@ -224,6 +225,11 @@ def topk_z_aware_splat(
     extrinsics_previous_camera_from_world: Tensor,
     extrinsics_current_camera_from_world: Tensor,
     *,
+    intrinsics_current_grid_3x3: Tensor | None = None,
+    intrinsics_previous_hr_3x3: Tensor | None = None,
+    intrinsics_current_hr_3x3: Tensor | None = None,
+    baseline_previous_m: Tensor | None = None,
+    baseline_current_m: Tensor | None = None,
     top_k: int = 4,
     temporal_age_frames: Tensor | Real = 1.0,
     previous_hidden_feature: Tensor | None = None,
@@ -245,11 +251,22 @@ def topk_z_aware_splat(
         previous_confidence: Source confidence, ``[B,1,H,W]``.  Negative
             confidence remains geometrically inspectable for K=1 compatibility
             but receives zero fusion weight.
-        intrinsics_grid_3x3: Calibrated intrinsics in source/target *grid pixel*
-            coordinates, ``[3,3]`` or ``[B,3,3]``.  Use LR intrinsics when
-            transporting an LR hidden state.
+        intrinsics_grid_3x3: Calibrated source intrinsics in *grid pixel*
+            coordinates, ``[3,3]`` or ``[B,3,3]``. Use source LR intrinsics
+            when transporting an LR hidden state.
         extrinsics_previous_camera_from_world: Previous camera-from-world pose.
         extrinsics_current_camera_from_world: Current camera-from-world pose.
+        intrinsics_current_grid_3x3: Target intrinsics in target-grid pixels.
+            Omit together with all other dual-calibration arguments to retain
+            exact same-intrinsics legacy behavior.
+        intrinsics_previous_hr_3x3: Source HR intrinsics defining the input
+            disparity unit even when geometry is transported on an LR grid.
+        intrinsics_current_hr_3x3: Target HR intrinsics defining output
+            disparity units.
+        baseline_previous_m: Positive source stereo baseline ``[B]``.
+        baseline_current_m: Positive target stereo baseline ``[B]``. The four
+            dual-calibration arguments are required together. Candidate output
+            disparity is recomputed as ``fx_t * B_t / Z_t``.
         top_k: Positive number of candidates retained per target pixel.
         temporal_age_frames: Non-negative scalar, ``[B]``, ``[B,1,1,1]``, or
             per-source ``[B,1,H,W]`` age.
@@ -376,12 +393,74 @@ def topk_z_aware_splat(
         hidden_feature = previous_hidden_feature
         hidden_channels = int(hidden_feature.shape[1])
 
-    intrinsics = _batched_intrinsics(
+    intrinsics_previous_grid = _batched_intrinsics(
         intrinsics_grid_3x3,
         batch_size=batch_size,
         dtype=compute_dtype,
         device=device,
     )
+    dual_values = (
+        intrinsics_current_grid_3x3,
+        intrinsics_previous_hr_3x3,
+        intrinsics_current_hr_3x3,
+        baseline_previous_m,
+        baseline_current_m,
+    )
+    if any(value is not None for value in dual_values) and any(
+        value is None for value in dual_values
+    ):
+        raise ValueError(
+            "dual calibration requires current-grid/source-HR/target-HR "
+            "intrinsics and both baselines"
+        )
+    intrinsics_current_grid = _batched_intrinsics(
+        (
+            intrinsics_grid_3x3
+            if intrinsics_current_grid_3x3 is None
+            else intrinsics_current_grid_3x3
+        ),
+        batch_size=batch_size,
+        dtype=compute_dtype,
+        device=device,
+    )
+    target_disparity_numerator_m_px: Tensor | None = None
+    if all(value is not None for value in dual_values):
+        assert intrinsics_previous_hr_3x3 is not None
+        assert intrinsics_current_hr_3x3 is not None
+        assert baseline_previous_m is not None and baseline_current_m is not None
+        disparity_intrinsics_previous = _batched_intrinsics(
+            intrinsics_previous_hr_3x3,
+            batch_size=batch_size,
+            dtype=compute_dtype,
+            device=device,
+        )
+        disparity_intrinsics_current = _batched_intrinsics(
+            intrinsics_current_hr_3x3,
+            batch_size=batch_size,
+            dtype=compute_dtype,
+            device=device,
+        )
+        source_baseline = _batched_positive_scalar(
+            baseline_previous_m,
+            name="baseline_previous_m",
+            batch_size=batch_size,
+            dtype=compute_dtype,
+            device=device,
+        )
+        target_baseline = _batched_positive_scalar(
+            baseline_current_m,
+            name="baseline_current_m",
+            batch_size=batch_size,
+            dtype=compute_dtype,
+            device=device,
+        )
+        # Source calibration is validated explicitly and owns the input depth
+        # conversion at the caller. Returned disparity is solely in the target
+        # rectified stereo unit.
+        _ = disparity_intrinsics_previous, source_baseline
+        target_disparity_numerator_m_px = (
+            disparity_intrinsics_current[:, 0, 0:1] * target_baseline
+        )
     previous_extrinsics = _batched_homogeneous_extrinsics(
         extrinsics_previous_camera_from_world,
         name="extrinsics_previous_camera_from_world",
@@ -416,14 +495,18 @@ def topk_z_aware_splat(
     confidence_flat = confidence[:, 0].reshape(batch_size, -1)
     age_flat = age[:, 0].reshape(batch_size, -1)
 
-    fx = intrinsics[:, 0, 0:1]
-    fy = intrinsics[:, 1, 1:2]
-    cx = intrinsics[:, 0, 2:3]
-    cy = intrinsics[:, 1, 2:3]
+    fx_previous = intrinsics_previous_grid[:, 0, 0:1]
+    fy_previous = intrinsics_previous_grid[:, 1, 1:2]
+    cx_previous = intrinsics_previous_grid[:, 0, 2:3]
+    cy_previous = intrinsics_previous_grid[:, 1, 2:3]
+    fx_current = intrinsics_current_grid[:, 0, 0:1]
+    fy_current = intrinsics_current_grid[:, 1, 1:2]
+    cx_current = intrinsics_current_grid[:, 0, 2:3]
+    cy_current = intrinsics_current_grid[:, 1, 2:3]
     point_previous = torch.stack(
         (
-            (grid_u - cx) * depth_flat / fx,
-            (grid_v - cy) * depth_flat / fy,
+            (grid_u - cx_previous) * depth_flat / fx_previous,
+            (grid_v - cy_previous) * depth_flat / fy_previous,
             depth_flat,
             torch.ones_like(depth_flat),
         ),
@@ -433,8 +516,8 @@ def topk_z_aware_splat(
     x_current = point_current[:, 0]
     y_current = point_current[:, 1]
     z_current = point_current[:, 2]
-    projected_u = fx * x_current / z_current + cx
-    projected_v = fy * y_current / z_current + cy
+    projected_u = fx_current * x_current / z_current + cx_current
+    projected_v = fy_current * y_current / z_current + cy_current
 
     feature_finite = torch.ones(
         (batch_size, pixels_per_image), dtype=torch.bool, device=device
@@ -588,6 +671,13 @@ def topk_z_aware_splat(
         / gathered_current_depth.clamp_min(minimum_depth),
         torch.zeros_like(gathered_previous_disparity),
     )
+    if target_disparity_numerator_m_px is not None:
+        gathered_disparity = torch.where(
+            valid_slots_flat,
+            target_disparity_numerator_m_px[source_batch, 0]
+            / gathered_current_depth.clamp_min(minimum_depth),
+            torch.zeros_like(gathered_disparity),
+        )
     gathered_confidence = gather_scalar(confidence_flat)
     gathered_age = gather_scalar(age_flat)
     gathered_projected_u = gather_scalar(projected_u)

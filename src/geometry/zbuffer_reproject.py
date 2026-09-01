@@ -137,6 +137,43 @@ def _batched_intrinsics(
     return intrinsics
 
 
+def _batched_positive_scalar(
+    value: Tensor,
+    *,
+    name: str,
+    batch_size: int,
+    dtype: torch.dtype,
+    device: torch.device,
+) -> Tensor:
+    """Normalize a positive per-camera scalar to shape ``[B,1]``."""
+
+    if not isinstance(value, Tensor):
+        raise TypeError(f"{name} must be a torch.Tensor")
+    result = value.detach().to(device=device, dtype=dtype)
+    if result.ndim == 0:
+        result = result.reshape(1, 1)
+    elif result.ndim == 1:
+        result = result.reshape(-1, 1)
+    elif result.ndim == 2 and result.shape[1] == 1:
+        pass
+    else:
+        raise ValueError(
+            f"{name} must have shape [], [B], or [B,1], got {tuple(result.shape)}"
+        )
+    if result.shape[0] == 1 and batch_size != 1:
+        result = result.expand(batch_size, -1)
+    elif result.shape[0] != batch_size:
+        raise ValueError(
+            f"{name} batch does not match image batch: "
+            f"{result.shape[0]} != {batch_size}"
+        )
+    if not bool(torch.isfinite(result).all().item()) or not bool(
+        (result > 0).all().item()
+    ):
+        raise ValueError(f"{name} must contain only finite positive values")
+    return result
+
+
 def _batched_homogeneous_extrinsics(
     extrinsics_camera_from_world: Tensor,
     *,
@@ -289,6 +326,9 @@ def zbuffer_reproject(
     extrinsics_previous_camera_from_world: Tensor,
     extrinsics_current_camera_from_world: Tensor,
     *,
+    intrinsics_current_hr_3x3: Tensor | None = None,
+    baseline_previous_m: Tensor | None = None,
+    baseline_current_m: Tensor | None = None,
     minimum_depth_m: float = 1e-6,
 ) -> WarpResult:
     """Forward-project a previous disparity/depth map into the current view.
@@ -299,12 +339,19 @@ def zbuffer_reproject(
         previous_depth_m: Previous camera Z depth in metres, same shape.
         previous_confidence: Previous confidence, same shape.  Finite values
             are propagated without thresholding or clipping.
-        intrinsics_hr_3x3: Calibrated HR pinhole intrinsics, shape ``[3,3]`` or
-            ``[B,3,3]``.  The same calibration is used for both video frames.
+        intrinsics_hr_3x3: Calibrated *source* HR pinhole intrinsics, shape
+            ``[3,3]`` or ``[B,3,3]``.
         extrinsics_previous_camera_from_world: Previous camera-from-world pose,
             shape ``[3,4]``, ``[4,4]``, ``[B,3,4]``, or ``[B,4,4]``.
         extrinsics_current_camera_from_world: Current camera-from-world pose in
             one of the same layouts.
+        intrinsics_current_hr_3x3: Optional calibrated target intrinsics. When
+            omitted the source intrinsics are reused for exact legacy behavior.
+        baseline_previous_m: Optional positive source stereo baseline ``[B]``.
+        baseline_current_m: Optional positive target stereo baseline ``[B]``.
+            The baselines must be supplied together. In that explicit mode,
+            output disparity is recomputed in target HR-pixel units as
+            ``fx_t * B_t / Z_t``.
         minimum_depth_m: Strict lower bound for a projected point's current
             camera Z coordinate.
 
@@ -347,12 +394,53 @@ def zbuffer_reproject(
     disparity = disparity_hr_px.to(dtype=compute_dtype)
     depth = depth_m.to(dtype=compute_dtype)
     confidence_compute = confidence.to(dtype=compute_dtype)
-    intrinsics = _batched_intrinsics(
+    intrinsics_previous = _batched_intrinsics(
         intrinsics_hr_3x3,
         batch_size=batch_size,
         dtype=compute_dtype,
         device=device,
     )
+    intrinsics_current = _batched_intrinsics(
+        (
+            intrinsics_hr_3x3
+            if intrinsics_current_hr_3x3 is None
+            else intrinsics_current_hr_3x3
+        ),
+        batch_size=batch_size,
+        dtype=compute_dtype,
+        device=device,
+    )
+    if (baseline_previous_m is None) != (baseline_current_m is None):
+        raise ValueError(
+            "baseline_previous_m and baseline_current_m must be supplied together"
+        )
+    if intrinsics_current_hr_3x3 is not None and baseline_previous_m is None:
+        raise ValueError(
+            "explicit current intrinsics require source and target baselines"
+        )
+    target_disparity_numerator_m_px: Tensor | None = None
+    if baseline_previous_m is not None and baseline_current_m is not None:
+        source_baseline = _batched_positive_scalar(
+            baseline_previous_m,
+            name="baseline_previous_m",
+            batch_size=batch_size,
+            dtype=compute_dtype,
+            device=device,
+        )
+        target_baseline = _batched_positive_scalar(
+            baseline_current_m,
+            name="baseline_current_m",
+            batch_size=batch_size,
+            dtype=compute_dtype,
+            device=device,
+        )
+        # Source baseline is validated here and is used by callers to produce
+        # ``previous_depth_m``. Target disparity itself is owned entirely by
+        # the current rectified stereo calibration.
+        _ = source_baseline
+        target_disparity_numerator_m_px = (
+            intrinsics_current[:, 0, 0:1] * target_baseline
+        )
     previous_extrinsics = _batched_homogeneous_extrinsics(
         extrinsics_previous_camera_from_world,
         name="extrinsics_previous_camera_from_world",
@@ -384,14 +472,18 @@ def zbuffer_reproject(
     disparity_flat_hr_px = disparity[:, 0].reshape(batch_size, -1)
     confidence_flat = confidence_compute[:, 0].reshape(batch_size, -1)
 
-    fx_px = intrinsics[:, 0, 0:1]
-    fy_px = intrinsics[:, 1, 1:2]
-    cx_px = intrinsics[:, 0, 2:3]
-    cy_px = intrinsics[:, 1, 2:3]
+    fx_previous_px = intrinsics_previous[:, 0, 0:1]
+    fy_previous_px = intrinsics_previous[:, 1, 1:2]
+    cx_previous_px = intrinsics_previous[:, 0, 2:3]
+    cy_previous_px = intrinsics_previous[:, 1, 2:3]
+    fx_current_px = intrinsics_current[:, 0, 0:1]
+    fy_current_px = intrinsics_current[:, 1, 1:2]
+    cx_current_px = intrinsics_current[:, 0, 2:3]
+    cy_current_px = intrinsics_current[:, 1, 2:3]
     point_previous = torch.stack(
         (
-            (grid_u - cx_px) * depth_flat_m / fx_px,
-            (grid_v - cy_px) * depth_flat_m / fy_px,
+            (grid_u - cx_previous_px) * depth_flat_m / fx_previous_px,
+            (grid_v - cy_previous_px) * depth_flat_m / fy_previous_px,
             depth_flat_m,
             torch.ones_like(depth_flat_m),
         ),
@@ -401,8 +493,8 @@ def zbuffer_reproject(
     x_current = point_current[:, 0]
     y_current = point_current[:, 1]
     z_current_m = point_current[:, 2]
-    projected_u = fx_px * x_current / z_current_m + cx_px
-    projected_v = fy_px * y_current / z_current_m + cy_px
+    projected_u = fx_current_px * x_current / z_current_m + cx_current_px
+    projected_v = fy_current_px * y_current / z_current_m + cy_current_px
 
     source_valid = (
         torch.isfinite(disparity_flat_hr_px)
@@ -507,10 +599,18 @@ def zbuffer_reproject(
         winning_current_depth_m = z_current_m[source_batch, source_pixel]
         winning_projected_u = projected_u[source_batch, source_pixel]
         winning_projected_v = projected_v[source_batch, source_pixel]
-        output_disparity_hr_px[output_target_linear] = (
+        winning_disparity_target_hr_px = (
             winning_previous_disparity_hr_px
             * winning_previous_depth_m
             / winning_current_depth_m
+        )
+        if target_disparity_numerator_m_px is not None:
+            winning_disparity_target_hr_px = (
+                target_disparity_numerator_m_px[source_batch, 0]
+                / winning_current_depth_m
+            )
+        output_disparity_hr_px[output_target_linear] = (
+            winning_disparity_target_hr_px
         )
         output_depth_m[output_target_linear] = winning_current_depth_m
         output_confidence[output_target_linear] = confidence_flat[

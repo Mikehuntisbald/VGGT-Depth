@@ -1380,6 +1380,9 @@ def _v2_temporal_config() -> OmegaConf:
 def _v2_unroll_batch() -> dict[str, torch.Tensor]:
     scalar_lr = torch.ones((1, 3, 1, 2, 2))
     scalar_hr = torch.ones((1, 3, 1, 4, 4))
+    intrinsics = torch.tensor(
+        [[4.0, 0.0, 1.5], [0.0, 4.0, 1.5], [0.0, 0.0, 1.0]]
+    ).reshape(1, 1, 3, 3).repeat(1, 3, 1, 1)
     return {
         "rgb_hr_sequence": torch.zeros((1, 3, 3, 4, 4)),
         "disparity_ffs_hr_px_sequence": scalar_lr.clone(),
@@ -1397,6 +1400,8 @@ def _v2_unroll_batch() -> dict[str, torch.Tensor]:
         "teacher_trusted_mask_sequence": torch.ones_like(
             scalar_hr, dtype=torch.bool
         ),
+        "K_hr_sequence": intrinsics,
+        "baseline_m_sequence": torch.full((1, 3), 0.1),
     }
 
 

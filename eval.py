@@ -899,6 +899,8 @@ def _build_eval_reference_transport(
         previous_prediction_disparity_hr_px=(
             previous_prediction_disparity_hr_px
         ),
+        intrinsics_previous_hr=batch["K_hr_sequence"][:, time_index - 1],
+        baseline_previous_m=batch["baseline_m_sequence"][:, time_index - 1],
         intrinsics_current_hr=batch["K_hr_sequence"][:, time_index],
         baseline_current_m=batch["baseline_m_sequence"][:, time_index],
         temporal_extrinsics_camera_from_world=batch[
@@ -1161,6 +1163,8 @@ def _run_spatial_endpoint(
                     output=output,
                     rgb_hr=step["rgb_hr"],
                     time_index=time_index,
+                    intrinsics_hr=batch["K_hr_sequence"][:, time_index],
+                    baseline_m=batch["baseline_m_sequence"][:, time_index],
                 )
             )
             memory = memory[-temporal_history_v2_from_config(config).memory_frames :]
@@ -1378,6 +1382,8 @@ def _run_temporal_endpoint_ablation(
                         output=branch_output,
                         rgb_hr=step["rgb_hr"],
                         time_index=time_index,
+                        intrinsics_hr=batch["K_hr_sequence"][:, time_index],
+                        baseline_m=batch["baseline_m_sequence"][:, time_index],
                     )
                 )
                 del branch_memory[: -history_contract.memory_frames]

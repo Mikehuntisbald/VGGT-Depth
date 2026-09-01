@@ -1135,6 +1135,8 @@ class TemporalMemoryEntry:
     output: ModelOutput
     rgb_hr: Tensor
     time_index: int
+    intrinsics_hr: Tensor
+    baseline_m: Tensor
 
 
 @dataclass(frozen=True, slots=True)
@@ -1408,14 +1410,7 @@ def validate_v2_temporal_calibration(
     intrinsics_hr_sequence: Tensor,
     baseline_m_sequence: Tensor,
 ) -> None:
-    """Require one calibrated stereo camera across the causal T=3 crop.
-
-    V2 directly warps age-1/age-2 memories using the current window's VGGT
-    pose gauge. Its HR-disparity depth conversion therefore assumes the same
-    cropped intrinsics and physical baseline at every student time. The formal
-    dataset already uses one shared crop; this check prevents silent misuse by
-    another caller.
-    """
+    """Validate explicit per-time source/target calibration for causal V2."""
 
     if (
         intrinsics_hr_sequence.ndim != 4
@@ -1424,26 +1419,31 @@ def validate_v2_temporal_calibration(
         raise ValueError("K_hr_sequence must have shape [B,3,3,3]")
     if baseline_m_sequence.shape != (intrinsics_hr_sequence.shape[0], 3):
         raise ValueError("baseline_m_sequence must have shape [B,3]")
-    reference_k = intrinsics_hr_sequence[:, :1]
+    if not bool(torch.isfinite(intrinsics_hr_sequence).all().item()):
+        raise ValueError("K_hr_sequence must contain only finite values")
+    if not bool(
+        (
+            (intrinsics_hr_sequence[:, :, 0, 0] > 0)
+            & (intrinsics_hr_sequence[:, :, 1, 1] > 0)
+        ).all().item()
+    ):
+        raise ValueError("K_hr_sequence focal lengths must be positive")
+    expected_last_row = intrinsics_hr_sequence.new_tensor((0.0, 0.0, 1.0))
     if not bool(
         torch.isclose(
-            intrinsics_hr_sequence,
-            reference_k.expand_as(intrinsics_hr_sequence),
+            intrinsics_hr_sequence[:, :, 2],
+            expected_last_row.reshape(1, 1, 3).expand_as(
+                intrinsics_hr_sequence[:, :, 2]
+            ),
             atol=1e-6,
             rtol=0.0,
-        ).all()
+        ).all().item()
     ):
-        raise ValueError("temporal_history_v2 requires time-invariant cropped K")
-    reference_baseline = baseline_m_sequence[:, :1]
-    if not bool(
-        torch.isclose(
-            baseline_m_sequence,
-            reference_baseline.expand_as(baseline_m_sequence),
-            atol=1e-8,
-            rtol=0.0,
-        ).all()
+        raise ValueError("every K_hr_sequence matrix must end with [0,0,1]")
+    if not bool(torch.isfinite(baseline_m_sequence).all().item()) or not bool(
+        (baseline_m_sequence > 0).all().item()
     ):
-        raise ValueError("temporal_history_v2 requires time-invariant baseline")
+        raise ValueError("baseline_m_sequence must contain finite positive values")
 
 
 def _metric_depth_from_hr_disparity(
@@ -1511,9 +1511,12 @@ def _topk_splat_for_memory(
     confidence: Tensor,
     hidden_feature: Tensor | None,
     source_valid_mask: Tensor,
-    intrinsics_grid: Tensor,
-    intrinsics_hr: Tensor,
-    baseline_m: Tensor,
+    intrinsics_previous_grid: Tensor,
+    intrinsics_current_grid: Tensor,
+    intrinsics_previous_hr: Tensor,
+    intrinsics_current_hr: Tensor,
+    baseline_previous_m: Tensor,
+    baseline_current_m: Tensor,
     previous_pose: Tensor,
     current_pose: Tensor,
     pose_valid: Tensor,
@@ -1522,8 +1525,8 @@ def _topk_splat_for_memory(
 ) -> TopKSplatResult:
     depth_m, positive = _metric_depth_from_hr_disparity(
         disparity_hr_px,
-        intrinsics_hr=intrinsics_hr,
-        baseline_m=baseline_m,
+        intrinsics_hr=intrinsics_previous_hr,
+        baseline_m=baseline_previous_m,
     )
     source_valid = (
         source_valid_mask.to(dtype=torch.bool)
@@ -1535,9 +1538,14 @@ def _topk_splat_for_memory(
             disparity_hr_px.float(),
             depth_m.float(),
             confidence.float(),
-            intrinsics_grid.float(),
+            intrinsics_previous_grid.float(),
             previous_pose.float(),
             current_pose.float(),
+            intrinsics_current_grid_3x3=intrinsics_current_grid.float(),
+            intrinsics_previous_hr_3x3=intrinsics_previous_hr.float(),
+            intrinsics_current_hr_3x3=intrinsics_current_hr.float(),
+            baseline_previous_m=baseline_previous_m.float(),
+            baseline_current_m=baseline_current_m.float(),
             top_k=contract.top_k,
             temporal_age_frames=age_frames,
             previous_hidden_feature=hidden_feature,
@@ -1746,13 +1754,28 @@ def build_topk_temporal_transport(
     batch_size = current_ffs_disparity_hr_px.shape[0]
     if intrinsics_current_hr.shape != (batch_size, 3, 3):
         raise ValueError("intrinsics_current_hr must have shape [B,3,3]")
-    intrinsics_lr = _lr_intrinsics_from_hr(intrinsics_current_hr, scale=scale)
+    if baseline_current_m.shape not in {(batch_size,), (batch_size, 1)}:
+        raise ValueError("baseline_current_m must have shape [B] or [B,1]")
+    intrinsics_current_lr = _lr_intrinsics_from_hr(
+        intrinsics_current_hr, scale=scale
+    )
     hr_results: list[TopKSplatResult] = []
     lr_results: list[TopKSplatResult] = []
     hidden_widths: tuple[int, ...] | None = None
     age_one_hr: TopKSplatResult | None = None
 
     for entry, age in zip(selected, ages, strict=True):
+        if entry.intrinsics_hr.shape != (batch_size, 3, 3):
+            raise ValueError(
+                "temporal memory intrinsics_hr must have shape [B,3,3]"
+            )
+        if entry.baseline_m.shape not in {(batch_size,), (batch_size, 1)}:
+            raise ValueError(
+                "temporal memory baseline_m must have shape [B] or [B,1]"
+            )
+        intrinsics_previous_lr = _lr_intrinsics_from_hr(
+            entry.intrinsics_hr, scale=scale
+        )
         previous_pose, current_pose, pose_valid = _vggt_pose_pair_for_age(
             temporal_extrinsics_camera_from_world,
             temporal_pose_valid,
@@ -1777,9 +1800,12 @@ def build_topk_temporal_transport(
             confidence=previous_confidence_hr,
             hidden_feature=entry.rgb_hr.detach(),
             source_valid_mask=previous_valid_hr,
-            intrinsics_grid=intrinsics_current_hr,
-            intrinsics_hr=intrinsics_current_hr,
-            baseline_m=baseline_current_m,
+            intrinsics_previous_grid=entry.intrinsics_hr,
+            intrinsics_current_grid=intrinsics_current_hr,
+            intrinsics_previous_hr=entry.intrinsics_hr,
+            intrinsics_current_hr=intrinsics_current_hr,
+            baseline_previous_m=entry.baseline_m,
+            baseline_current_m=baseline_current_m,
             previous_pose=previous_pose,
             current_pose=current_pose,
             pose_valid=pose_valid,
@@ -1815,9 +1841,12 @@ def build_topk_temporal_transport(
                     confidence=previous_confidence_lr,
                     hidden_feature=hidden_feature,
                     source_valid_mask=previous_valid_lr,
-                    intrinsics_grid=intrinsics_lr,
-                    intrinsics_hr=intrinsics_current_hr,
-                    baseline_m=baseline_current_m,
+                    intrinsics_previous_grid=intrinsics_previous_lr,
+                    intrinsics_current_grid=intrinsics_current_lr,
+                    intrinsics_previous_hr=entry.intrinsics_hr,
+                    intrinsics_current_hr=intrinsics_current_hr,
+                    baseline_previous_m=entry.baseline_m,
+                    baseline_current_m=baseline_current_m,
                     previous_pose=previous_pose,
                     current_pose=current_pose,
                     pose_valid=pose_valid,
@@ -2009,13 +2038,20 @@ def build_reference_temporal_warp(
     previous_reference_confidence: Tensor,
     previous_reference_valid_mask: Tensor,
     previous_prediction_disparity_hr_px: Tensor | None = None,
+    intrinsics_previous_hr: Tensor,
+    baseline_previous_m: Tensor,
     intrinsics_current_hr: Tensor,
     baseline_current_m: Tensor,
     temporal_extrinsics_camera_from_world: Tensor,
     temporal_pose_valid: Tensor,
     contract: TemporalHistoryV2,
 ) -> ReferenceTemporalWarp:
-    """Warp the immediate previous teacher/GT onto the current HR grid."""
+    """Warp teacher and prediction with shared source correspondences.
+
+    Source disparity is unprojected with ``intrinsics_previous_hr`` and
+    ``baseline_previous_m``. Projection and returned HR-pixel disparity use
+    the explicit current calibration.
+    """
 
     previous_pose, current_pose, pose_valid = _vggt_pose_pair_for_age(
         temporal_extrinsics_camera_from_world,
@@ -2027,9 +2063,12 @@ def build_reference_temporal_warp(
         confidence=previous_reference_confidence.detach(),
         hidden_feature=None,
         source_valid_mask=previous_reference_valid_mask.detach(),
-        intrinsics_grid=intrinsics_current_hr,
-        intrinsics_hr=intrinsics_current_hr,
-        baseline_m=baseline_current_m,
+        intrinsics_previous_grid=intrinsics_previous_hr,
+        intrinsics_current_grid=intrinsics_current_hr,
+        intrinsics_previous_hr=intrinsics_previous_hr,
+        intrinsics_current_hr=intrinsics_current_hr,
+        baseline_previous_m=baseline_previous_m,
+        baseline_current_m=baseline_current_m,
         previous_pose=previous_pose,
         current_pose=current_pose,
         pose_valid=pose_valid,
@@ -2374,6 +2413,8 @@ def _forward_temporal_loss(
                         & previous_teacher_trusted[:, time_index - 1]
                     ),
                     previous_prediction_disparity_hr_px=memory[-1].output.disparity_hr_px,
+                    intrinsics_previous_hr=memory[-1].intrinsics_hr,
+                    baseline_previous_m=memory[-1].baseline_m,
                     intrinsics_current_hr=batch["K_hr_sequence"][:, time_index],
                     baseline_current_m=batch["baseline_m_sequence"][:, time_index],
                     temporal_extrinsics_camera_from_world=batch[
@@ -2495,6 +2536,8 @@ def _forward_temporal_loss(
                     output=output,
                     rgb_hr=step["rgb_hr"],
                     time_index=time_index,
+                    intrinsics_hr=batch["K_hr_sequence"][:, time_index],
+                    baseline_m=batch["baseline_m_sequence"][:, time_index],
                 )
             )
             memory = memory[-temporal_history_v2.memory_frames :]
