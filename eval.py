@@ -183,7 +183,7 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help=(
             "opt in to non-metric causal T3 temporal flicker MP4 visualizations "
-            "(requires imageio with FFmpeg)"
+            "(uses imageio/FFmpeg or a direct ffmpeg executable)"
         ),
     )
     parser.add_argument(
