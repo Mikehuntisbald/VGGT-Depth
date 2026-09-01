@@ -570,6 +570,114 @@ evaluator hashes. The target remains trusted FFS teacher pseudo-GT; these files
 are diagnostic engineering evidence, never paper ground truth or paper
 accuracy.
 
+## 15. Run the independent architecture-v2 lineage
+
+Architecture v2 is opt-in and starts a new checkpoint lineage. Keep all output
+directories separate from canonical v1 and D-025 outputs. The canonical metric
+JSON/CSV field meanings and all historical go/no-go decisions remain unchanged;
+do not overwrite them with v2 fields. There are no v2 training metrics or
+go/no-go result until the complete held-out runs finish.
+
+The three configs must be used in order:
+
+```text
+configs/mvp_x2_v2.yaml
+  -> configs/temporal_x2_v2.yaml
+  -> configs/epipolar_x2_v2.yaml
+```
+
+Stage A creates the validity/completion heads and top-K candidate encoder even
+though T=1 supplies zero history. This makes its state dict the exact parent of
+Stage B v2. Start it from scratch:
+
+```bash
+conda run --no-capture-output -n env-tsr python train.py \
+  --config configs/mvp_x2_v2.yaml \
+  --manifest "$CACHE_ROOT/manifests/train_video_isolated.jsonl" \
+  --observation-cache-root "$CACHE_ROOT/m1_formal_train/observation" \
+  --teacher-cache-root "$CACHE_ROOT/m1_formal_train/teacher" \
+  --output-dir outputs/ffs_omega_tsr_x2_v2/stage_a \
+  --device cuda
+```
+
+Stage B must initialize from that exact Stage-A v2 checkpoint. Do not pass a
+canonical v1 Stage-A or D-025 checkpoint: strict parameter count/state-dict and
+config lineage checks must reject cross-lineage initialization.
+
+```bash
+conda run --no-capture-output -n env-tsr python train.py \
+  --config configs/temporal_x2_v2.yaml \
+  --init-from outputs/ffs_omega_tsr_x2_v2/stage_a/final.pt \
+  --manifest "$CACHE_ROOT/manifests/train_video_isolated.jsonl" \
+  --observation-cache-root "$CACHE_ROOT/m1_formal_train/observation" \
+  --teacher-cache-root "$CACHE_ROOT/m1_formal_train/teacher" \
+  --derived-cache-root "$CACHE_ROOT/m2_formal_train/derived" \
+  --output-dir outputs/ffs_omega_tsr_x2_v2/stage_b \
+  --device cuda
+```
+
+This path uses bilinear top-K z-aware history from ages 1 and 2. Each candidate
+carries fractional phase, confidence and age, while the detached ConvGRU state
+is forward-splatted on the calibrated LR grid. The cache-backed temporal target
+is teacher temporal residual:
+
+```text
+(d_hat_t - W(d_hat_{t-1})) - (d_teacher_t - W(d_teacher_{t-1}))
+```
+
+The legacy v1 TEPE is still emitted only as a separately named historical
+current/history diagnostic; never compare it as though it were the v2
+teacher/GT temporal-residual metric.
+
+After the same stored-pixel rectification audit used by canonical Stage C,
+initialize Stage C only from the completed Stage-B v2 checkpoint:
+
+```bash
+conda run --no-capture-output -n env-tsr python train_epipolar.py \
+  --config configs/epipolar_x2_v2.yaml \
+  --init-from outputs/ffs_omega_tsr_x2_v2/stage_b/final.pt \
+  --manifest "$CACHE_ROOT/manifests/train_video_isolated.jsonl" \
+  --observation-cache-root "$CACHE_ROOT/m1_formal_train/observation" \
+  --teacher-cache-root "$CACHE_ROOT/m1_formal_train/teacher" \
+  --derived-cache-root "$CACHE_ROOT/m2_formal_train/derived" \
+  --rectification-audit reports/m6/epipolar_rectification_audit.json \
+  --output outputs/ffs_omega_tsr_x2_v2/stage_c \
+  --device cuda
+```
+
+Stage C v2 starts as an exact forward no-op through a hard decision plus
+straight-through gradient. Its FP32 base-aware projection enforces
+`delta_hr_px >= -base_disparity_hr_px`; invalid output remains exact zero. It
+is a separate arm from the legacy D-025 Stage-C positivity experiment.
+
+Use the matching v2 config and exact parent checkpoints for evaluation. A
+limited run is a smoke only and owns no metric or go/no-go claim:
+
+```bash
+conda run --no-capture-output -n env-tsr python eval.py \
+  --config configs/temporal_x2_v2.yaml \
+  --checkpoint outputs/ffs_omega_tsr_x2_v2/stage_b/final.pt \
+  --spatial-checkpoint outputs/ffs_omega_tsr_x2_v2/stage_a/final.pt \
+  --manifest "$CACHE_ROOT/manifests/val_video_isolated.jsonl" \
+  --observation-cache-root "$CACHE_ROOT/m1_formal_val/observation" \
+  --teacher-cache-root "$CACHE_ROOT/m1_formal_val/teacher" \
+  --derived-cache-root "$CACHE_ROOT/m2_formal_val/derived" \
+  --output outputs/ffs_omega_tsr_x2_v2/stage_b_eval \
+  --device cuda
+
+conda run --no-capture-output -n env-tsr python eval_epipolar.py \
+  --config configs/epipolar_x2_v2.yaml \
+  --checkpoint outputs/ffs_omega_tsr_x2_v2/stage_c/final.pt \
+  --base-checkpoint outputs/ffs_omega_tsr_x2_v2/stage_b/final.pt \
+  --manifest "$CACHE_ROOT/manifests/val_video_isolated.jsonl" \
+  --observation-cache-root "$CACHE_ROOT/m1_formal_val/observation" \
+  --teacher-cache-root "$CACHE_ROOT/m1_formal_val/teacher" \
+  --derived-cache-root "$CACHE_ROOT/m2_formal_val/derived" \
+  --rectification-audit reports/m6/epipolar_rectification_audit.json \
+  --output outputs/ffs_omega_tsr_x2_v2/stage_c_eval \
+  --device cuda --batch-size 1 --num-workers 4
+```
+
 ## M0 environment/backbone tool status and exit codes
 
 | Status | Exit | Meaning |

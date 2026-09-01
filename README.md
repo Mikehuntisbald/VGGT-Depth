@@ -92,6 +92,61 @@ artifact identities, receipts, and claim boundaries.
 4. Temporal transport is forward splatting with a z-buffer, never a bare
    backward `grid_sample` of disparity.
 
+## Architecture v2 (opt-in, untrained lineage)
+
+Architecture v2 is an independent checkpoint lineage. It does not rewrite the
+canonical v1 checkpoints, evaluator fields, metrics, or historical go/no-go
+decisions. No v2 training result or acceptance claim exists yet.
+
+The v2 temporal path replaces the nearest single-winner history input with a
+bilinear top-K z-aware splat. For causal T=3, the retained memory frames have
+ages 1 and 2. Every candidate carries HR-pixel disparity, continuous
+fractional phase, confidence, temporal age, visibility/collision state, and an
+explicit normalized z-aware weight. Weights combine the bilinear footprint,
+confidence, depth relative to the nearest candidate, age decay, and collision
+penalty. The ConvGRU hidden state is detached and forward-splatted on the LR
+grid with calibrated LR intrinsics; it is not copied unwarped between frames
+and is not backward-warped with `grid_sample`.
+
+The primary v2 temporal metric/loss is teacher/GT temporal-residual error:
+
+```text
+abs((d_hat_t - W(d_hat_{t-1})) - (d_ref_t - W(d_ref_{t-1})))
+```
+
+It is reduced only on the common valid, visible, non-collision, static and
+geometry-safe prediction/reference domain. The current cache-backed reference
+is the trusted HR FFS teacher; `reference: gt` is reserved but fails closed
+until real sequence GT is wired end to end. The historical v1 `TEPE` field is
+the legacy absolute current-versus-warped-history difference and remains
+available under its legacy name for reproducibility; it must not be relabeled
+as the v2 residual metric.
+
+The v2 reconstruction head predicts physical validity and FFS-hole completion
+explicitly. Disparity is a non-negative magnitude with no positive epsilon
+floor. Pixels rejected by the validity/completion contract are exactly zero and
+invalid, so they cannot become fake positive point-cloud completion. Trusted
+FFS pixels remain exact metric anchors.
+
+Stage C v2 adds a hard no-op gate with a straight-through estimator. A freshly
+initialized refiner is an exact identity in the forward pass, while the soft
+backward path can train the correction and gate. The applied FP32 correction is
+base-aware and satisfies `delta_hr_px >= -base_disparity_hr_px`; an invalid or
+zero base stays exactly zero instead of being fabricated into depth.
+
+The v2 launch order is fixed:
+
+```text
+configs/mvp_x2_v2.yaml
+  -> configs/temporal_x2_v2.yaml
+  -> configs/epipolar_x2_v2.yaml
+```
+
+Train Stage A v2 from scratch, initialize Stage B only from that exact Stage-A
+v2 checkpoint, and initialize Stage C only from the resulting Stage-B v2
+checkpoint. Do not initialize any v2 stage from a canonical v1/D-025 strict
+checkpoint: parameter/state/config lineage checks are intentionally strict.
+
 ## Colored point-cloud export
 
 `metrics.export_colored_point_cloud_ply` writes one calibrated camera-frame
