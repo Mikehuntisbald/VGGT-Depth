@@ -3,6 +3,13 @@
 experiment: ffs_omega_tsr_temporal_x2_d025_positivity
 defaults_from: configs/temporal_x2.yaml
 
+# This is deliberately a new 15k Stage-B trajectory from the final T=1
+# Stage-A model.  It is not a warm-start or short fine-tune from Stage-B.
+ablation_protocol:
+  name: full_stage_b_rerun_from_final_stage_a
+  required_updates: 15000
+  stage_b_warm_start: forbidden
+
 positivity_ablation:
   enabled: true
   # Zero finite-negative values which failed source validity before both the

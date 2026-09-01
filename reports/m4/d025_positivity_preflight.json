@@ -1,0 +1,171 @@
+{
+  "config": {
+    "experiment": "ffs_omega_tsr_temporal_x2_d025_positivity",
+    "path": "/home/haoyi/ffs_omega_tsr/configs/ablations/d025_positivity_t3.yaml",
+    "resolved_fingerprint_sha256": "d3bb1dcb2fbfdfeac4f6485139568246839e97e0177ead83d5917d3505d6b991",
+    "sha256": "f40f7e255d26bd4557a9b512933cfd801e8a0d9f1b78f18eb92bc5c248e83f19",
+    "train_steps": 15000
+  },
+  "execution": {
+    "cuda_initialized": false,
+    "data_sample_loaded": true,
+    "dataloader_workers_started": 0,
+    "device": "cpu",
+    "optimizer_steps": 0,
+    "training_started": false
+  },
+  "formal_train_inputs": {
+    "derived_cache_lineage": {
+      "cache_manifest_path": "/home/haoyi/ffs_omega_cache/m2_formal_train/derived/cache_manifest.jsonl",
+      "cache_manifest_sha256": "5dba94d14a2fe27bfd92e524751ee849cbac8f0ed48be0c4a994ba99c373af64",
+      "component": "vggt-ffs-derived-geometry-batch",
+      "config": {
+        "algorithm": "baseline_metric_scale+scale_only_alignment+strict_pose_quality",
+        "cache_dtype": "float32",
+        "current_left_view_index": 8,
+        "extrinsics_convention": "camera-from-world",
+        "invalid_temporal_pose_policy": "zero-filled with false validity tensor",
+        "missing_diagnostic_policy": "invalid",
+        "previous_left_view_index": 6,
+        "schema_version": 1,
+        "thresholds": {
+          "alignment_huber_delta_hr_px": 1.0,
+          "ffs_confidence_threshold": 0.8,
+          "max_baseline_cv": 0.1,
+          "max_depth_median_absolute_error_hr_px": 2.0,
+          "max_depth_median_relative_error": null,
+          "max_depth_weighted_mae_hr_px": 2.0,
+          "max_left_right_error_lr_px": 1.0,
+          "max_photometric_median_absolute_rgb": 0.12,
+          "max_stereo_rotation_error_deg": 5.0,
+          "min_alignment_pixels": 256,
+          "min_photometric_samples": 1024,
+          "min_photometric_valid_fraction": 0.5
+        }
+      },
+      "derived_cache_root": "/home/haoyi/ffs_omega_cache/m2_formal_train/derived",
+      "run_receipt_path": "/home/haoyi/ffs_omega_cache/m2_formal_train/derived/run_receipt.json",
+      "run_receipt_sha256": "3cd6edf37636690c613d268d6c5bcbfaa004c1a330e1970ad6cd8e34fe989db7",
+      "selected_records": 2779
+    },
+    "manifest_path": "/home/haoyi/ffs_omega_cache/manifests/train_video_isolated.jsonl",
+    "manifest_sha256": "596702933688f695d9aac480d9f01e5764f40a4d7b28d72d73c550eb209b301c",
+    "observation_identity": {
+      "checkpoint_sha256": "98b5a9acf39fbfa795025de8cea95ce123daa40f6b6234d719167751024cf692",
+      "component": "ffs-observation",
+      "config_sha256": "93ccfa329b30ba924ce9a96f262c73e4607fa51f010b96db9623af0b2edadaf5",
+      "cuda_version": "12.8",
+      "torch_version": "2.10.0+cu128",
+      "upstream_commit": "a290ba04c1b3ad1ec41a33974a157b2917b624d4"
+    },
+    "sample": {
+      "frame_ids": [
+        948,
+        960,
+        972
+      ],
+      "manifest_indices": [
+        4,
+        5,
+        6
+      ],
+      "sequence_id": "uvc_20260706_172530_741_2560x800_60fps",
+      "shapes": {
+        "confidence_ffs_sequence": [
+          3,
+          1,
+          192,
+          384
+        ],
+        "disparity_ffs_hr_px_sequence": [
+          3,
+          1,
+          192,
+          384
+        ],
+        "rgb_hr_sequence": [
+          3,
+          3,
+          384,
+          768
+        ],
+        "teacher_disparity_hr_px_sequence": [
+          3,
+          1,
+          384,
+          768
+        ],
+        "temporal_pose_valid_sequence": [
+          3
+        ],
+        "valid_ffs_sequence": [
+          3,
+          1,
+          192,
+          384
+        ],
+        "vggt_confidence_sequence": [
+          3,
+          1,
+          192,
+          384
+        ],
+        "vggt_disparity_hr_px_sequence": [
+          3,
+          1,
+          192,
+          384
+        ],
+        "vggt_valid_mask_sequence": [
+          3,
+          1,
+          192,
+          384
+        ]
+      }
+    },
+    "teacher_identity": {
+      "checkpoint_sha256": "af0658f289ec840b292645f8d5538978f06e8cabaa1fd31e84acc91af268e990",
+      "component": "ffs-teacher",
+      "config_sha256": "9d402130df586ce1b57d16d65b2fcf43c73e28992160fdf4a2e8f4b50b95672e",
+      "cuda_version": "12.8",
+      "torch_version": "2.10.0+cu128",
+      "upstream_commit": "a290ba04c1b3ad1ec41a33974a157b2917b624d4"
+    },
+    "temporal_windows": 2775
+  },
+  "generated_at_utc": "2026-09-01T03:47:57.430975+00:00",
+  "initialization_lineage": {
+    "checkpoint_sha256": "6bb7ff116236ea4bb86a010c03f14ba96fb69ac24fc0affdb01e7e561e90c254",
+    "completed_step": 5000,
+    "git_hash": "3e0df0b543f5000d0bf8490740b5f34ad979e3b6",
+    "path": "/home/haoyi/ffs_omega_tsr/outputs/ffs_omega_tsr_x2/stage_a/final.pt",
+    "source_sequence_length": 1
+  },
+  "preflight_script": {
+    "path": "/home/haoyi/ffs_omega_tsr/tools/preflight_d025_positivity.py",
+    "sha256": "ca5cea56c9c5f95e3cf543ae86c328c16cd96e69f69559479673759f83ccfe94"
+  },
+  "protocol": {
+    "name": "full_stage_b_rerun_from_final_stage_a",
+    "required_updates": 15000,
+    "stage_b_warm_start": "forbidden",
+    "trainer_stage": "temporal"
+  },
+  "repository_git_hash": "db93a7c377bbcaadb626061a19d0c798245837a3",
+  "schema_version": 1,
+  "stage_a_final": {
+    "checkpoint_sha256": "6bb7ff116236ea4bb86a010c03f14ba96fb69ac24fc0affdb01e7e561e90c254",
+    "completed_step": 5000,
+    "git_hash": "3e0df0b543f5000d0bf8490740b5f34ad979e3b6",
+    "parameter_count": 1619882,
+    "path": "/home/haoyi/ffs_omega_tsr/outputs/ffs_omega_tsr_x2/stage_a/final.pt",
+    "source_sequence_length": 1,
+    "stage": "spatial",
+    "status": "TRAINING_COMPLETE",
+    "steps": 5000,
+    "summary_path": "/home/haoyi/ffs_omega_tsr/outputs/ffs_omega_tsr_x2/stage_a/run_summary.json",
+    "summary_sha256": "bed6eb10e08d70953ddcf87df495d9813bb327904e3b1997252f097a696ec3a7"
+  },
+  "status": "PREFLIGHT_PASS"
+}

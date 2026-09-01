@@ -1,11 +1,18 @@
 # D-025 separate positivity ablation
 
-This is an independent Stage-B fine-tune lineage, not a modification or
-replacement of the formal Stage-B checkpoint.  Use
-`configs/ablations/d025_positivity_t3.yaml` with a new output directory and a
-declared Stage-A initialization checkpoint.  It is intentionally absent from
-the baseline config defaults, so Stage-A/B/C resolved configs and checkpoint
-fingerprints retain their prior form.
+This is an independent, controlled **full 15,000-update Stage-B rerun** from
+the final T=1 Stage-A checkpoint. It is not a Stage-B short fine-tune, warm
+start, modification, or replacement of the formal Stage-B checkpoint. The
+separate config records that protocol and is intentionally absent from the
+baseline defaults, so Stage-A/B/C resolved configs and checkpoint fingerprints
+retain their prior form.
+
+`train.py` permits a new temporal run only with `--init-from` a T=1 Stage-A
+checkpoint. Its `--resume` path restores a checkpoint only when the complete
+resolved config matches, so it cannot convert the formal Stage-B run into this
+positivity ablation. A shortened run can be created only as a new Stage-A
+initialized diagnostic and must not be compared or described as this fair
+15k rerun.
 
 The code-path audit is:
 
@@ -31,19 +38,37 @@ one.  Because valid FFS disparity and the bounded raw output are nonnegative,
 this convex combination remains nonnegative.  An all-invalid pixel becomes
 exactly zero, not a positive pseudo-depth.
 
-Suggested invocation (select new, empty paths):
+First run the CPU-only data/lineage preflight. This reads the real manifest,
+cache receipts, one causal data sample, and the Stage-A model state; it does
+not start a DataLoader, GPU operation, optimizer, or training output.
+
+```bash
+/home/haoyi/miniconda/envs/env-tsr/bin/python tools/preflight_d025_positivity.py \
+  --config configs/ablations/d025_positivity_t3.yaml \
+  --stage-a-checkpoint outputs/ffs_omega_tsr_x2/stage_a/final.pt \
+  --stage-a-summary outputs/ffs_omega_tsr_x2/stage_a/run_summary.json \
+  --manifest /home/haoyi/ffs_omega_cache/manifests/train_video_isolated.jsonl \
+  --observation-cache-root /home/haoyi/ffs_omega_cache/m1_formal_train/observation \
+  --teacher-cache-root /home/haoyi/ffs_omega_cache/m1_formal_train/teacher \
+  --derived-cache-root /home/haoyi/ffs_omega_cache/m2_formal_train/derived \
+  --receipt reports/m4/d025_positivity_preflight.json
+```
+
+Only after a `PREFLIGHT_PASS` receipt, use a new, empty output directory for
+the declared full rerun:
 
 ```bash
 python train.py \
   --config configs/ablations/d025_positivity_t3.yaml \
-  --init-from /path/to/stage_a_final.pt \
-  --manifest /path/to/manifest.jsonl \
-  --observation-cache-root /path/to/observation_cache \
-  --teacher-cache-root /path/to/teacher_cache \
-  --derived-cache-root /path/to/derived_geometry_cache \
-  --output-dir /path/to/new_d025_positivity_output
+  --init-from outputs/ffs_omega_tsr_x2/stage_a/final.pt \
+  --manifest /home/haoyi/ffs_omega_cache/manifests/train_video_isolated.jsonl \
+  --observation-cache-root /home/haoyi/ffs_omega_cache/m1_formal_train/observation \
+  --teacher-cache-root /home/haoyi/ffs_omega_cache/m1_formal_train/teacher \
+  --derived-cache-root /home/haoyi/ffs_omega_cache/m2_formal_train/derived \
+  --output-dir /path/to/new_empty_d025_positivity_full15k
 ```
 
 Report this lineage separately and retain raw, clamped, and `d > 0` validity
 metrics.  Do not use an improved clamped validity count as a completeness
-claim.
+claim. Do not pass a formal Stage-B checkpoint to `--resume` or label any
+shortened diagnostic as this arm.
