@@ -61,6 +61,7 @@ from evaluation import (  # noqa: E402
 )
 from models.ffs_omega_tsr import ModelOutput, count_trainable_parameters  # noqa: E402
 from metrics.disparity import MetricResult  # noqa: E402
+from metrics.pointcloud import export_colored_point_cloud_ply  # noqa: E402
 from metrics.temporal import temporal_disparity_error  # noqa: E402
 from train import (  # noqa: E402
     DEFAULT_CONFIG,
@@ -904,6 +905,8 @@ def _save_visualization(
     *,
     sample_name: str,
     rgb_hr: Tensor,
+    K_hr_px: Tensor,
+    baseline_m: Tensor,
     baseline_hr_px: Tensor,
     output_hr_px: Tensor,
     target_hr_px: Tensor,
@@ -923,6 +926,13 @@ def _save_visualization(
     absolute_error = (output_hr_px - target_hr_px).abs()
     final_negative_mask = torch.isfinite(output_hr_px) & (output_hr_px < 0.0)
     save_rgb_uint8(sample_root / "rgb.png", _rgb_chw_to_uint8(rgb_hr))
+    export_colored_point_cloud_ply(
+        output_hr_px,
+        rgb_hr,
+        K_hr_px,
+        baseline_m,
+        sample_root / "point_cloud_camera_frame.ply",
+    )
     for filename, value, mask in (
         ("bilinear_ffs_hr_px.png", baseline_hr_px, None),
         (prediction_filename, output_hr_px, None),
@@ -1741,6 +1751,8 @@ def run(args: argparse.Namespace) -> int:
                 endpoint_ffs_confidence = batch["observation_confidence"]
                 endpoint_ffs_valid = batch["observation_valid_mask"]
                 endpoint_ffs_trusted = batch["observation_trusted_mask"]
+                endpoint_K_hr = batch["K_hr"]
+                endpoint_baseline_m = batch["baseline_m"]
             else:
                 target = batch["teacher_disparity_hr_px_sequence"][:, 2]
                 target_trusted = batch["teacher_trusted_mask_sequence"][:, 2]
@@ -1755,6 +1767,8 @@ def run(args: argparse.Namespace) -> int:
                 endpoint_ffs_trusted = batch[
                     "observation_trusted_mask_sequence"
                 ][:, 2]
+                endpoint_K_hr = batch["K_hr_sequence"][:, 2]
+                endpoint_baseline_m = batch["baseline_m_sequence"][:, 2]
                 endpoint_pose_valid_count += int(
                     batch["temporal_pose_valid_sequence"][:, 2].sum().item()
                 )
@@ -2041,6 +2055,8 @@ def run(args: argparse.Namespace) -> int:
                     output_dir / "visualizations",
                     sample_name=f"{visualized:04d}_{sequence_id}_{frame_id}",
                     rgb_hr=endpoint_rgb[item_index],
+                    K_hr_px=endpoint_K_hr[item_index],
+                    baseline_m=endpoint_baseline_m[item_index],
                     baseline_hr_px=baseline[item_index],
                     output_hr_px=visualization_output.disparity_hr_px[
                         item_index

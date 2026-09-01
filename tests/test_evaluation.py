@@ -507,6 +507,10 @@ def test_visualization_writes_exact_finite_final_negative_mask(
         tmp_path,
         sample_name="sample",
         rgb_hr=torch.zeros((3, 2, 2)),
+        K_hr_px=torch.tensor(
+            [[2.0, 0.0, 0.0], [0.0, 2.0, 0.0], [0.0, 0.0, 1.0]]
+        ),
+        baseline_m=torch.tensor(0.1),
         baseline_hr_px=torch.ones((1, 2, 2)),
         output_hr_px=output,
         target_hr_px=torch.ones((1, 2, 2)),
@@ -521,6 +525,9 @@ def test_visualization_writes_exact_finite_final_negative_mask(
     assert mask[0, 1].tolist() == [0, 0, 0]  # type: ignore[index]
     # -inf is non-finite and belongs only in the JSON non-finite counter.
     assert mask[1, 0].tolist() == [0, 0, 0]  # type: ignore[index]
+    point_cloud = tmp_path / "sample" / "point_cloud_camera_frame.ply"
+    assert point_cloud.is_file()
+    assert "element vertex 1" in point_cloud.read_text(encoding="ascii")
 
 
 def _formal_coverage_fixture(tmp_path: Path) -> SimpleNamespace:
