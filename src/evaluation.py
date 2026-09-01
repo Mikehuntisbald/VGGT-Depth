@@ -46,7 +46,12 @@ def physical_disparity_clamp_min_zero(disparity_hr_px: Tensor) -> Tensor:
 
     if not isinstance(disparity_hr_px, Tensor) or not disparity_hr_px.is_floating_point():
         raise TypeError("disparity_hr_px must be a floating-point torch.Tensor")
-    return disparity_hr_px.clamp_min(0.0)
+    finite_negative = torch.isfinite(disparity_hr_px) & (disparity_hr_px < 0.0)
+    return torch.where(
+        finite_negative,
+        torch.zeros_like(disparity_hr_px),
+        disparity_hr_px,
+    )
 
 
 @dataclass(frozen=True, slots=True)

@@ -357,13 +357,17 @@ def test_hr_temporal_safe_mask_is_exact_visible_static_intersection() -> None:
     assert torch.equal(mask, torch.tensor([[[[True, False, False, False]]]]))
 
 
-def test_physical_clamp_uses_zero_not_epsilon_and_preserves_nan() -> None:
-    value = torch.tensor([-3.0, -0.0, 2.0, float("nan")])
+def test_physical_clamp_uses_zero_not_epsilon_and_preserves_nonfinite() -> None:
+    value = torch.tensor(
+        [-3.0, -0.0, 2.0, float("nan"), float("inf"), float("-inf")]
+    )
     result = physical_disparity_clamp_min_zero(value)
     assert result[0].item() == 0.0
     assert result[1].item() == 0.0
     assert result[2].item() == 2.0
     assert torch.isnan(result[3])
+    assert torch.isposinf(result[4])
+    assert torch.isneginf(result[5])
 
 
 def _formal_coverage_fixture(tmp_path: Path) -> SimpleNamespace:
