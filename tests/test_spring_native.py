@@ -11,6 +11,7 @@ from metrics.spring_arms import (
     spring_map_bundle,
 )
 from tools.compose_spring_screening_report import map_arm
+from tools.run_spring_arms import _extract_metrics
 
 
 def _record(root: Path, frame_id: int = 2) -> dict[str, object]:
@@ -104,3 +105,18 @@ def test_composer_prefers_complete_native_side_channel_and_keeps_buckets() -> No
     assert mapped["matched_epe"] == 3.0
     assert mapped["age_2_survival_rate"] == 0.5
     assert mapped["gain_by_fractional_phase_bucket"] == {"phase_lt_0.25": 0.1}
+
+
+def test_runner_extracts_native_metrics_before_legacy_aliases() -> None:
+    report = {
+        "spring_native_metrics": {
+            "status": "AVAILABLE",
+            "methods": {"T3": {"high_detail_epe": 4.0, "overall_epe": 2.0}},
+            "topk_diagnostics": {"age_2_survival_rate": 0.75},
+        },
+        "methods": {"T3": {"epe_px": {"value": 99.0}}},
+    }
+    metrics = _extract_metrics(report, preferred_method="T3")
+    assert metrics["overall_epe"] == 2.0
+    assert metrics["high_detail_epe"] == 4.0
+    assert metrics["age_2_survival_rate"] == 0.75
