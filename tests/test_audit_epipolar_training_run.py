@@ -14,10 +14,15 @@ import torch
 from geometry.epipolar import EPIPOLAR_GEOMETRY_CONTRACT
 from models.epipolar_refiner import HREpipolarRefiner
 from tools.audit_epipolar_training_run import (
+    ARCHITECTURE_V2_RUNTIME_ADDITIONS,
+    ARCHITECTURE_V2_STAGE_C_ROLE,
     EpipolarTrainingAuditError,
     _expected_runtime_paths,
+    _git_tree_runtime_python_paths,
     _learning_rate_multiplier,
     _runtime_source_contract,
+    _stage_c_experiment_role,
+    _validate_stage_c_architecture_v2_config,
     _validate_source_bundle,
     audit_epipolar_training_run,
     main,
@@ -46,8 +51,10 @@ def _allow_legacy_fixture_bundle_for_controlled(
         git_hash: str,
         controlled_ablation: bool,
         high_vram: bool = False,
+        physical_v2: bool = False,
     ) -> dict:
         assert controlled_ablation
+        assert not physical_v2
         result = _validate_source_bundle(
             value,
             git_hash=git_hash,
@@ -714,7 +721,7 @@ def test_complete_formal_run_is_read_only_and_validates_all_receipts(
     tmp_path: Path,
 ) -> None:
     run = tmp_path / "complete"
-    _build_run(run, complete=True)
+    payload = _build_run(run, complete=True)
     mtimes = {path: path.stat().st_mtime_ns for path in tmp_path.rglob("*") if path.is_file()}
 
     report = audit_epipolar_training_run(run)
@@ -722,7 +729,9 @@ def test_complete_formal_run_is_read_only_and_validates_all_receipts(
     assert report["status"] == "PASS"
     assert report["training_status"] == "TRAINING_COMPLETE"
     assert report["safe_load"]["torch_weights_only"] is True
-    assert report["checkpoint_validation"]["runtime_source_bundle"]["file_count"] == 52
+    assert report["checkpoint_validation"]["runtime_source_bundle"][
+        "file_count"
+    ] == len(payload["runtime_source_bundle"]["files"])
     assert report["checkpoint_validation"]["training_runtime"][
         "formal_cuda_bf16_eligible"
     ] is True
@@ -749,9 +758,14 @@ def test_complete_formal_run_is_read_only_and_validates_all_receipts(
     assert {path: path.stat().st_mtime_ns for path in mtimes} == mtimes
 
 
-def test_runtime_source_contract_preserves_legacy_52_and_requires_complete_55(
+def test_runtime_source_contract_preserves_legacy_counts_and_derives_current_counts(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    legacy_src = tuple(f"src/legacy_{index:02d}.py" for index in range(44))
+    monkeypatch.setattr(
+        "tools.audit_epipolar_training_run._git_tree_runtime_python_paths",
+        lambda git_hash: legacy_src,
+    )
     monkeypatch.setattr(
         "tools.audit_epipolar_training_run._git_tree_declares_runtime_additions",
         lambda git_hash: (False, False, False),
@@ -791,6 +805,41 @@ def test_runtime_source_contract_preserves_legacy_52_and_requires_complete_55(
         in high_scopes
     )
 
+    current_src = (*legacy_src, "src/new_a.py", "src/new_b.py", "src/new_c.py")
+    monkeypatch.setattr(
+        "tools.audit_epipolar_training_run._git_tree_runtime_python_paths",
+        lambda git_hash: current_src,
+    )
+    assert _runtime_source_contract(
+        "b" * 40, controlled_ablation=False
+    )[2] == 55
+    assert _runtime_source_contract(
+        "b" * 40, controlled_ablation=True
+    )[2] == 58
+    assert _runtime_source_contract(
+        "b" * 40, controlled_ablation=True, high_vram=True
+    )[2] == 59
+
+    monkeypatch.setattr(
+        "tools.audit_epipolar_training_run._git_tree_declares_additions",
+        lambda git_hash, additions: tuple(True for _ in additions),
+    )
+    _, v2_scopes, v2_count = _runtime_source_contract(
+        "b" * 40,
+        controlled_ablation=False,
+        physical_v2=True,
+    )
+    assert v2_count == 58
+    assert all(path in v2_scopes for path in ARCHITECTURE_V2_RUNTIME_ADDITIONS)
+    assert "tools/audit_d025_evaluation.py" not in v2_scopes
+
+    monkeypatch.setattr(
+        "tools.audit_epipolar_training_run._git_tree_declares_runtime_additions",
+        lambda git_hash: (True, False, True),
+    )
+    with pytest.raises(EpipolarTrainingAuditError, match="declares only part"):
+        _runtime_source_contract("c" * 40, controlled_ablation=True)
+
     git_hash = subprocess.run(
         ["git", "rev-parse", "HEAD"],
         cwd=Path(__file__).parents[1],
@@ -800,21 +849,155 @@ def test_runtime_source_contract_preserves_legacy_52_and_requires_complete_55(
     ).stdout.strip()
     monkeypatch.setattr(
         "tools.audit_epipolar_training_run._runtime_source_contract",
-        lambda candidate, *, controlled_ablation, high_vram=False: ((), (), 52),
+        lambda candidate, *, controlled_ablation, high_vram=False, physical_v2=False: (
+            (),
+            (),
+            52,
+        ),
     )
-    with pytest.raises(EpipolarTrainingAuditError, match="wrong role-specific"):
+    with pytest.raises(EpipolarTrainingAuditError, match="header is malformed"):
         _validate_source_bundle(
             {},
             git_hash=git_hash,
             controlled_ablation=True,
         )
 
-    monkeypatch.setattr(
-        "tools.audit_epipolar_training_run._git_tree_declares_runtime_additions",
-        lambda git_hash: (True, False, True),
+
+def test_runtime_python_paths_are_enumerated_from_requested_git_tree(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repository = tmp_path / "runtime-tree"
+    (repository / "src").mkdir(parents=True)
+    (repository / "src" / "legacy.py").write_text("LEGACY = True\n", encoding="utf-8")
+    subprocess.run(["git", "init", "-q"], cwd=repository, check=True)
+    subprocess.run(["git", "add", "src/legacy.py"], cwd=repository, check=True)
+    subprocess.run(
+        [
+            "git",
+            "-c",
+            "user.name=Audit Test",
+            "-c",
+            "user.email=audit@example.invalid",
+            "commit",
+            "-qm",
+            "legacy tree",
+        ],
+        cwd=repository,
+        check=True,
     )
-    with pytest.raises(EpipolarTrainingAuditError, match="declares only part"):
-        _runtime_source_contract("c" * 40, controlled_ablation=True)
+    legacy_hash = subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        cwd=repository,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+
+    # A newer worktree file must not leak into the historical checkpoint tree.
+    (repository / "src" / "current_only.py").write_text(
+        "CURRENT = True\n", encoding="utf-8"
+    )
+    monkeypatch.setattr(
+        "tools.audit_epipolar_training_run.PROJECT_ROOT",
+        repository,
+    )
+    assert _git_tree_runtime_python_paths(legacy_hash) == ("src/legacy.py",)
+
+    subprocess.run(["git", "add", "src/current_only.py"], cwd=repository, check=True)
+    subprocess.run(
+        [
+            "git",
+            "-c",
+            "user.name=Audit Test",
+            "-c",
+            "user.email=audit@example.invalid",
+            "commit",
+            "-qm",
+            "current tree",
+        ],
+        cwd=repository,
+        check=True,
+    )
+    current_hash = subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        cwd=repository,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    assert _git_tree_runtime_python_paths(current_hash) == (
+        "src/current_only.py",
+        "src/legacy.py",
+    )
+
+
+def test_physical_output_pair_is_a_distinct_architecture_v2_role() -> None:
+    assert _stage_c_experiment_role({}) == "CANONICAL_STAGE_C"
+    config = {
+        "physical_output_v2": {
+            "enabled": True,
+            "protocol_version": "explicit_valid_completion_nonnegative_v2",
+        },
+        "stage_c_physical_output_v2": {
+            "enabled": True,
+            "protocol_version": "base_aware_noop_nonnegative_v2",
+        },
+    }
+    contract = _validate_stage_c_architecture_v2_config(config)
+    assert contract == {
+        "enabled": True,
+        "experiment_role": ARCHITECTURE_V2_STAGE_C_ROLE,
+        "physical_output_protocol_version": (
+            "explicit_valid_completion_nonnegative_v2"
+        ),
+        "stage_c_protocol_version": "base_aware_noop_nonnegative_v2",
+    }
+    assert _stage_c_experiment_role(config) == ARCHITECTURE_V2_STAGE_C_ROLE
+    assert ARCHITECTURE_V2_STAGE_C_ROLE not in {
+        "CANONICAL_STAGE_C",
+        CONTROLLED_ROLE,
+    }
+
+    unpaired = dict(config)
+    unpaired.pop("stage_c_physical_output_v2")
+    with pytest.raises(EpipolarTrainingAuditError, match="enabled together"):
+        _stage_c_experiment_role(unpaired)
+
+    wrong_protocol = {
+        **config,
+        "stage_c_physical_output_v2": {
+            "enabled": True,
+            "protocol_version": "not-the-stage-c-v2-contract",
+        },
+    }
+    with pytest.raises(EpipolarTrainingAuditError, match="protocol differs"):
+        _stage_c_experiment_role(wrong_protocol)
+
+    controlled_v2 = {
+        **config,
+        "positivity_ablation": {
+            "enabled": True,
+            "sanitize_invalid_sources": True,
+            "lower_bound_hr_px": 0.0,
+        },
+        "stage_c_positivity_ablation": {
+            "enabled": True,
+            "protocol_version": POSITIVITY_PROTOCOL,
+            "requires_passing_d025_base": True,
+            "correction_lower_bound_hr_px": 0.0,
+            "pre_lower_bound_negative_penalty_weight": 0.1,
+            "d025_training_audit_path": "/receipts/training.json",
+            "d025_evaluation_audit_path": "/receipts/evaluation.json",
+        },
+        "ablation_protocol": {
+            "name": "stage_c_physical_positivity_from_passing_d025",
+            "required_base": "full_stage_b_d025_15000_and_holdout_pass",
+            "canonical_stage_c_replacement": False,
+        },
+    }
+    with pytest.raises(EpipolarTrainingAuditError, match="roles are separate"):
+        _stage_c_experiment_role(controlled_v2)
 
 
 def test_controlled_positivity_run_has_isolated_loss_and_completion_schema(

@@ -60,13 +60,13 @@ AUDIT_COMPONENT = "ffs-omega-tsr-epipolar-training-audit"
 EXPECTED_REFINER_PARAMETERS = 69_905
 FORMAL_STAGE_B_STEPS = 15_000
 FORMAL_STAGE_C_STEPS = 5_000
-LEGACY_SOURCE_FILE_COUNT = 52
-CONTROLLED_SOURCE_FILE_COUNT = 55
-HIGH_VRAM_SOURCE_FILE_COUNT = 56
 STRICT_CUBLAS_WORKSPACE_CONFIG = ":4096:8"
 STAGE_C_D025_POSITIVITY_PROTOCOL = "d025_stage_c_physical_positivity_v1"
 CANONICAL_STAGE_C_ROLE = "CANONICAL_STAGE_C"
 CONTROLLED_D025_STAGE_C_ROLE = "CONTROLLED_D025_STAGE_C_ABLATION"
+ARCHITECTURE_V2_STAGE_C_ROLE = "ARCHITECTURE_V2_STAGE_C"
+PHYSICAL_OUTPUT_V2_PROTOCOL = "explicit_valid_completion_nonnegative_v2"
+STAGE_C_PHYSICAL_OUTPUT_V2_PROTOCOL = "base_aware_noop_nonnegative_v2"
 SHA256_PATTERN = re.compile(r"^[0-9a-f]{64}$")
 GIT_HASH_PATTERN = re.compile(r"^[0-9a-f]{40}$")
 EXPECTED_RUNTIME_FIELDS = {
@@ -106,6 +106,11 @@ CONTROLLED_RUNTIME_ADDITIONS = (
 )
 HIGH_VRAM_RUNTIME_ADDITIONS = (
     "configs/ablations/d025_stage_c_positivity_high_vram.yaml",
+)
+ARCHITECTURE_V2_RUNTIME_ADDITIONS = (
+    "configs/mvp_x2_v2.yaml",
+    "configs/temporal_x2_v2.yaml",
+    "configs/epipolar_x2_v2.yaml",
 )
 CONTROLLED_RUNTIME_ROOT_FILES = (
     *RUNTIME_ROOT_FILES[:-1],
@@ -443,6 +448,68 @@ def _validate_stage_c_positivity_config(
     }
 
 
+def _validate_stage_c_architecture_v2_config(
+    config: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Classify the paired physical-output opt-ins as a separate lineage."""
+
+    sections: list[tuple[str, object, str]] = [
+        ("physical_output_v2", config.get("physical_output_v2"), PHYSICAL_OUTPUT_V2_PROTOCOL),
+        (
+            "stage_c_physical_output_v2",
+            config.get("stage_c_physical_output_v2"),
+            STAGE_C_PHYSICAL_OUTPUT_V2_PROTOCOL,
+        ),
+    ]
+    enabled: list[bool] = []
+    for name, section, protocol in sections:
+        if section is None:
+            enabled.append(False)
+            continue
+        _require(isinstance(section, Mapping), f"checkpoint {name} is not a mapping")
+        enabled_value = section.get("enabled")
+        _require(
+            isinstance(enabled_value, bool),
+            f"checkpoint {name}.enabled is not boolean",
+        )
+        is_enabled = bool(enabled_value)
+        if is_enabled:
+            _require(
+                section.get("protocol_version") == protocol,
+                f"checkpoint {name} protocol differs",
+            )
+        enabled.append(is_enabled)
+    _require(
+        enabled[0] == enabled[1],
+        "physical_output_v2 and stage_c_physical_output_v2 must be enabled together",
+    )
+    if not enabled[0]:
+        return {
+            "enabled": False,
+            "experiment_role": CANONICAL_STAGE_C_ROLE,
+        }
+    return {
+        "enabled": True,
+        "experiment_role": ARCHITECTURE_V2_STAGE_C_ROLE,
+        "physical_output_protocol_version": PHYSICAL_OUTPUT_V2_PROTOCOL,
+        "stage_c_protocol_version": STAGE_C_PHYSICAL_OUTPUT_V2_PROTOCOL,
+    }
+
+
+def _stage_c_experiment_role(config: Mapping[str, Any]) -> str:
+    positivity = _validate_stage_c_positivity_config(config)
+    architecture_v2 = _validate_stage_c_architecture_v2_config(config)
+    _require(
+        not (positivity["enabled"] and architecture_v2["enabled"]),
+        "architecture-v2 and controlled D-025 Stage-C roles are separate",
+    )
+    if positivity["enabled"]:
+        return CONTROLLED_D025_STAGE_C_ROLE
+    if architecture_v2["enabled"]:
+        return ARCHITECTURE_V2_STAGE_C_ROLE
+    return CANONICAL_STAGE_C_ROLE
+
+
 def _validate_stage_c_high_vram_config(
     config: Mapping[str, Any],
     *,
@@ -520,6 +587,11 @@ def _learning_rate_multiplier(
 def _validate_config(config: object) -> tuple[Mapping[str, Any], dict[str, Any]]:
     _require(isinstance(config, Mapping), "checkpoint config is not a mapping")
     positivity = _validate_stage_c_positivity_config(config)
+    architecture_v2 = _validate_stage_c_architecture_v2_config(config)
+    _require(
+        not (positivity["enabled"] and architecture_v2["enabled"]),
+        "architecture-v2 and controlled D-025 Stage-C roles are separate",
+    )
     high_vram = _validate_stage_c_high_vram_config(
         config,
         controlled_ablation=bool(positivity["enabled"]),
@@ -623,6 +695,8 @@ def _validate_config(config: object) -> tuple[Mapping[str, Any], dict[str, Any]]
         "warmup_steps": int(train["warmup_steps"]),
         "grad_accumulation": int(train["grad_accumulation"]),
         "stage_c_positivity_ablation": positivity,
+        "stage_c_architecture_v2": architecture_v2,
+        "experiment_role": _stage_c_experiment_role(config),
         "stage_c_high_vram": high_vram,
     }
 
@@ -1132,20 +1206,114 @@ def _git_tree_declares_runtime_additions(git_hash: str) -> tuple[bool, ...]:
     )
 
 
+def _git_tree_runtime_python_paths(git_hash: str) -> tuple[str, ...]:
+    """Enumerate runtime Python files from ``git_hash``, never the worktree.
+
+    A checkpoint binds a committed source tree.  Using ``SRC_ROOT.rglob`` here
+    would silently compare an old checkpoint against files that happened to be
+    added to the auditor's current checkout after that checkpoint was written.
+    ``git ls-tree`` makes both the membership and canonical ordering properties
+    of the checkpoint commit itself.
+    """
+
+    listed = subprocess.run(
+        ["git", "ls-tree", "-r", "--name-only", git_hash, "--", "src"],
+        cwd=PROJECT_ROOT,
+        check=False,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    _require(
+        listed.returncode == 0,
+        "cannot enumerate runtime sources from the Stage-C checkpoint Git tree",
+    )
+    paths = tuple(
+        line
+        for line in listed.stdout.splitlines()
+        if line.startswith("src/") and line.endswith(".py")
+    )
+    _require(bool(paths), "Stage-C checkpoint Git tree contains no src Python files")
+    _require(
+        paths == tuple(sorted(paths)) and len(paths) == len(set(paths)),
+        "Stage-C checkpoint Git tree returned non-canonical src paths",
+    )
+    return paths
+
+
+def _git_tree_declares_additions(
+    git_hash: str,
+    additions: Sequence[str],
+) -> tuple[bool, ...]:
+    shown = subprocess.run(
+        ["git", "show", f"{git_hash}:train_epipolar.py"],
+        cwd=PROJECT_ROOT,
+        check=False,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    _require(
+        shown.returncode == 0,
+        "Stage-C checkpoint Git tree lacks train_epipolar.py",
+    )
+    return tuple(relative.encode("utf-8") in shown.stdout for relative in additions)
+
+
 def _runtime_source_contract(
     git_hash: str,
     *,
     controlled_ablation: bool,
     high_vram: bool = False,
+    physical_v2: bool = False,
 ) -> tuple[tuple[str, ...], tuple[str, ...], int]:
     _require(
         not high_vram or controlled_ablation,
         "high-VRAM runtime requires controlled D-025 Stage C",
     )
+    _require(
+        not physical_v2 or not controlled_ablation,
+        "architecture-v2 and controlled D-025 runtime roles are separate",
+    )
+    if physical_v2:
+        additions_declared = _git_tree_declares_additions(
+            git_hash,
+            ARCHITECTURE_V2_RUNTIME_ADDITIONS,
+        )
+        _require(
+            all(additions_declared) or not any(additions_declared),
+            "Stage-C producer declares only part of the architecture-v2 runtime bundle",
+        )
+        _require(
+            all(additions_declared),
+            "architecture-v2 Stage-C producer does not declare its runtime additions",
+        )
+        _require(
+            all(
+                _git_tree_contains(git_hash, relative)
+                for relative in ARCHITECTURE_V2_RUNTIME_ADDITIONS
+            ),
+            "Stage-C architecture-v2 runtime file is absent from the checkpoint Git tree",
+        )
+        root_files = (
+            *RUNTIME_ROOT_FILES[:-1],
+            *ARCHITECTURE_V2_RUNTIME_ADDITIONS,
+            RUNTIME_ROOT_FILES[-1],
+        )
+        scopes = (*root_files, "src")
+        return (
+            root_files,
+            scopes,
+            len(root_files) + len(_git_tree_runtime_python_paths(git_hash)),
+        )
     if not controlled_ablation:
-        # The canonical/default producer deliberately ignores D-025-only files,
-        # even when they exist in the same Git tree.
-        return RUNTIME_ROOT_FILES, RUNTIME_GIT_SCOPES, LEGACY_SOURCE_FILE_COUNT
+        # The canonical/default producer deliberately ignores opt-in files even
+        # when they coexist in the same Git tree.  Its src membership, however,
+        # is always the membership of the checkpoint commit itself.
+        return (
+            RUNTIME_ROOT_FILES,
+            RUNTIME_GIT_SCOPES,
+            len(RUNTIME_ROOT_FILES) + len(_git_tree_runtime_python_paths(git_hash)),
+        )
     additions_declared = _git_tree_declares_runtime_additions(git_hash)
     _require(
         all(additions_declared) or not any(additions_declared),
@@ -1173,12 +1341,14 @@ def _runtime_source_contract(
         return (
             HIGH_VRAM_RUNTIME_ROOT_FILES,
             HIGH_VRAM_RUNTIME_GIT_SCOPES,
-            HIGH_VRAM_SOURCE_FILE_COUNT,
+            len(HIGH_VRAM_RUNTIME_ROOT_FILES)
+            + len(_git_tree_runtime_python_paths(git_hash)),
         )
     return (
         CONTROLLED_RUNTIME_ROOT_FILES,
         CONTROLLED_RUNTIME_GIT_SCOPES,
-        CONTROLLED_SOURCE_FILE_COUNT,
+        len(CONTROLLED_RUNTIME_ROOT_FILES)
+        + len(_git_tree_runtime_python_paths(git_hash)),
     )
 
 
@@ -1187,6 +1357,7 @@ def _expected_runtime_paths(
     git_hash: str | None = None,
     controlled_ablation: bool = False,
     high_vram: bool = False,
+    physical_v2: bool = False,
 ) -> tuple[str, ...]:
     root_files = (
         (
@@ -1203,14 +1374,30 @@ def _expected_runtime_paths(
             git_hash,
             controlled_ablation=controlled_ablation,
             high_vram=high_vram,
+            physical_v2=physical_v2,
         )[0]
+    )
+    if git_hash is None and physical_v2:
+        _require(
+            not controlled_ablation and not high_vram,
+            "architecture-v2 and D-025 runtime roles are separate",
+        )
+        root_files = (
+            *RUNTIME_ROOT_FILES[:-1],
+            *ARCHITECTURE_V2_RUNTIME_ADDITIONS,
+            RUNTIME_ROOT_FILES[-1],
+        )
+    source_paths = (
+        tuple(
+            str(path.relative_to(PROJECT_ROOT))
+            for path in sorted((PROJECT_ROOT / "src").rglob("*.py"))
+        )
+        if git_hash is None
+        else _git_tree_runtime_python_paths(git_hash)
     )
     return (
         *root_files,
-        *(
-            str(path.relative_to(PROJECT_ROOT))
-            for path in sorted((PROJECT_ROOT / "src").rglob("*.py"))
-        ),
+        *source_paths,
     )
 
 
@@ -1220,6 +1407,7 @@ def _validate_source_bundle(
     git_hash: str,
     controlled_ablation: bool,
     high_vram: bool = False,
+    physical_v2: bool = False,
 ) -> dict[str, Any]:
     _require(isinstance(value, Mapping), "Stage-C runtime source bundle is missing")
     result = subprocess.run(
@@ -1234,16 +1422,7 @@ def _validate_source_bundle(
         git_hash,
         controlled_ablation=controlled_ablation,
         high_vram=high_vram,
-    )
-    _require(
-        not controlled_ablation
-        or expected_file_count
-        == (
-            HIGH_VRAM_SOURCE_FILE_COUNT
-            if high_vram
-            else CONTROLLED_SOURCE_FILE_COUNT
-        ),
-        "controlled Stage-C runtime source bundle has the wrong role-specific contract",
+        physical_v2=physical_v2,
     )
     required = {
         "schema_version",
@@ -1273,6 +1452,7 @@ def _validate_source_bundle(
         git_hash=git_hash,
         controlled_ablation=controlled_ablation,
         high_vram=high_vram,
+        physical_v2=physical_v2,
     )
     _require(
         len(expected_paths) == expected_file_count,
@@ -1453,6 +1633,7 @@ def _validate_completion(
     *,
     step: int,
     controlled_ablation: bool,
+    architecture_v2: bool = False,
     high_vram: bool = False,
 ) -> dict[str, Any]:
     _require(isinstance(value, Mapping), "Stage-C completion receipt is missing")
@@ -1465,13 +1646,24 @@ def _validate_completion(
         "cuda_bf16_eligible": True,
         "strict_determinism_eligible": True,
         "formal_training_complete": (
-            step == FORMAL_STAGE_C_STEPS and not controlled_ablation
+            step == FORMAL_STAGE_C_STEPS
+            and not controlled_ablation
+            and not architecture_v2
         ),
     }
     if controlled_ablation:
         expected.update(
             {
                 "controlled_ablation_training_complete": (
+                    step == FORMAL_STAGE_C_STEPS
+                ),
+                "canonical_stage_c_replacement": False,
+            }
+        )
+    if architecture_v2:
+        expected.update(
+            {
+                "architecture_v2_training_complete": (
                     step == FORMAL_STAGE_C_STEPS
                 ),
                 "canonical_stage_c_replacement": False,
@@ -1614,6 +1806,8 @@ def _validate_checkpoint(path: Path, label: str) -> CheckpointSnapshot:
     )
     positivity = config_values["stage_c_positivity_ablation"]
     controlled_ablation = bool(positivity["enabled"])
+    architecture_v2 = config_values["stage_c_architecture_v2"]
+    physical_v2 = bool(architecture_v2["enabled"])
     high_vram_validation = config_values["stage_c_high_vram"]
     high_vram = bool(high_vram_validation["enabled"])
     if controlled_ablation:
@@ -1628,6 +1822,13 @@ def _validate_checkpoint(path: Path, label: str) -> CheckpointSnapshot:
                 config["stage_c_positivity_ablation"]["d025_evaluation_audit_path"]
             ),
         )
+    elif physical_v2:
+        _require(
+            payload.get("experiment_role") == ARCHITECTURE_V2_STAGE_C_ROLE
+            and "d025_prerequisite" not in payload,
+            f"{label} architecture-v2 Stage-C checkpoint role/lineage differs",
+        )
+        d025_prerequisite = None
     else:
         _require(
             "experiment_role" not in payload and "d025_prerequisite" not in payload,
@@ -1646,6 +1847,7 @@ def _validate_checkpoint(path: Path, label: str) -> CheckpointSnapshot:
         git_hash=git_hash,
         controlled_ablation=controlled_ablation,
         high_vram=high_vram,
+        physical_v2=physical_v2,
     )
     high_vram_preflight = _validate_high_vram_preflight(
         payload.get("high_vram_preflight"),
@@ -1664,6 +1866,7 @@ def _validate_checkpoint(path: Path, label: str) -> CheckpointSnapshot:
         payload.get("completion"),
         step=step,
         controlled_ablation=controlled_ablation,
+        architecture_v2=physical_v2,
         high_vram=high_vram,
     )
     _require(isinstance(payload.get("base_lineage"), Mapping), "Stage-C base lineage is missing")
@@ -1686,6 +1889,7 @@ def _validate_checkpoint(path: Path, label: str) -> CheckpointSnapshot:
             **dict(positivity),
             "d025_prerequisite": d025_prerequisite,
         },
+        "stage_c_architecture_v2": dict(architecture_v2),
         "stage_c_high_vram": {
             **dict(high_vram_validation),
             "preflight": high_vram_preflight,
@@ -1803,8 +2007,13 @@ def _validate_training_log(
         "stage_c_positivity_ablation"
     ]
     controlled_ablation = bool(positivity_validation["enabled"])
+    architecture_v2 = bool(
+        checkpoint.payload["__audit_validation__"]["stage_c_architecture_v2"][
+            "enabled"
+        ]
+    )
     numeric_loss_terms = ["total", "disparity", "correction_regularizer"]
-    if controlled_ablation:
+    if controlled_ablation or architecture_v2:
         expected_loss.add("positivity_penalty")
         numeric_loss_terms.append("positivity_penalty")
     train = checkpoint.config["train"]
@@ -1884,6 +2093,11 @@ def _validate_training_log(
         "finite": True,
         "loss_schema": {
             "stage_c_positivity_ablation_enabled": controlled_ablation,
+            **(
+                {"stage_c_architecture_v2_enabled": True}
+                if architecture_v2
+                else {}
+            ),
             "terms": sorted(numeric_loss_terms),
             "valid_pixel_count": True,
         },
@@ -1935,6 +2149,11 @@ def _validate_summary(
         "stage_c_positivity_ablation"
     ]
     controlled_ablation = bool(positivity["enabled"])
+    architecture_v2 = bool(
+        final.payload["__audit_validation__"]["stage_c_architecture_v2"][
+            "enabled"
+        ]
+    )
     high_vram_validation = final.payload["__audit_validation__"][
         "stage_c_high_vram"
     ]
@@ -1942,7 +2161,11 @@ def _validate_summary(
     expected_role = (
         CONTROLLED_D025_STAGE_C_ROLE
         if controlled_ablation
-        else CANONICAL_STAGE_C_ROLE
+        else (
+            ARCHITECTURE_V2_STAGE_C_ROLE
+            if architecture_v2
+            else CANONICAL_STAGE_C_ROLE
+        )
     )
     _require(
         summary.get("schema_version") == RUN_SUMMARY_SCHEMA_VERSION
@@ -1958,6 +2181,14 @@ def _validate_summary(
             and dict(summary["d025_prerequisite"])
             == dict(final.payload["d025_prerequisite"]),
             "controlled Stage-C run summary D-025 identity differs from final.pt",
+        )
+    elif architecture_v2:
+        _require(
+            summary.get("experiment_role") == expected_role
+            and summary.get("d025_prerequisite") is None
+            and summary.get("controlled_ablation_training_complete", False)
+            is False,
+            "architecture-v2 Stage-C run summary role/lineage differs from final.pt",
         )
     else:
         _require(
@@ -2014,6 +2245,17 @@ def _validate_summary(
             )
             is True,
             "controlled Stage-C completion flags are inconsistent",
+        )
+    elif architecture_v2:
+        _require(
+            summary.get("formal_training_complete") is False
+            and final.payload["completion"].get("formal_training_complete") is False
+            and summary.get("architecture_v2_training_complete") is True
+            and final.payload["completion"].get(
+                "architecture_v2_training_complete"
+            )
+            is True,
+            "architecture-v2 Stage-C completion flags are inconsistent",
         )
     else:
         _require(
@@ -2079,8 +2321,9 @@ def _validate_summary(
         "segment_elapsed_seconds": segment_elapsed,
         "segment_steps_per_second": segment_rate,
         "experiment_role": expected_role,
-        "formal_training_complete": not controlled_ablation,
+        "formal_training_complete": not controlled_ablation and not architecture_v2,
         "controlled_ablation_training_complete": controlled_ablation,
+        "architecture_v2_training_complete": architecture_v2,
         "high_vram": high_vram,
     }
 
@@ -2145,16 +2388,30 @@ def audit_epipolar_training_run(output_dir: str | Path) -> dict[str, Any]:
     checkpoint_validation = latest.payload["__audit_validation__"]
     positivity_validation = checkpoint_validation["stage_c_positivity_ablation"]
     controlled_ablation = bool(positivity_validation["enabled"])
-    formal_training_complete = bool(complete and not controlled_ablation)
+    architecture_v2_validation = checkpoint_validation["stage_c_architecture_v2"]
+    architecture_v2 = bool(architecture_v2_validation["enabled"])
+    experiment_role = (
+        CONTROLLED_D025_STAGE_C_ROLE
+        if controlled_ablation
+        else (
+            ARCHITECTURE_V2_STAGE_C_ROLE
+            if architecture_v2
+            else CANONICAL_STAGE_C_ROLE
+        )
+    )
+    formal_training_complete = bool(
+        complete and not controlled_ablation and not architecture_v2
+    )
     controlled_ablation_training_complete = bool(
         complete and controlled_ablation
     )
+    architecture_v2_training_complete = bool(complete and architecture_v2)
     return {
         "schema_version": AUDIT_SCHEMA_VERSION,
         "component": AUDIT_COMPONENT,
         "status": status,
         "training_status": "TRAINING_COMPLETE" if complete else "IN_PROGRESS",
-        "experiment_role": positivity_validation["experiment_role"],
+        "experiment_role": experiment_role,
         "read_only": True,
         "safe_load": {
             "torch_weights_only": True,
@@ -2204,6 +2461,9 @@ def audit_epipolar_training_run(output_dir: str | Path) -> dict[str, Any]:
             "formal_training_complete": formal_training_complete,
             "controlled_ablation_training_complete": (
                 controlled_ablation_training_complete
+            ),
+            "architecture_v2_training_complete": (
+                architecture_v2_training_complete
             ),
             "summary": summary_validation,
         },
