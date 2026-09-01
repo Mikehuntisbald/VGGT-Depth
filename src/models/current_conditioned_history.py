@@ -18,6 +18,7 @@ from dataclasses import dataclass
 
 import torch
 from torch import Tensor, nn
+from torch.utils.checkpoint import checkpoint as activation_checkpoint
 
 
 @dataclass(frozen=True, slots=True)
@@ -123,7 +124,8 @@ class CurrentConditionedTopKAttention(nn.Module):
         rgb_channels: int = 96,
         geometry_channels: int = 64,
         candidate_channels: int = 32,
-        query_channels: int = 32,
+        warped_hidden_channels: int = 96,
+        query_channels: int = 16,
         maximum_disparity_hr_px: float = 2048.0,
         maximum_depth_m: float = 1000.0,
         maximum_age_frames: float = 32.0,
@@ -134,6 +136,7 @@ class CurrentConditionedTopKAttention(nn.Module):
             ("rgb_channels", rgb_channels),
             ("geometry_channels", geometry_channels),
             ("candidate_channels", candidate_channels),
+            ("warped_hidden_channels", warped_hidden_channels),
             ("query_channels", query_channels),
             ("maximum_depth_layers", maximum_depth_layers),
         ):
@@ -149,6 +152,7 @@ class CurrentConditionedTopKAttention(nn.Module):
         self.rgb_channels = rgb_channels
         self.geometry_channels = geometry_channels
         self.candidate_channels = candidate_channels
+        self.warped_hidden_channels = warped_hidden_channels
         self.query_channels = query_channels
         self.maximum_disparity_hr_px = float(maximum_disparity_hr_px)
         self.maximum_depth_m = float(maximum_depth_m)
@@ -160,16 +164,20 @@ class CurrentConditionedTopKAttention(nn.Module):
             nn.SiLU(inplace=True),
             nn.Conv2d(query_channels, query_channels, 1),
         )
+        self.hidden_value_encoder = nn.Sequential(
+            nn.Conv2d(warped_hidden_channels, candidate_channels, 1),
+            nn.SiLU(inplace=True),
+            nn.Conv2d(candidate_channels, candidate_channels, 1),
+        )
         score_input_channels = (
             candidate_channels
-            + query_channels
             + self.scalar_metadata_channels
             + self.pose_descriptor_channels
         )
         self.score_head = nn.Sequential(
             nn.Conv2d(score_input_channels, query_channels, 1),
             nn.SiLU(inplace=True),
-            nn.Conv2d(query_channels, 2, 1),
+            nn.Conv2d(query_channels, 2 * query_channels, 1),
         )
         final = self.score_head[-1]
         assert isinstance(final, nn.Conv2d)
@@ -213,6 +221,7 @@ class CurrentConditionedTopKAttention(nn.Module):
         T_current_from_history_m: Tensor,
         baseline_m: Tensor,
         temporal_pose_valid: Tensor,
+        warped_hidden_feature: Tensor | None = None,
     ) -> CurrentConditionedHistoryOutput:
         """Attend candidates on the LR grid.
 
@@ -255,6 +264,45 @@ class CurrentConditionedTopKAttention(nn.Module):
             raise TypeError("candidate_feature must be a real floating-point Tensor")
         if not bool(torch.isfinite(candidate_feature).all()):
             raise ValueError("candidate_feature must contain only finite values")
+        if warped_hidden_feature is None:
+            has_warped_hidden = False
+            warped_hidden = candidate_feature.new_zeros(
+                batch,
+                candidates,
+                self.warped_hidden_channels,
+                height,
+                width,
+            )
+        else:
+            has_warped_hidden = True
+            expected_hidden_shape = (
+                batch,
+                candidates,
+                self.warped_hidden_channels,
+                height,
+                width,
+            )
+            if warped_hidden_feature.shape != expected_hidden_shape:
+                raise ValueError(
+                    "warped_hidden_feature must have shape "
+                    f"{expected_hidden_shape}, got {tuple(warped_hidden_feature.shape)}"
+                )
+            if (
+                not warped_hidden_feature.is_floating_point()
+                or warped_hidden_feature.is_complex()
+            ):
+                raise TypeError(
+                    "warped_hidden_feature must be a real floating-point Tensor"
+                )
+            if warped_hidden_feature.device != rgb_feature_lr.device:
+                raise ValueError(
+                    "warped_hidden_feature must share the current feature device"
+                )
+            if not bool(torch.isfinite(warped_hidden_feature).all()):
+                raise ValueError(
+                    "warped_hidden_feature must contain only finite values"
+                )
+            warped_hidden = warped_hidden_feature
         scalar_shape = (batch, candidates, height, width)
         for name, value in (
             ("disparity_hr_px", disparity_hr_px),
@@ -385,10 +433,6 @@ class CurrentConditionedTopKAttention(nn.Module):
             valid.unsqueeze(2), candidate_pose, torch.zeros_like(candidate_pose)
         )
 
-        query = self.query_encoder(
-            torch.cat((rgb_feature_lr, geometry_feature_lr), dim=1)
-        )
-        query = query[:, None].expand(-1, candidates, -1, -1, -1)
         current_disparity = torch.nan_to_num(
             current_ffs_disparity_hr_px, nan=0.0, posinf=0.0, neginf=0.0
         ).clamp_min(0.0)
@@ -423,28 +467,122 @@ class CurrentConditionedTopKAttention(nn.Module):
         # relative disparity/depth, pose quality, and layer index = 10 channels.
         if metadata.shape[2] != 10:
             raise RuntimeError("current-conditioned metadata contract changed")
-        score_input = torch.cat(
-            (candidate_feature, query, metadata, candidate_pose), dim=2
-        ).reshape(batch * candidates, -1, height, width)
-        score_residual = self.score_head(score_input).reshape(
-            batch, candidates, 2, height, width
-        )
         log_prior = torch.log(safe_prior.clamp_min(1e-8)).to(dtype=target_dtype)
-        metric_weights, metric_valid = _masked_softmax(
-            log_prior + score_residual[:, :, 0], metric_mask
+        safe_disparity_target = safe_disparity.to(dtype=target_dtype)
+        safe_confidence_target = safe_confidence.to(dtype=target_dtype)
+
+        def learned_attention_core(
+            rgb_feature: Tensor,
+            geometry_feature: Tensor,
+            scalar_candidate_feature: Tensor,
+            hidden_value: Tensor,
+            candidate_metadata: Tensor,
+            pose_descriptor: Tensor,
+            prior_logits: Tensor,
+            candidate_disparity: Tensor,
+            candidate_confidence: Tensor,
+        ) -> tuple[Tensor, Tensor, Tensor, Tensor, Tensor]:
+            encoded_hidden = (
+                self.hidden_value_encoder(
+                    hidden_value.reshape(
+                        batch * candidates,
+                        self.warped_hidden_channels,
+                        height,
+                        width,
+                    )
+                ).reshape(
+                    batch,
+                    candidates,
+                    self.candidate_channels,
+                    height,
+                    width,
+                )
+                if has_warped_hidden
+                else torch.zeros_like(scalar_candidate_feature)
+            )
+            encoded_hidden = torch.where(
+                valid.unsqueeze(2),
+                encoded_hidden,
+                torch.zeros_like(encoded_hidden),
+            )
+            fused_candidate = scalar_candidate_feature + encoded_hidden
+            query = self.query_encoder(
+                torch.cat((rgb_feature, geometry_feature), dim=1)
+            )
+            score_input = torch.cat(
+                (fused_candidate, candidate_metadata, pose_descriptor), dim=2
+            ).reshape(batch * candidates, -1, height, width)
+            candidate_keys = self.score_head(score_input).reshape(
+                batch,
+                candidates,
+                2,
+                self.query_channels,
+                height,
+                width,
+            )
+            score_residual = (
+                candidate_keys * query[:, None, None]
+            ).sum(dim=3) / float(self.query_channels) ** 0.5
+            metric_weight, _ = _masked_softmax(
+                prior_logits + score_residual[:, :, 0], metric_mask
+            )
+            context_weight, _ = _masked_softmax(
+                prior_logits + score_residual[:, :, 1], context_mask
+            )
+            metric_disparity_value = (
+                metric_weight * candidate_disparity
+            ).sum(dim=1, keepdim=True)
+            metric_confidence_value = (
+                metric_weight * candidate_confidence
+            ).sum(dim=1, keepdim=True)
+            context_value = (
+                context_weight.unsqueeze(2) * fused_candidate
+            ).sum(dim=1)
+            return (
+                metric_weight,
+                context_weight,
+                metric_disparity_value,
+                metric_confidence_value,
+                context_value,
+            )
+
+        core_inputs = (
+            rgb_feature_lr,
+            geometry_feature_lr,
+            candidate_feature,
+            warped_hidden,
+            metadata,
+            candidate_pose,
+            log_prior,
+            safe_disparity_target,
+            safe_confidence_target,
         )
-        context_weights, context_valid = _masked_softmax(
-            log_prior + score_residual[:, :, 1], context_mask
+        if self.training and torch.is_grad_enabled():
+            (
+                metric_weights,
+                context_weights,
+                metric_disparity,
+                metric_confidence,
+                context_feature,
+            ) = activation_checkpoint(
+                learned_attention_core,
+                *core_inputs,
+                use_reentrant=False,
+            )
+        else:
+            (
+                metric_weights,
+                context_weights,
+                metric_disparity,
+                metric_confidence,
+                context_feature,
+            ) = learned_attention_core(*core_inputs)
+        metric_valid = (metric_weights.sum(dim=1, keepdim=True) > 0) & metric_mask.any(
+            dim=1, keepdim=True
         )
-        metric_disparity = (
-            metric_weights * safe_disparity.to(dtype=target_dtype)
-        ).sum(dim=1, keepdim=True)
-        metric_confidence = (
-            metric_weights * safe_confidence.to(dtype=target_dtype)
-        ).sum(dim=1, keepdim=True)
-        context_feature = (
-            context_weights.unsqueeze(2) * candidate_feature
-        ).sum(dim=1)
+        context_valid = (
+            context_weights.sum(dim=1, keepdim=True) > 0
+        ) & context_mask.any(dim=1, keepdim=True)
         metric_disparity = torch.where(
             metric_valid, metric_disparity, torch.zeros_like(metric_disparity)
         )

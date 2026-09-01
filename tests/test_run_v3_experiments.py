@@ -66,6 +66,9 @@ def _arguments(tmp_path: Path, *extra: str) -> Any:
         tmp_path / "inputs" / "validation.jsonl", _validation_manifest_text()
     )
     train_sidecar = _touch(tmp_path / "inputs" / "train_calibration.jsonl")
+    train_sidecar.with_suffix(".receipt.json").write_text(
+        json.dumps({"counts": {"unique_calibrations": 1}}), encoding="utf-8"
+    )
     validation_sidecar = _touch(tmp_path / "inputs" / "validation_calibration.jsonl")
     receipt = validation_sidecar.with_suffix(".receipt.json")
     receipt.write_text(
@@ -242,9 +245,25 @@ class FakeExecutor:
         output = Path(command[command.index("--output-dir") + 1])
         seed = int(next(value.split("=", 1)[1] for value in command if value.startswith("seed=")))
         manifest = Path(command[command.index("--manifest") + 1])
+        checkpoint = Path(command[command.index("--checkpoint") + 1])
+        report = _eval_report(arm, seed=seed, manifest=manifest)
+        report["checkpoint"] = {
+            "checkpoint_sha256": hashlib.sha256(checkpoint.read_bytes()).hexdigest()
+        }
+        if "--spatial-checkpoint" in command:
+            spatial_checkpoint = Path(
+                command[command.index("--spatial-checkpoint") + 1]
+            )
+            report["spatial_checkpoint"] = {
+                "checkpoint_sha256": hashlib.sha256(
+                    spatial_checkpoint.read_bytes()
+                ).hexdigest()
+            }
+        else:
+            report["spatial_checkpoint"] = None
         _touch(
             output / "metrics.json",
-            json.dumps(_eval_report(arm, seed=seed, manifest=manifest)),
+            json.dumps(report),
         )
         emit("EVALUATION_COMPLETE\n")
         return ProcessResult(exit_code=0)
@@ -425,6 +444,21 @@ def test_cuda_oom_fallback_and_same_a3_stage_b_lineage(tmp_path: Path) -> None:
     assert json.loads((tmp_path / "run" / "run_receipt.json").read_text())[
         "status"
     ] == "COMPLETE"
+    decision_inputs = json.loads(
+        (tmp_path / "run" / "decision_inputs.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    b1_entry = decision_inputs["seeds"]["42"]["B1"]
+    b1_checkpoint = (
+        tmp_path / "run" / "seed_42" / "B1" / "train_4x2" / "final.pt"
+    )
+    assert b1_entry["checkpoint_sha256"] == hashlib.sha256(
+        b1_checkpoint.read_bytes()
+    ).hexdigest()
+    assert b1_entry["spatial_checkpoint_sha256"] == hashlib.sha256(
+        a3_final.read_bytes()
+    ).hexdigest()
 
 
 def test_resume_recovers_completed_train_and_eval_without_relaunch(tmp_path: Path) -> None:
@@ -445,6 +479,30 @@ def test_resume_recovers_completed_train_and_eval_without_relaunch(tmp_path: Pat
     state = json.loads((tmp_path / "run" / "orchestration_state.json").read_text())
     assert state["jobs"]["seed_42.A3.train"]["status"] == "RECOVERED_COMPLETE"
     assert state["jobs"]["seed_42.B1.eval"]["status"] == "RECOVERED_COMPLETE"
+
+
+def test_resume_rejects_metrics_relabelled_to_another_checkpoint(
+    tmp_path: Path,
+) -> None:
+    first_args = _arguments(tmp_path, "--additional-seeds", "never")
+    run_orchestration(first_args, executor=FakeExecutor())
+
+    metrics_path = tmp_path / "run" / "seed_42" / "B1" / "eval" / "metrics.json"
+    metrics = json.loads(metrics_path.read_text(encoding="utf-8"))
+    metrics["checkpoint"]["checkpoint_sha256"] = "0" * 64
+    metrics_path.write_text(json.dumps(metrics), encoding="utf-8")
+    state_path = tmp_path / "run" / "orchestration_state.json"
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    state["jobs"]["seed_42.B1.eval"]["metrics_sha256"] = hashlib.sha256(
+        metrics_path.read_bytes()
+    ).hexdigest()
+    state_path.write_text(json.dumps(state), encoding="utf-8")
+
+    resumed_args = _arguments(
+        tmp_path, "--additional-seeds", "never", "--resume"
+    )
+    with pytest.raises(OrchestrationError, match="checkpoint SHA"):
+        run_orchestration(resumed_args, executor=FakeExecutor())
 
 
 def test_formal_runner_rejects_treatment_override_and_resume_dry_run(

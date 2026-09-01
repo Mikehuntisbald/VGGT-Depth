@@ -678,7 +678,7 @@ conda run --no-capture-output -n env-tsr python eval_epipolar.py \
   --device cuda --batch-size 1 --num-workers 4
 ```
 
-## 16. Build and run the calibration-aware v3 lineage
+## 16. Build and run the calibration-aware v3/v3.1 lineage
 
 V3 reuses the immutable raw FFS/VGGT caches. Do not edit the manifests and do
 not write v3 tensors into `m2_formal_{train,val}`. First build the
@@ -739,7 +739,8 @@ Run a source/input/audit-bound dry run before allocating a formal output root:
 
 ```bash
 conda run --no-capture-output -n env-tsr python tools/run_v3_experiments.py \
-  --output-root "$FFS_OMEGA_PROJECT_ROOT/outputs/ffs_omega_tsr_x2_v3_dryrun" \
+  --lineage v3_1 \
+  --output-root "$FFS_OMEGA_PROJECT_ROOT/outputs/ffs_omega_tsr_x2_v3_1_dryrun" \
   --train-manifest "$FFS_OMEGA_CACHE_ROOT/manifests/train_video_isolated.jsonl" \
   --train-observation-cache-root "$FFS_OMEGA_CACHE_ROOT/m1_formal_train/observation" \
   --train-teacher-cache-root "$FFS_OMEGA_CACHE_ROOT/m1_formal_train/teacher" \
@@ -754,6 +755,13 @@ conda run --no-capture-output -n env-tsr python tools/run_v3_experiments.py \
   --eval-batch-size 4 --additional-seeds auto \
   --dry-run
 ```
+
+`--lineage v3_1` is mandatory for the corrected experiment. It selects the
+half-pixel intrinsics contract, LR-centre measurement ownership, diverse top-K
+merge and current-conditioned candidate attention. Omitting the flag keeps the
+immutable original-v3 recipe for checkpoint archaeology only. Never resume an
+original-v3 output root as v3.1: the runner binds lineage, source, config and
+input hashes and rejects that transition.
 
 For the formal queue, use a new empty output root, the same arguments without
 `--dry-run`, and pass
@@ -775,6 +783,28 @@ effects and a sequence/frame clustered 95% bootstrap CI below zero. Missing
 latency/peak-VRAM evidence, incomplete masks, or any acceptance input fails
 closed. `decision.json` is the only GO/NO-GO receipt; smoke metrics and
 `orchestration_state.json` are not promotion evidence.
+
+For v3.1 the decision reader also requires exact lineage/output identity,
+pixel/measurement/candidate contracts, selected primary and Stage-A A3
+checkpoint hashes, all 13 aggregate top-K interpretation metrics, and the same
+13 keys on every Stage-B per-record row. Empty per-record domains are explicit
+JSON `null`; omitted keys or an all-null diagnostic fail closed.
+
+The interrupted root `outputs/ffs_omega_tsr_x2_v3` contains completed A0/A1
+and a partial A2 from the superseded pixel-centre contract. Preserve it as an
+invalidated provenance artifact, but do not resume it or use its metrics for a
+GO/NO-GO decision. The corrected formal root is
+`outputs/ffs_omega_tsr_x2_v3_1`.
+
+V3.1 evaluation additionally writes
+`diagnostics.topk_candidate_complementarity_v3_1` and matching per-record
+`topk_*` fields: unique-age fraction, age-2 survival rate, fractional-phase
+variance for both the uniformly retained set and learned attended set,
+transport-prior/context-attention/metric-attention entropy, candidate depth
+spread, and rank-zero/prior-weighted/attention-weighted teacher EPE with paired
+deltas. These are
+required interpretation receipts; a T3 gain without candidate diversity is
+not evidence of subpixel temporal complementarity.
 
 ## M0 environment/backbone tool status and exit codes
 

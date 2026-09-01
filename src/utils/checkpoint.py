@@ -296,6 +296,7 @@ def load_model_initialization_checkpoint(
     required_sequence_length: int = 1,
     required_seed: int | None = None,
     required_calibration_conditioning_v3: Mapping[str, Any] | None = None,
+    required_config_sections: Mapping[str, Mapping[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Load only model weights from a validated prior-stage checkpoint.
 
@@ -326,6 +327,7 @@ def load_model_initialization_checkpoint(
         )
     source_seed = config.get("seed")
     source_calibration: dict[str, Any] | None = None
+    source_required_sections: dict[str, dict[str, Any]] = {}
     if required_calibration_conditioning_v3 is not None:
         required_treatment = _plain_config(
             {"calibration_conditioning_v3": required_calibration_conditioning_v3}
@@ -350,6 +352,28 @@ def load_model_initialization_checkpoint(
                 "calibration-v3 initialization checkpoint has the wrong derived contract"
             )
         source_calibration = dict(actual_treatment)
+    if required_config_sections is not None:
+        if not isinstance(required_config_sections, Mapping):
+            raise TypeError("required_config_sections must be a mapping")
+        for section_name, required_section in required_config_sections.items():
+            if not isinstance(section_name, str) or not isinstance(
+                required_section, Mapping
+            ):
+                raise TypeError(
+                    "required_config_sections must map names to mappings"
+                )
+            expected_section = _plain_config(
+                {section_name: required_section}
+            )[section_name]
+            actual_section = config.get(section_name)
+            if not isinstance(actual_section, Mapping) or dict(
+                actual_section
+            ) != expected_section:
+                raise CheckpointMismatchError(
+                    "initialization checkpoint config section mismatch: "
+                    f"{section_name}"
+                )
+            source_required_sections[section_name] = dict(actual_section)
     if required_seed is not None:
         if (
             isinstance(required_seed, bool)
@@ -378,6 +402,7 @@ def load_model_initialization_checkpoint(
         "source_sequence_length": required_sequence_length,
         "source_seed": source_seed,
         "calibration_conditioning_v3": source_calibration,
+        "required_config_sections": source_required_sections,
     }
 
 

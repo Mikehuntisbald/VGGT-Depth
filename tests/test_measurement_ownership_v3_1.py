@@ -91,6 +91,11 @@ def test_confidence_and_ffs_boundary_set_a_finite_per_cell_detail_limit() -> Non
 def test_v3_1_hole_without_vggt_or_history_metric_support_is_exact_zero() -> None:
     model = FFSOmegaTSR(
         physical_output_v2=True,
+        calibration_conditioning_v3=True,
+        use_rays=False,
+        use_stereo_pose=False,
+        use_temporal_pose=False,
+        align_corners_false_pixel_centers=True,
         measurement_ownership_v3_1=True,
     ).eval()
     rgb = torch.rand(1, 3, 8, 12)

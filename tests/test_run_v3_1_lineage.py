@@ -25,6 +25,10 @@ def _arguments(tmp_path: Path, *, lineage: str | None = None):
     for name in ("train_sidecar", "validation_sidecar"):
         files[name] = input_root / f"{name}.jsonl"
         files[name].write_text("{}\n", encoding="utf-8")
+        files[name].with_suffix(".receipt.json").write_text(
+            json.dumps({"counts": {"unique_calibrations": 1}}),
+            encoding="utf-8",
+        )
     roots: dict[str, Path] = {}
     for name in (
         "train_observation",

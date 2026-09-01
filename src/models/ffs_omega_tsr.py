@@ -65,6 +65,8 @@ class ModelOutput:
         history_metric_confidence: Confidence of that metric proposal.
         history_metric_valid_mask: Whether at least one same-surface candidate
             supports the proposal.
+        history_value_feature: Opt-in compressed final ConvGRU feature
+            ``[B,8,H,W]`` retained for per-candidate causal transport.
 
     The final five fields are diagnostic tensor taps only.  They do not add
     modules, parameters, buffers, or checkpoint state.  Their optional defaults
@@ -97,6 +99,7 @@ class ModelOutput:
     history_metric_disparity_hr_px: Tensor | None = None
     history_metric_confidence: Tensor | None = None
     history_metric_valid_mask: Tensor | None = None
+    history_value_feature: Tensor | None = None
 
 
 def count_trainable_parameters(module: nn.Module) -> int:
@@ -460,6 +463,13 @@ class FFSOmegaTSR(nn.Module):
             raise ValueError(
                 "current_conditioned_history_v3_1 requires calibration_conditioning_v3"
             )
+        if (
+            measurement_ownership_v3_1 or current_conditioned_history_v3_1
+        ) and not align_corners_false_pixel_centers:
+            raise ValueError(
+                "v3.1 measurement/candidate paths require corrected "
+                "align_corners_false pixel centres"
+            )
         if align_corners_false_pixel_centers and not calibration_conditioning_v3:
             raise ValueError(
                 "align_corners_false_pixel_centers requires "
@@ -532,8 +542,14 @@ class FFSOmegaTSR(nn.Module):
             measurement_boundary_relative_scale
         )
         self.current_conditioned_history_v3_1 = current_conditioned_history_v3_1
+        self.temporal_candidate_value_channels = 8
         self.calibration_conditioner: CalibrationConditionerV3 | None = None
-        self.rgb_encoder = RGBPyramidEncoder(rgb_channels)
+        self.rgb_encoder = RGBPyramidEncoder(
+            rgb_channels,
+            align_corners_false_pixel_centers=(
+                align_corners_false_pixel_centers
+            ),
+        )
         self.geometry_encoder = GeometryEncoder(geometry_channels)
         self.topk_history_encoder: TopKHistoryEncoder | None = None
         if temporal_history_top_k is not None:
@@ -546,6 +562,14 @@ class FFSOmegaTSR(nn.Module):
                 rgb_channels=rgb_channels[-1],
                 geometry_channels=geometry_channels,
                 candidate_channels=temporal_history_feature_channels,
+                warped_hidden_channels=self.temporal_candidate_value_channels,
+            )
+        self.history_value_projection: nn.Module | None = None
+        if self.current_conditioned_history_v3_1:
+            self.history_value_projection = nn.Conv2d(
+                hidden_channels,
+                self.temporal_candidate_value_channels,
+                kernel_size=1,
             )
         recurrent_input_channels = rgb_channels[-1] + geometry_channels
         if self.topk_history_encoder is not None:
@@ -671,6 +695,7 @@ class FFSOmegaTSR(nn.Module):
         history_topk_depth_layer_index: Tensor | None = None,
         history_topk_front_surface_mask: Tensor | None = None,
         history_topk_context_only_mask: Tensor | None = None,
+        history_topk_warped_hidden_feature: Tensor | None = None,
         valid_ffs: Tensor | None = None,
         valid_vggt: Tensor | None = None,
         valid_history: Tensor | None = None,
@@ -936,6 +961,7 @@ class FFSOmegaTSR(nn.Module):
             history_topk_depth_layer_index,
             history_topk_front_surface_mask,
             history_topk_context_only_mask,
+            history_topk_warped_hidden_feature,
         )
         if self.topk_history_encoder is None:
             if any(
@@ -991,6 +1017,8 @@ class FFSOmegaTSR(nn.Module):
                 ):
                     if value.shape != topk_shape:
                         raise ValueError(f"{name} must have shape {topk_shape}")
+                    if value.device != rgb_hr.device:
+                        raise ValueError(f"{name} must be on device {rgb_hr.device}")
                 expected_phase_shape = (
                     batch,
                     self.temporal_history_top_k,
@@ -1025,6 +1053,7 @@ class FFSOmegaTSR(nn.Module):
                 topk_depth_layer = None
                 topk_front_surface = None
                 topk_context_only = None
+                topk_warped_hidden = None
             elif all(value is None for value in supplied_topk_core):
                 topk_depth = disparity_ffs_hr_px.new_zeros(topk_shape)
                 topk_pose_quality = disparity_ffs_hr_px.new_zeros(topk_shape)
@@ -1035,9 +1064,16 @@ class FFSOmegaTSR(nn.Module):
                     topk_shape, dtype=torch.bool, device=rgb_hr.device
                 )
                 topk_context_only = torch.zeros_like(topk_front_surface)
+                topk_warped_hidden = disparity_ffs_hr_px.new_zeros(
+                    batch,
+                    self.temporal_history_top_k,
+                    self.temporal_candidate_value_channels,
+                    height_lr,
+                    width_lr,
+                )
             elif any(value is None for value in supplied_topk_v31):
                 raise ValueError(
-                    "all five v3.1 top-K candidate metadata tensors must be "
+                    "all six v3.1 top-K candidate metadata tensors must be "
                     "supplied together"
                 )
             else:
@@ -1046,6 +1082,7 @@ class FFSOmegaTSR(nn.Module):
                 assert history_topk_depth_layer_index is not None
                 assert history_topk_front_surface_mask is not None
                 assert history_topk_context_only_mask is not None
+                assert history_topk_warped_hidden_feature is not None
                 for name, value in (
                     ("history_topk_depth_m", history_topk_depth_m),
                     ("history_topk_pose_quality", history_topk_pose_quality),
@@ -1053,22 +1090,63 @@ class FFSOmegaTSR(nn.Module):
                     ("history_topk_front_surface_mask", history_topk_front_surface_mask),
                     ("history_topk_context_only_mask", history_topk_context_only_mask),
                 ):
+                    if not isinstance(value, Tensor):
+                        raise TypeError(f"{name} must be a torch.Tensor")
                     if value.shape != topk_shape:
                         raise ValueError(f"{name} must have shape {topk_shape}")
+                    if value.device != rgb_hr.device:
+                        raise ValueError(f"{name} must be on device {rgb_hr.device}")
+                for name, value in (
+                    ("history_topk_depth_m", history_topk_depth_m),
+                    ("history_topk_pose_quality", history_topk_pose_quality),
+                ):
+                    if not value.is_floating_point() or value.is_complex():
+                        raise TypeError(f"{name} must be real floating point")
+                for name, value in (
+                    ("history_topk_front_surface_mask", history_topk_front_surface_mask),
+                    ("history_topk_context_only_mask", history_topk_context_only_mask),
+                ):
+                    if value.dtype != torch.bool:
+                        raise TypeError(f"{name} must have bool dtype")
                 topk_depth = history_topk_depth_m
                 topk_pose_quality = history_topk_pose_quality
                 topk_depth_layer = history_topk_depth_layer_index
                 topk_front_surface = history_topk_front_surface_mask
                 topk_context_only = history_topk_context_only_mask
-            encoding = self.topk_history_encoder(
-                topk_disparity.to(dtype=target_dtype),
-                topk_confidence.to(dtype=target_dtype),
-                topk_phase.to(dtype=target_dtype),
-                topk_age.to(dtype=target_dtype),
-                topk_weights.to(dtype=target_dtype),
-                topk_valid,
-            )
+                expected_hidden_shape = (
+                    batch,
+                    self.temporal_history_top_k,
+                    self.temporal_candidate_value_channels,
+                    height_lr,
+                    width_lr,
+                )
+                if history_topk_warped_hidden_feature.shape != expected_hidden_shape:
+                    raise ValueError(
+                        "history_topk_warped_hidden_feature must have shape "
+                        f"{expected_hidden_shape}"
+                    )
+                if (
+                    not history_topk_warped_hidden_feature.is_floating_point()
+                    or history_topk_warped_hidden_feature.is_complex()
+                ):
+                    raise TypeError(
+                        "history_topk_warped_hidden_feature must be real "
+                        "floating point"
+                    )
+                if history_topk_warped_hidden_feature.device != rgb_hr.device:
+                    raise ValueError(
+                        "history_topk_warped_hidden_feature must be on the RGB device"
+                    )
+                topk_warped_hidden = history_topk_warped_hidden_feature
             if self.current_conditioned_history is None:
+                encoding = self.topk_history_encoder(
+                    topk_disparity.to(dtype=target_dtype),
+                    topk_confidence.to(dtype=target_dtype),
+                    topk_phase.to(dtype=target_dtype),
+                    topk_age.to(dtype=target_dtype),
+                    topk_weights.to(dtype=target_dtype),
+                    topk_valid,
+                )
                 recurrent_features.append(encoding.aggregate_feature)
                 topk_effective_weights = encoding.effective_weights
                 topk_effective_valid_mask = (
@@ -1080,62 +1158,90 @@ class FFSOmegaTSR(nn.Module):
                 assert topk_depth_layer is not None
                 assert topk_front_surface is not None
                 assert topk_context_only is not None
-                valid_candidate_exists = bool(topk_valid.any())
-                if baseline_m is None:
-                    if valid_candidate_exists:
+                assert topk_warped_hidden is not None
+                if not bool(topk_valid.any()):
+                    topk_effective_weights = torch.zeros_like(topk_weights)
+                    topk_effective_valid_mask = torch.zeros_like(topk_valid)
+                    topk_context_weights = torch.zeros_like(topk_weights)
+                    history_metric_disparity = torch.zeros_like(
+                        safe_disparities_hr_px[0]
+                    )
+                    history_metric_confidence = torch.zeros_like(
+                        safe_confidences[0]
+                    )
+                    history_metric_valid = torch.zeros_like(
+                        source_valid_masks[0]
+                    )
+                    context_feature = rgb_features.feature_lr.new_zeros(
+                        batch,
+                        self.topk_history_encoder.output_channels,
+                        height_lr,
+                        width_lr,
+                    )
+                else:
+                    encoding = self.topk_history_encoder(
+                        topk_disparity.to(dtype=target_dtype),
+                        topk_confidence.to(dtype=target_dtype),
+                        topk_phase.to(dtype=target_dtype),
+                        topk_age.to(dtype=target_dtype),
+                        topk_weights.to(dtype=target_dtype),
+                        topk_valid,
+                    )
+                    if baseline_m is None:
                         raise ValueError(
                             "valid v3.1 candidates require target baseline_m"
                         )
-                    attention_baseline = torch.ones(
-                        batch, dtype=torch.float32, device=rgb_hr.device
-                    )
-                else:
                     attention_baseline = baseline_m
-                if self.use_temporal_pose:
-                    if T_current_from_history_m is None or temporal_pose_valid is None:
-                        raise ValueError(
-                            "enabled v3.1 temporal-pose conditioning requires "
-                            "T_current_from_history_m and temporal_pose_valid"
+                    if self.use_temporal_pose:
+                        if (
+                            T_current_from_history_m is None
+                            or temporal_pose_valid is None
+                        ):
+                            raise ValueError(
+                                "enabled v3.1 temporal-pose conditioning requires "
+                                "T_current_from_history_m and temporal_pose_valid"
+                            )
+                        attention_transform = T_current_from_history_m
+                        attention_pose_valid = temporal_pose_valid
+                    else:
+                        attention_transform = torch.eye(
+                            4, dtype=torch.float32, device=rgb_hr.device
+                        ).reshape(1, 1, 4, 4).expand(batch, 2, -1, -1).clone()
+                        attention_pose_valid = torch.zeros(
+                            batch, 2, dtype=torch.bool, device=rgb_hr.device
                         )
-                    attention_transform = T_current_from_history_m
-                    attention_pose_valid = temporal_pose_valid
-                else:
-                    attention_transform = torch.eye(
-                        4, dtype=torch.float32, device=rgb_hr.device
-                    ).reshape(1, 1, 4, 4).expand(batch, 2, -1, -1).clone()
-                    attention_pose_valid = torch.zeros(
-                        batch, 2, dtype=torch.bool, device=rgb_hr.device
+                    attention = self.current_conditioned_history(
+                        rgb_feature_lr=rgb_features.feature_lr,
+                        geometry_feature_lr=geometry_feature_lr,
+                        candidate_feature=encoding.candidate_feature,
+                        disparity_hr_px=topk_disparity.to(dtype=target_dtype),
+                        depth_m=topk_depth.to(dtype=target_dtype),
+                        confidence=topk_confidence.to(dtype=target_dtype),
+                        fractional_phase_grid_px=topk_phase.to(dtype=target_dtype),
+                        temporal_age_frames=topk_age.to(dtype=target_dtype),
+                        z_aware_prior_weights=topk_weights.to(dtype=target_dtype),
+                        pose_quality=topk_pose_quality.to(dtype=target_dtype),
+                        depth_layer_index=topk_depth_layer,
+                        valid_mask=topk_valid,
+                        front_surface_mask=topk_front_surface,
+                        context_only_mask=topk_context_only,
+                        current_ffs_disparity_hr_px=safe_disparities_hr_px[0],
+                        current_ffs_confidence=safe_confidences[0],
+                        T_current_from_history_m=attention_transform,
+                        baseline_m=attention_baseline,
+                        temporal_pose_valid=attention_pose_valid,
+                        warped_hidden_feature=topk_warped_hidden,
                     )
-                attention = self.current_conditioned_history(
-                    rgb_feature_lr=rgb_features.feature_lr,
-                    geometry_feature_lr=geometry_feature_lr,
-                    candidate_feature=encoding.candidate_feature,
-                    disparity_hr_px=topk_disparity.to(dtype=target_dtype),
-                    depth_m=topk_depth.to(dtype=target_dtype),
-                    confidence=topk_confidence.to(dtype=target_dtype),
-                    fractional_phase_grid_px=topk_phase.to(dtype=target_dtype),
-                    temporal_age_frames=topk_age.to(dtype=target_dtype),
-                    z_aware_prior_weights=topk_weights.to(dtype=target_dtype),
-                    pose_quality=topk_pose_quality.to(dtype=target_dtype),
-                    depth_layer_index=topk_depth_layer,
-                    valid_mask=topk_valid,
-                    front_surface_mask=topk_front_surface,
-                    context_only_mask=topk_context_only,
-                    current_ffs_disparity_hr_px=safe_disparities_hr_px[0],
-                    current_ffs_confidence=safe_confidences[0],
-                    T_current_from_history_m=attention_transform,
-                    baseline_m=attention_baseline,
-                    temporal_pose_valid=attention_pose_valid,
-                )
-                recurrent_features.append(attention.context_feature)
-                topk_effective_weights = attention.metric_weights
-                topk_effective_valid_mask = (
-                    topk_valid & (attention.metric_weights > 0)
-                )
-                topk_context_weights = attention.context_weights
-                history_metric_disparity = attention.metric_disparity_hr_px
-                history_metric_confidence = attention.metric_confidence
-                history_metric_valid = attention.metric_valid_mask
+                    context_feature = attention.context_feature
+                    topk_effective_weights = attention.metric_weights
+                    topk_effective_valid_mask = (
+                        topk_valid & (attention.metric_weights > 0)
+                    )
+                    topk_context_weights = attention.context_weights
+                    history_metric_disparity = attention.metric_disparity_hr_px
+                    history_metric_confidence = attention.metric_confidence
+                    history_metric_valid = attention.metric_valid_mask
+                recurrent_features.append(context_feature)
                 # Current-conditioned, same-surface history becomes the third
                 # metric owner.  The coarse pre-attention aggregate remains in
                 # geometry_lr only as an initialization/query cue.
@@ -1158,6 +1264,11 @@ class FFSOmegaTSR(nn.Module):
         recurrent_input_lr = torch.cat(recurrent_features, dim=1)
         fused_feature_lr, next_hidden_state = self.temporal_fusion(
             recurrent_input_lr, hidden_state
+        )
+        history_value_feature = (
+            None
+            if self.history_value_projection is None
+            else self.history_value_projection(fused_feature_lr)
         )
 
         source_weights = self.source_gating(fused_feature_lr, source_valid_mask)
@@ -1391,4 +1502,5 @@ class FFSOmegaTSR(nn.Module):
             history_metric_disparity_hr_px=history_metric_disparity,
             history_metric_confidence=history_metric_confidence,
             history_metric_valid_mask=history_metric_valid,
+            history_value_feature=history_value_feature,
         )

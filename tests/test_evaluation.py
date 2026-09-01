@@ -202,6 +202,71 @@ def test_temporal_metric_contract_separates_v2_primary_from_legacy() -> None:
     assert "not teacher/GT" in legacy["warning"]
 
 
+def test_v31_per_record_writer_keeps_all_topk_keys_and_null_invalid(
+    tmp_path: Path,
+) -> None:
+    invalid_name = eval_cli.TOPK_V31_DIAGNOSTIC_NAMES[-1]
+    metrics = {
+        "ordinary_valid": MetricResult(2.0, 2.0, 1, True),
+        "ordinary_invalid": MetricResult.invalid(),
+        **{
+            f"topk_{name}": (
+                MetricResult.invalid()
+                if name == invalid_name
+                else MetricResult(0.5, 0.5, 1, True)
+            )
+            for name in eval_cli.TOPK_V31_DIAGNOSTIC_NAMES
+        },
+    }
+
+    serialized = eval_cli._per_record_metric_values(
+        metrics,
+        require_topk_v31=True,
+    )
+
+    assert serialized["ordinary_valid"] == pytest.approx(2.0)
+    assert "ordinary_invalid" not in serialized
+    assert {
+        name for name in serialized if name.startswith("topk_")
+    } == {
+        f"topk_{name}" for name in eval_cli.TOPK_V31_DIAGNOSTIC_NAMES
+    }
+    assert serialized[f"topk_{invalid_name}"] is None
+    assert all(
+        serialized[f"topk_{name}"] == pytest.approx(0.5)
+        for name in eval_cli.TOPK_V31_DIAGNOSTIC_NAMES
+        if name != invalid_name
+    )
+    path = tmp_path / "per_record.jsonl"
+    eval_cli._write_jsonl_atomic(path, [{"metrics": serialized}])
+    raw = path.read_text(encoding="utf-8")
+    assert f'"topk_{invalid_name}": null' in raw
+    decoded = json.loads(raw)
+    assert decoded["metrics"][f"topk_{invalid_name}"] is None
+
+
+def test_v31_per_record_writer_fails_closed_on_missing_topk_key() -> None:
+    metrics = {
+        f"topk_{name}": MetricResult(0.5, 0.5, 1, True)
+        for name in eval_cli.TOPK_V31_DIAGNOSTIC_NAMES[:-1]
+    }
+
+    with pytest.raises(RuntimeError, match="per-record diagnostics are missing"):
+        eval_cli._per_record_metric_values(
+            metrics,
+            require_topk_v31=True,
+        )
+
+    legacy = eval_cli._per_record_metric_values(
+        {
+            "ordinary_valid": MetricResult(1.0, 1.0, 1, True),
+            "ordinary_invalid": MetricResult.invalid(),
+        },
+        require_topk_v31=False,
+    )
+    assert legacy == {"ordinary_valid": 1.0}
+
+
 def test_v2_metric_uses_teacher_correspondence_carried_prediction() -> None:
     transport = _fake_transport(99.0)
     valid = torch.ones((1, 1, 4, 4), dtype=torch.bool)
@@ -465,6 +530,50 @@ def _temporal_checkpoint_config() -> dict[str, object]:
     return config
 
 
+def _temporal_v31_checkpoint_config() -> dict[str, object]:
+    config = _temporal_checkpoint_config()
+    config["calibration_conditioning_v3"] = {
+        "enabled": True,
+        "protocol_version": train.CALIBRATION_CONDITIONING_V3_PROTOCOL,
+        "pixel_center_contract": (
+            train.ALIGN_CORNERS_FALSE_PIXEL_CENTER_CONTRACT
+        ),
+        "use_rays": True,
+        "use_stereo_pose": True,
+        "use_temporal_pose": False,
+    }
+    config["measurement_ownership_v3_1"] = {
+        "enabled": True,
+        "protocol_version": train.MEASUREMENT_OWNERSHIP_V31_PROTOCOL,
+        "minimum_subpixel_residual_hr_px": 1.0,
+        "maximum_subpixel_residual_hr_px": 8.0,
+        "boundary_relative_scale": 0.10,
+    }
+    config["temporal_candidate_fusion_v3_1"] = {
+        "enabled": True,
+        "protocol_version": train.TEMPORAL_CANDIDATE_FUSION_V31_PROTOCOL,
+        "per_age_quota": 2,
+        "surface_depth_gap_m": 0.05,
+        "surface_relative_depth_gap": 0.05,
+        "phase_redundancy_sigma_grid_px": 0.125,
+        "phase_redundancy_penalty": 0.25,
+    }
+    data = config["data"]
+    assert isinstance(data, dict)
+    data["derived_contract"] = "calibrated_stereo_v2"
+    data["calibration_sidecar_lineage"] = {
+        "component": "rectified-stereo-calibration",
+        "contract_version": "stored_rectified_virtual_cameras_v1",
+        "pixel_audit_sha256": "a" * 64,
+    }
+    derived = data["derived_cache_lineage"]
+    assert isinstance(derived, dict)
+    derived["component"] = (
+        "vggt-ffs-derived-geometry-calibrated-stereo-v2-batch"
+    )
+    return config
+
+
 def test_temporal_checkpoint_lineage_checks_stage_policy_and_active_config() -> None:
     config = _temporal_checkpoint_config()
     metadata = {"training_config": config}
@@ -504,6 +613,142 @@ def test_temporal_checkpoint_lineage_checks_stage_policy_and_active_config() -> 
             teacher_cache_identity=_cache_identity_dict("ffs-teacher"),
             derived_cache_lineage=current_derived,
             evaluation_config=changed_eval,
+        )
+
+
+@pytest.mark.parametrize(
+    ("section_name", "field_name", "replacement"),
+    (
+        ("measurement_ownership_v3_1", "boundary_relative_scale", 0.2),
+        ("temporal_candidate_fusion_v3_1", "per_age_quota", 1),
+        ("temporal_candidate_fusion_v3_1", "per_age_quota", 2.0),
+        (
+            "temporal_candidate_fusion_v3_1",
+            "phase_redundancy_penalty",
+            0.5,
+        ),
+    ),
+)
+def test_v31_checkpoint_lineage_requires_exact_behavior_config(
+    section_name: str,
+    field_name: str,
+    replacement: object,
+) -> None:
+    config = _temporal_v31_checkpoint_config()
+    current_derived = {
+        "component": "vggt-ffs-derived-geometry-calibrated-stereo-v2-batch",
+        "config": {"algorithm": "strict"},
+    }
+    result = validate_checkpoint_lineage(
+        {"training_config": config},
+        required_stage="temporal",
+        observation_cache_identity=_cache_identity_dict("ffs-observation"),
+        teacher_cache_identity=_cache_identity_dict("ffs-teacher"),
+        derived_cache_lineage=current_derived,
+        evaluation_config=copy.deepcopy(config),
+    )
+    assert result["calibration_conditioning_v3"]["pixel_center_contract"] == (
+        train.ALIGN_CORNERS_FALSE_PIXEL_CENTER_CONTRACT
+    )
+
+    changed_eval = copy.deepcopy(config)
+    section = changed_eval[section_name]
+    assert isinstance(section, dict)
+    section[field_name] = replacement
+    with pytest.raises(
+        CheckpointMismatchError,
+        match=rf"v3\.1 behavior config differs.*{section_name}",
+    ):
+        validate_checkpoint_lineage(
+            {"training_config": config},
+            required_stage="temporal",
+            observation_cache_identity=_cache_identity_dict(
+                "ffs-observation"
+            ),
+            teacher_cache_identity=_cache_identity_dict("ffs-teacher"),
+            derived_cache_lineage=current_derived,
+            evaluation_config=changed_eval,
+        )
+
+
+@pytest.mark.parametrize(
+    "missing_from",
+    ("checkpoint", "evaluation"),
+)
+def test_v31_checkpoint_lineage_rejects_missing_behavior_section(
+    missing_from: str,
+) -> None:
+    checkpoint_config = _temporal_v31_checkpoint_config()
+    evaluation_config = copy.deepcopy(checkpoint_config)
+    target = checkpoint_config if missing_from == "checkpoint" else evaluation_config
+    target.pop("measurement_ownership_v3_1")
+    current_derived = {
+        "component": "vggt-ffs-derived-geometry-calibrated-stereo-v2-batch",
+        "config": {"algorithm": "strict"},
+    }
+
+    with pytest.raises(
+        CheckpointMismatchError,
+        match=rf"{missing_from} measurement_ownership_v3_1 config",
+    ):
+        validate_checkpoint_lineage(
+            {"training_config": checkpoint_config},
+            required_stage="temporal",
+            observation_cache_identity=_cache_identity_dict(
+                "ffs-observation"
+            ),
+            teacher_cache_identity=_cache_identity_dict("ffs-teacher"),
+            derived_cache_lineage=current_derived,
+            evaluation_config=evaluation_config,
+        )
+
+
+def test_checkpoint_lineage_rejects_unknown_pixel_center_contract() -> None:
+    config = _temporal_v31_checkpoint_config()
+    calibration = config["calibration_conditioning_v3"]
+    assert isinstance(calibration, dict)
+    calibration["pixel_center_contract"] = "unknown"
+    current_derived = {
+        "component": "vggt-ffs-derived-geometry-calibrated-stereo-v2-batch",
+        "config": {"algorithm": "strict"},
+    }
+
+    with pytest.raises(
+        CheckpointMismatchError,
+        match="unsupported pixel-center contract",
+    ):
+        validate_checkpoint_lineage(
+            {"training_config": config},
+            required_stage="temporal",
+            observation_cache_identity=_cache_identity_dict(
+                "ffs-observation"
+            ),
+            teacher_cache_identity=_cache_identity_dict("ffs-teacher"),
+            derived_cache_lineage=current_derived,
+            evaluation_config=copy.deepcopy(config),
+        )
+
+
+def test_v31_checkpoint_lineage_requires_evaluation_config() -> None:
+    config = _temporal_v31_checkpoint_config()
+    current_derived = {
+        "component": "vggt-ffs-derived-geometry-calibrated-stereo-v2-batch",
+        "config": {"algorithm": "strict"},
+    }
+
+    with pytest.raises(
+        CheckpointMismatchError,
+        match="v3.1 lineage validation requires.*evaluation config",
+    ):
+        validate_checkpoint_lineage(
+            {"training_config": config},
+            required_stage="temporal",
+            observation_cache_identity=_cache_identity_dict(
+                "ffs-observation"
+            ),
+            teacher_cache_identity=_cache_identity_dict("ffs-teacher"),
+            derived_cache_lineage=current_derived,
+            evaluation_config=None,
         )
 
 

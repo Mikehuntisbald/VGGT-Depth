@@ -201,6 +201,46 @@ its evaluated background. Formal temporal-pose identifiability is supplied by
 the hash-bound `tools/audit_v3_temporal_pose.py` receipt, not a metric inferred
 after training.
 
+### Corrected v3.1 pixel and candidate contract
+
+The first v3 formal attempt exposed a half-pixel mismatch: LR FFS images use
+bilinear `align_corners=False`, while their intrinsics used plain `K_hr/s`.
+V3.1 fixes every learned/rasterized LR geometry path with
+
+```text
+fx_lr = fx_hr / s
+cx_lr = (cx_hr + 0.5) / s - 0.5
+```
+
+and the analogous y equation. This matters to rays, 3D reprojection, hidden
+transport and fractional phase even though the shared stereo coordinate offset
+cancels from disparity. The learned LR RGB feature is formed with the same
+align-corners-false resampling before stride-one convolution, rather than the
+legacy integer-centred stride-two convolution. The old v3 configs remain immutable; corrected runs use
+`configs/mvp_x2_v3_1.yaml`, `configs/temporal_x2_v3_1.yaml` and
+`configs/ablations/v3_1_*.yaml`.
+
+V3.1 also distinguishes the LR FFS measurement from its HR bilinear
+interpolation. Trusted FFS is conserved exactly at the physical LR observation
+centres, while bounded zero-measurement-residual HR detail remains learnable.
+An FFS hole is completed only with valid VGGT/history metric support.
+
+Temporal candidates are selected with an age quota and fractional-phase
+redundancy penalty. Front/same-surface candidates alone form the metric history
+proposal; retained back layers are context-only. A learned selector observes
+the current RGB/FFS geometry before choosing candidates and receives disparity,
+depth, confidence, phase, age, a window-level continuous pose-quality score,
+depth layer, factorized motion and an 8-channel transported projection of each
+candidate's warped final-layer hidden feature; the selector embeds that value
+into its 32-channel candidate space. Evaluation logs
+unique-age fraction, front-layer age-2 survival, retained/attended phase
+variance, transport-prior/attention entropy, depth spread and rank-zero versus
+prior-weighted versus learned-weighted teacher EPE. The v3.1 model has exactly
+1,778,244 trainable parameters and adds no learned metric scale.
+The final decision reader rejects relabelled v3 evidence, checkpoint/A3 hash
+drift, missing v3.1 behavior contracts, and missing aggregate or per-record
+top-K interpretation fields.
+
 ## Colored point-cloud export
 
 `metrics.export_colored_point_cloud_ply` writes one calibrated camera-frame

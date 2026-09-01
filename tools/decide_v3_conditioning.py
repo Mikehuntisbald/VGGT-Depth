@@ -31,6 +31,54 @@ STAGE_A_RECORDS = 244
 STAGE_B_RECORDS = 238
 ARMS = ("A0", "A1", "A2", "A3", "B0", "B1")
 
+# ``component`` remains the stable decision-input schema identifier for both
+# lineages.  Corrected v3.1 manifests additionally carry these identities so a
+# copied original-v3 metrics bundle cannot be relabelled as v3.1 at decision
+# time.  A manifest with none of the three lineage fields is the immutable
+# pre-v3.1 compatibility form and is interpreted as legacy v3.
+LINEAGE_MANIFEST_CONTRACTS: Mapping[str, Mapping[str, str]] = {
+    "v3": {
+        "lineage_component": "v3-experiment-decision-inputs",
+        "output_component": "v3-experiment-orchestrator",
+    },
+    "v3_1": {
+        "lineage_component": "v3.1-experiment-decision-inputs",
+        "output_component": "v3.1-experiment-orchestrator",
+    },
+}
+V31_PIXEL_CENTER_CONTRACT = "align_corners_false_half_pixel_v3_1"
+V31_MEASUREMENT_CONTRACT: Mapping[str, Any] = {
+    "enabled": True,
+    "protocol_version": "lr_center_projection_bounded_subpixel_v3_1",
+    "minimum_subpixel_residual_hr_px": 1.0,
+    "maximum_subpixel_residual_hr_px": 8.0,
+    "boundary_relative_scale": 0.10,
+}
+V31_CANDIDATE_CONTRACT: Mapping[str, Any] = {
+    "enabled": True,
+    "protocol_version": "current_conditioned_age_phase_diverse_v3_1",
+    "per_age_quota": 2,
+    "surface_depth_gap_m": 0.05,
+    "surface_relative_depth_gap": 0.05,
+    "phase_redundancy_sigma_grid_px": 0.125,
+    "phase_redundancy_penalty": 0.25,
+}
+V31_TOPK_DIAGNOSTICS = (
+    "unique_age_fraction",
+    "age2_survival_rate",
+    "fractional_phase_variance",
+    "attended_fractional_phase_variance",
+    "topk_weight_entropy",
+    "context_attention_weight_entropy",
+    "metric_attention_weight_entropy",
+    "candidate_depth_spread_m",
+    "rank0_disparity_epe_hr_px",
+    "weighted_disparity_epe_hr_px",
+    "weighted_minus_rank0_epe_hr_px",
+    "attention_weighted_disparity_epe_hr_px",
+    "attention_weighted_minus_rank0_epe_hr_px",
+)
+
 # Predeclared engineering thresholds from the v3 plan.
 PRIMARY_IMPROVEMENT_PERCENT = 1.0
 MAX_EPE_DEGRADATION_PERCENT = 0.5
@@ -189,6 +237,226 @@ def _canonical_sha256(value: Any, name: str) -> str:
     except (TypeError, ValueError) as exc:
         raise DecisionInputError(f"{name} is not strict JSON") from exc
     return hashlib.sha256(encoded).hexdigest()
+
+
+def _manifest_lineage(
+    manifest: Mapping[str, Any], *, manifest_path: Path
+) -> str:
+    """Validate and return the concrete experiment lineage.
+
+    Original v3 decision manifests predate explicit lineage fields.  That exact
+    all-absent form remains supported.  Once any lineage field is present, all
+    three fields are mandatory and must bind the decision-input file to its
+    orchestrator output root.
+    """
+
+    lineage_fields = ("lineage", "lineage_component", "output_identity")
+    present = tuple(name in manifest for name in lineage_fields)
+    if not any(present):
+        return "v3"
+    if not all(present):
+        raise DecisionInputError(
+            "decision manifest lineage, lineage_component, and output_identity "
+            "must be supplied together"
+        )
+    lineage = manifest.get("lineage")
+    if not isinstance(lineage, str) or lineage not in LINEAGE_MANIFEST_CONTRACTS:
+        raise DecisionInputError("decision manifest lineage is unsupported")
+    expected = LINEAGE_MANIFEST_CONTRACTS[lineage]
+    if manifest.get("lineage_component") != expected["lineage_component"]:
+        raise DecisionInputError("decision manifest lineage_component mismatch")
+    output_identity = manifest.get("output_identity")
+    if not isinstance(output_identity, Mapping) or set(output_identity) != {
+        "component",
+        "lineage",
+        "path",
+    }:
+        raise DecisionInputError("decision manifest output_identity is malformed")
+    output_path = output_identity.get("path")
+    if (
+        output_identity.get("component") != expected["output_component"]
+        or output_identity.get("lineage") != lineage
+        or not isinstance(output_path, str)
+        or Path(output_path).expanduser().resolve() != manifest_path.parent
+    ):
+        raise DecisionInputError("decision manifest output_identity mismatch")
+    return lineage
+
+
+def _contract_value_matches(actual: Any, expected: Any) -> bool:
+    """Use strict bool/string identity and finite numeric equality."""
+
+    if isinstance(expected, bool):
+        return actual is expected
+    if isinstance(expected, int):
+        return type(actual) is int and actual == expected
+    if isinstance(expected, float):
+        return (
+            not isinstance(actual, bool)
+            and isinstance(actual, (int, float))
+            and math.isfinite(float(actual))
+            and float(actual) == float(expected)
+        )
+    return type(actual) is type(expected) and actual == expected
+
+
+def _require_resolved_v31_contract(
+    resolved: Mapping[str, Any], *, arm: str
+) -> None:
+    """Reject an arm whose resolved config is not the exact v3.1 recipe."""
+
+    calibration = resolved.get("calibration_conditioning_v3")
+    if (
+        not isinstance(calibration, Mapping)
+        or calibration.get("pixel_center_contract")
+        != V31_PIXEL_CENTER_CONTRACT
+    ):
+        raise DecisionInputError(f"{arm} v3.1 pixel-center contract differs")
+    for section_name, expected_contract in (
+        ("measurement_ownership_v3_1", V31_MEASUREMENT_CONTRACT),
+        ("temporal_candidate_fusion_v3_1", V31_CANDIDATE_CONTRACT),
+    ):
+        section = resolved.get(section_name)
+        if not isinstance(section, Mapping) or any(
+            not _contract_value_matches(section.get(name), expected)
+            for name, expected in expected_contract.items()
+        ):
+            raise DecisionInputError(f"{arm} {section_name} contract differs")
+
+
+def _is_sha256(value: Any) -> bool:
+    if not isinstance(value, str) or len(value) != 64:
+        return False
+    try:
+        int(value, 16)
+    except ValueError:
+        return False
+    return True
+
+
+def _require_checkpoint_binding(
+    entry: Mapping[str, Any],
+    report: Mapping[str, Any],
+    *,
+    arm: str,
+    stage_a: bool,
+    lineage: str,
+) -> None:
+    """Bind decision evidence to the selected primary and Stage-A checkpoints."""
+
+    explicit_primary = "checkpoint_sha256" in entry
+    if lineage == "v3_1" or explicit_primary:
+        checkpoint_sha256 = entry.get("checkpoint_sha256")
+        checkpoint = report.get("checkpoint")
+        if (
+            not _is_sha256(checkpoint_sha256)
+            or not isinstance(checkpoint, Mapping)
+            or checkpoint.get("checkpoint_sha256") != checkpoint_sha256
+        ):
+            raise DecisionInputError(f"{arm} checkpoint SHA-256 binding differs")
+
+    explicit_spatial = "spatial_checkpoint_sha256" in entry
+    if stage_a:
+        if (lineage == "v3_1" and not explicit_spatial) or (
+            explicit_spatial and entry.get("spatial_checkpoint_sha256") is not None
+        ):
+            raise DecisionInputError(
+                f"{arm} Stage-A spatial checkpoint binding must be null"
+            )
+        return
+    if lineage == "v3_1" or explicit_spatial:
+        spatial_sha256 = entry.get("spatial_checkpoint_sha256")
+        spatial_checkpoint = report.get("spatial_checkpoint")
+        if (
+            not _is_sha256(spatial_sha256)
+            or not isinstance(spatial_checkpoint, Mapping)
+            or spatial_checkpoint.get("checkpoint_sha256") != spatial_sha256
+        ):
+            raise DecisionInputError(
+                f"{arm} spatial checkpoint SHA-256 binding differs"
+            )
+
+
+def _require_v31_topk_interpretation(
+    report: Mapping[str, Any],
+    records_path: Path,
+    *,
+    arm: str,
+    expected_count: int,
+) -> None:
+    """Require finite aggregate and per-record top-K interpretation evidence.
+
+    These fields explain whether temporal gains used diverse candidates.  They
+    are availability/audit gates only: no diagnostic value is compared against
+    a promotion threshold here.
+    """
+
+    diagnostics = report.get("diagnostics")
+    topk = (
+        diagnostics.get("topk_candidate_complementarity_v3_1")
+        if isinstance(diagnostics, Mapping)
+        else None
+    )
+    if not isinstance(topk, Mapping):
+        raise DecisionInputError(f"{arm} v3.1 top-K diagnostics are missing")
+    for name in V31_TOPK_DIAGNOSTICS:
+        metric = topk.get(name)
+        if not isinstance(metric, Mapping) or metric.get("valid") is not True:
+            raise DecisionInputError(
+                f"{arm} aggregate topk_{name} diagnostic is invalid"
+            )
+        count = metric.get("count")
+        if isinstance(count, bool) or not isinstance(count, int) or count <= 0:
+            raise DecisionInputError(
+                f"{arm} aggregate topk_{name} diagnostic count is invalid"
+            )
+        _finite_number(metric.get("value"), f"{arm}.diagnostics.{name}.value")
+        _finite_number(
+            metric.get("numerator"), f"{arm}.diagnostics.{name}.numerator"
+        )
+
+    if not records_path.is_file():
+        raise DecisionInputError(f"{arm} v3.1 per-record top-K diagnostics are missing")
+    try:
+        lines = records_path.read_text(encoding="utf-8").splitlines()
+    except OSError as exc:
+        raise DecisionInputError(
+            f"cannot read {arm} per-record top-K diagnostics"
+        ) from exc
+    if len(lines) != expected_count or any(not line.strip() for line in lines):
+        raise DecisionInputError(
+            f"{arm} per-record top-K diagnostic coverage differs"
+        )
+    valid_counts = {name: 0 for name in V31_TOPK_DIAGNOSTICS}
+    for line_number, line in enumerate(lines, start=1):
+        try:
+            row = json.loads(line)
+        except json.JSONDecodeError as exc:
+            raise DecisionInputError(
+                f"malformed {arm} per-record row {line_number}"
+            ) from exc
+        metrics = row.get("metrics") if isinstance(row, Mapping) else None
+        if not isinstance(metrics, Mapping):
+            raise DecisionInputError(
+                f"{arm} per-record metrics are malformed on row {line_number}"
+            )
+        for name in V31_TOPK_DIAGNOSTICS:
+            field = f"topk_{name}"
+            if field not in metrics:
+                raise DecisionInputError(
+                    f"{arm} per-record {field} is missing on row {line_number}"
+                )
+            if metrics[field] is None:
+                continue
+            _finite_number(
+                metrics[field], f"{arm}.per_record[{line_number}].{field}"
+            )
+            valid_counts[name] += 1
+    missing = sorted(name for name, count in valid_counts.items() if count <= 0)
+    if missing:
+        raise DecisionInputError(
+            f"{arm} per-record top-K diagnostics have no valid values: {missing}"
+        )
 
 
 def _validation_record_sets(
@@ -437,6 +705,7 @@ def _load_arm_evidence(
     *,
     arm: str,
     arm_name: str,
+    lineage: str,
     seed: int,
     expected_count: int,
     validation_manifest_path: Path,
@@ -471,6 +740,13 @@ def _load_arm_evidence(
         raise DecisionInputError(f"{arm} evaluation is not final-acceptance eligible")
     # Callers prefix the arm with ``seedN.`` for actionable error messages.
     stage_a = arm.rsplit(".", 1)[-1].startswith("A")
+    _require_checkpoint_binding(
+        entry,
+        report,
+        arm=arm,
+        stage_a=stage_a,
+        lineage=lineage,
+    )
     expected_stage = "T1_SPATIAL_ONLY" if stage_a else "T3_CAUSAL_STAGE_B"
     if report.get("stage") != expected_stage:
         raise DecisionInputError(
@@ -506,6 +782,8 @@ def _load_arm_evidence(
         or actual_switches != expected_switches
     ):
         raise DecisionInputError(f"{arm} calibration treatment identity differs")
+    if lineage == "v3_1":
+        _require_resolved_v31_contract(resolved, arm=arm)
     data_config = resolved.get("data")
     if not isinstance(data_config, Mapping) or data_config.get("sequence_length") != (
         1 if stage_a else 3
@@ -535,6 +813,13 @@ def _load_arm_evidence(
         != "sequence_id/frame_id"
     ):
         raise DecisionInputError(f"{arm} metrics/per-record binding differs")
+    if lineage == "v3_1" and not stage_a:
+        _require_v31_topk_interpretation(
+            report,
+            records_path,
+            arm=arm,
+            expected_count=expected_count,
+        )
     methods = report.get("methods")
     if not isinstance(methods, Mapping):
         raise DecisionInputError(f"{arm} methods are missing")
@@ -1168,6 +1453,7 @@ def decide_manifest(
         raise DecisionInputError("decision manifest schema_version mismatch")
     if manifest.get("component") != "v3-experiment-decision-inputs":
         raise DecisionInputError("decision manifest component mismatch")
+    lineage = _manifest_lineage(manifest, manifest_path=manifest_file)
     expected_counts = manifest.get("expected_counts")
     if not isinstance(expected_counts, Mapping):
         raise DecisionInputError("decision manifest expected_counts are missing")
@@ -1227,6 +1513,7 @@ def decide_manifest(
                     entry,
                     arm=f"seed{seed}.{arm}",
                     arm_name=arm,
+                    lineage=lineage,
                     seed=seed,
                     expected_count=expected_count,
                     validation_manifest_path=validation_manifest_path,
@@ -1378,6 +1665,7 @@ def decide_manifest(
     report = {
         "schema_version": SCHEMA_VERSION,
         "component": COMPONENT,
+        "lineage": lineage,
         "decision": overall,
         "components": components,
         "recommended_switches": recommended,

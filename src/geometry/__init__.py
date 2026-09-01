@@ -53,8 +53,12 @@ from .zbuffer_reproject import (
 )
 from .history_confidence import HistoryConfidenceResult, history_confidence
 from .topk_splat import (
+    TOPK_DIVERSITY_V31_CONTRACT,
+    TopKDiversityDiagnostics,
     TopKSplatResult,
     merge_topk_splat_results,
+    merge_topk_splat_results_v31,
+    topk_diversity_diagnostics,
     topk_z_aware_splat,
     topk_z_aware_splat_v2,
 )
@@ -72,6 +76,8 @@ __all__ = [
     "VGGTAlignmentResult",
     "WarpResult",
     "TopKSplatResult",
+    "TopKDiversityDiagnostics",
+    "TOPK_DIVERSITY_V31_CONTRACT",
     "align_vggt_depth_to_ffs_disparity",
     "adjacent_left_photometric_reprojection",
     "assess_pose_quality",
@@ -89,6 +95,7 @@ __all__ = [
     "hr_disparity_to_lr_pixels",
     "history_confidence",
     "merge_topk_splat_results",
+    "merge_topk_splat_results_v31",
     "lr_disparity_to_hr_pixels",
     "metric_scale_vggt_geometry",
     "relative_camera_transform",
@@ -101,6 +108,7 @@ __all__ = [
     "validate_raw_cache_pair",
     "topk_z_aware_splat",
     "topk_z_aware_splat_v2",
+    "topk_diversity_diagnostics",
     "temporal_conditioning_transforms",
     "zbuffer_reproject",
 ]

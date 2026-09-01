@@ -152,3 +152,27 @@ def test_v3_identity_hidden_transport_has_zero_lr_fractional_phase() -> None:
         transport.topk_valid_mask.unsqueeze(2).expand(-1, -1, 2, -1, -1)
     ]
     torch.testing.assert_close(phase, torch.zeros_like(phase), atol=0.0, rtol=0.0)
+
+
+def test_corrected_lr_validity_requires_full_bilinear_centre_support() -> None:
+    disparity = torch.tensor([[[[0.0, 0.0], [0.0, 8.0]]]])
+    partial_valid = disparity > 0
+    sampled_disparity = train._sample_hr_winner_grid_to_lr(
+        disparity,
+        scale=2,
+        align_corners_false_pixel_centers=True,
+    )
+    sampled_valid = train._sample_hr_winner_grid_to_lr(
+        partial_valid,
+        scale=2,
+        align_corners_false_pixel_centers=True,
+    )
+    torch.testing.assert_close(sampled_disparity, torch.tensor([[[[2.0]]]]))
+    assert not sampled_valid.item()
+
+    full_valid = torch.ones_like(partial_valid)
+    assert train._sample_hr_winner_grid_to_lr(
+        full_valid,
+        scale=2,
+        align_corners_false_pixel_centers=True,
+    ).item()

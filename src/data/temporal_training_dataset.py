@@ -14,6 +14,7 @@ measurement tensor.
 from __future__ import annotations
 
 import json
+import math
 import multiprocessing as mp
 from collections.abc import Mapping
 from dataclasses import dataclass, replace
@@ -107,6 +108,7 @@ class TemporalTrainingSample:
     vggt_valid_mask_sequence: Tensor
     vggt_extrinsics_camera_from_world_metric_sequence: Tensor
     temporal_pose_valid_sequence: Tensor
+    temporal_pose_quality_score_sequence: Tensor
     static_prior_valid_sequence: Tensor
     sequence_id: str
     frame_ids: tuple[int, ...]
@@ -466,6 +468,80 @@ def _scalar_bool(tensors: Mapping[str, Any], name: str) -> bool:
     return bool(value.item())
 
 
+def _continuous_pose_quality_score(
+    quality: Mapping[str, Any],
+    *,
+    pose_valid: bool,
+    derived_contract: str,
+    thresholds: Mapping[str, Any] | None,
+    cache_path: Path,
+) -> float:
+    """Map audited gate residuals to a bounded, lineage-bound quality score.
+
+    Legacy-v1 fixture/cache metadata does not contain all diagnostic residuals,
+    so it retains the historical binary valid score.  Calibrated-v2 records
+    must expose every residual and the exact thresholds from their batch
+    receipt.  A valid pose receives ``exp(-mean(residual/threshold))``; a
+    rejected pose is exact zero.  This is a conditioning feature only and
+    never changes the authoritative boolean pose gate.
+    """
+
+    if not pose_valid:
+        return 0.0
+    if derived_contract != "calibrated_stereo_v2":
+        return 1.0
+    if not isinstance(thresholds, Mapping):
+        raise CacheMismatchError(
+            f"calibrated pose-quality thresholds missing for {cache_path}"
+        )
+    baseline = quality.get("baseline")
+    photometric = quality.get("photometric")
+    depth = quality.get("depth_consistency")
+    if not all(isinstance(value, Mapping) for value in (baseline, photometric, depth)):
+        raise CacheMismatchError(
+            f"calibrated pose-quality residuals missing for {cache_path}"
+        )
+    assert isinstance(baseline, Mapping)
+    assert isinstance(photometric, Mapping)
+    assert isinstance(depth, Mapping)
+    specifications = (
+        (baseline, "baseline_coefficient_of_variation", "max_baseline_cv"),
+        (baseline, "stereo_rotation_error_max_deg", "max_stereo_rotation_error_deg"),
+        (photometric, "median_absolute_rgb_residual", "max_photometric_median_absolute_rgb"),
+        (depth, "weighted_mae_hr_px", "max_depth_weighted_mae_hr_px"),
+        (depth, "median_absolute_error_hr_px", "max_depth_median_absolute_error_hr_px"),
+    )
+    ratios: list[float] = []
+    for source, residual_name, threshold_name in specifications:
+        residual = source.get(residual_name)
+        threshold = thresholds.get(threshold_name)
+        if (
+            isinstance(residual, bool)
+            or not isinstance(residual, (int, float))
+            or not math.isfinite(float(residual))
+            or float(residual) < 0
+        ):
+            raise CacheMismatchError(
+                f"pose-quality residual {residual_name} is malformed for {cache_path}"
+            )
+        if (
+            isinstance(threshold, bool)
+            or not isinstance(threshold, (int, float))
+            or not math.isfinite(float(threshold))
+            or float(threshold) <= 0
+        ):
+            raise CacheMismatchError(
+                f"pose-quality threshold {threshold_name} is malformed for {cache_path}"
+            )
+        ratios.append(float(residual) / float(threshold))
+    score = math.exp(-sum(ratios) / len(ratios))
+    if not math.isfinite(score) or not 0.0 < score <= 1.0:
+        raise CacheMismatchError(
+            f"computed pose-quality score is invalid for {cache_path}: {score}"
+        )
+    return score
+
+
 def _validate_derived_lineage(
     payload: Mapping[str, Any],
     *,
@@ -475,7 +551,8 @@ def _validate_derived_lineage(
     cache_path: Path,
     derived_contract: str,
     expected_calibration_lineage: Mapping[str, Any] | None = None,
-) -> tuple[bool, bool]:
+    pose_quality_thresholds: Mapping[str, Any] | None = None,
+) -> tuple[bool, bool, float]:
     metadata = payload.get("metadata")
     if not isinstance(metadata, Mapping):
         raise CacheMismatchError(f"derived metadata missing for {cache_path}")
@@ -533,6 +610,12 @@ def _validate_derived_lineage(
                 f"derived/active calibration lineage mismatch for {cache_path}: "
                 f"{calibration_differences}"
             )
+        if not isinstance(pose_quality_thresholds, Mapping) or config.get(
+            "thresholds"
+        ) != pose_quality_thresholds:
+            raise CacheMismatchError(
+                f"derived/batch pose-quality thresholds mismatch for {cache_path}"
+            )
 
     target = metadata.get("target")
     expected_target = {
@@ -586,7 +669,14 @@ def _validate_derived_lineage(
         raise CacheMismatchError(
             f"derived pose/prior validity metadata is malformed for {cache_path}"
         )
-    return pose_valid, static_prior_valid
+    quality_score = _continuous_pose_quality_score(
+        quality,
+        pose_valid=pose_valid,
+        derived_contract=derived_contract,
+        thresholds=pose_quality_thresholds,
+        cache_path=cache_path,
+    )
+    return pose_valid, static_prior_valid, quality_score
 
 
 def _crop_lr(tensor: Tensor, crop: CropWindow) -> Tensor:
@@ -949,7 +1039,11 @@ class CachedTemporalTrainingDataset(Dataset[TemporalTrainingSample]):
         observation_path = cache_path_for_record(
             self.observation_cache_root, record
         ).resolve()
-        pose_valid_metadata, static_prior_valid_metadata = _validate_derived_lineage(
+        (
+            pose_valid_metadata,
+            static_prior_valid_metadata,
+            pose_quality_score,
+        ) = _validate_derived_lineage(
             payload,
             record=record,
             observation_cache_path=observation_path,
@@ -960,6 +1054,11 @@ class CachedTemporalTrainingDataset(Dataset[TemporalTrainingSample]):
                 self.cache_lineage_summary["config"].get(
                     "rectified_stereo_calibration"
                 )
+                if self.derived_contract == "calibrated_stereo_v2"
+                else None
+            ),
+            pose_quality_thresholds=(
+                self.cache_lineage_summary["config"].get("thresholds")
                 if self.derived_contract == "calibrated_stereo_v2"
                 else None
             ),
@@ -1086,6 +1185,7 @@ class CachedTemporalTrainingDataset(Dataset[TemporalTrainingSample]):
                 "cache_sha256": actual_cache_sha256,
                 "cache_identity": actual_identity.to_dict(),
                 "pose_valid": pose_valid,
+                "pose_quality_score": pose_quality_score,
                 "static_prior_valid": static_prior_valid,
             },
         )
@@ -1176,6 +1276,10 @@ class CachedTemporalTrainingDataset(Dataset[TemporalTrainingSample]):
             ),
             temporal_pose_valid_sequence=torch.tensor(
                 [item[4] for item in derived], dtype=torch.bool
+            ),
+            temporal_pose_quality_score_sequence=torch.tensor(
+                [item[6]["pose_quality_score"] for item in derived],
+                dtype=torch.float32,
             ),
             static_prior_valid_sequence=torch.tensor(
                 [item[5] for item in derived], dtype=torch.bool

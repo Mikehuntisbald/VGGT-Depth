@@ -2,10 +2,17 @@ from __future__ import annotations
 
 import json
 import hashlib
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any, Mapping
 
-from tools.decide_v3_conditioning import _bootstrap_ci, decide_manifest
+import pytest
+
+from tools.decide_v3_conditioning import (
+    DecisionInputError,
+    _bootstrap_ci,
+    decide_manifest,
+)
 
 
 SEEDS = (42, 43, 44)
@@ -24,6 +31,21 @@ SWITCHES = {
     "B0": (True, True, False),
     "B1": (True, True, True),
 }
+TOPK_DIAGNOSTICS = (
+    "unique_age_fraction",
+    "age2_survival_rate",
+    "fractional_phase_variance",
+    "attended_fractional_phase_variance",
+    "topk_weight_entropy",
+    "context_attention_weight_entropy",
+    "metric_attention_weight_entropy",
+    "candidate_depth_spread_m",
+    "rank0_disparity_epe_hr_px",
+    "weighted_disparity_epe_hr_px",
+    "weighted_minus_rank0_epe_hr_px",
+    "attention_weighted_disparity_epe_hr_px",
+    "attention_weighted_minus_rank0_epe_hr_px",
+)
 
 
 def _validation_records() -> list[dict[str, Any]]:
@@ -84,8 +106,9 @@ def _write_arm(
     validation_manifest: Path,
     validation_records: list[dict[str, Any]],
     derived_lineage: Mapping[str, Any],
+    lineage: str | None = None,
     runtime_scale: float = 1.0,
-) -> dict[str, str]:
+) -> dict[str, Any]:
     directory = root / f"seed_{seed}" / arm
     directory.mkdir(parents=True)
     stage_b = arm.startswith("B")
@@ -145,6 +168,47 @@ def _write_arm(
         "methods": {method: method_metrics},
         "comparisons": {},
     }
+    if lineage == "v3_1":
+        report["resolved_config"]["calibration_conditioning_v3"][
+            "pixel_center_contract"
+        ] = "align_corners_false_half_pixel_v3_1"
+        report["resolved_config"]["measurement_ownership_v3_1"] = {
+            "enabled": True,
+            "protocol_version": "lr_center_projection_bounded_subpixel_v3_1",
+            "minimum_subpixel_residual_hr_px": 1.0,
+            "maximum_subpixel_residual_hr_px": 8.0,
+            "boundary_relative_scale": 0.10,
+        }
+        report["resolved_config"]["temporal_candidate_fusion_v3_1"] = {
+            "enabled": True,
+            "protocol_version": "current_conditioned_age_phase_diverse_v3_1",
+            "per_age_quota": 2,
+            "surface_depth_gap_m": 0.05,
+            "surface_relative_depth_gap": 0.05,
+            "phase_redundancy_sigma_grid_px": 0.125,
+            "phase_redundancy_penalty": 0.25,
+        }
+    checkpoint_sha256 = hashlib.sha256(
+        f"checkpoint:{seed}:{arm}".encode("utf-8")
+    ).hexdigest()
+    spatial_checkpoint_sha256 = (
+        hashlib.sha256(f"checkpoint:{seed}:A3".encode("utf-8")).hexdigest()
+        if stage_b
+        else None
+    )
+    if lineage is not None:
+        report["checkpoint"] = {"checkpoint_sha256": checkpoint_sha256}
+        report["spatial_checkpoint"] = (
+            {"checkpoint_sha256": spatial_checkpoint_sha256}
+            if stage_b
+            else None
+        )
+    if lineage == "v3_1" and stage_b:
+        report["diagnostics"] = {
+            "topk_candidate_complementarity_v3_1": {
+                name: _metric(0.5) for name in TOPK_DIAGNOSTICS
+            }
+        }
     if stage_b:
         report["comparisons"] = {
             "T3_vs_T1_temporal": {
@@ -164,6 +228,10 @@ def _write_arm(
                     and index >= temporal_eligible_records
                 ):
                     record_values["temporal_residual_error_native_px"] = None
+                if lineage == "v3_1" and stage_b:
+                    record_values.update(
+                        {f"topk_{name}": 0.5 for name in TOPK_DIAGNOSTICS}
+                    )
                 handle.write(
                     json.dumps(
                         {
@@ -188,12 +256,16 @@ def _write_arm(
     }
     metrics = directory / "metrics.json"
     metrics.write_text(json.dumps(report), encoding="utf-8")
-    return {
+    entry = {
         "metrics_json": str(metrics),
         "metrics_sha256": _sha256(metrics),
         "per_record_jsonl": str(records),
         "per_record_jsonl_sha256": _sha256(records) if records.is_file() else None,
     }
+    if lineage is not None:
+        entry["checkpoint_sha256"] = checkpoint_sha256
+        entry["spatial_checkpoint_sha256"] = spatial_checkpoint_sha256
+    return entry
 
 
 def _manifest(
@@ -207,6 +279,7 @@ def _manifest(
     temporal_eligible_records: int | None = None,
     temporal_candidate: float = 0.45,
     runtime_regression_arm: str | None = None,
+    lineage: str | None = None,
 ) -> Path:
     tmp_path.mkdir(parents=True, exist_ok=True)
     validation_manifest = tmp_path / "validation.jsonl"
@@ -260,6 +333,7 @@ def _manifest(
                 validation_manifest=validation_manifest,
                 validation_records=validation_records,
                 derived_lineage=derived_lineage,
+                lineage=lineage,
                 runtime_scale=(1.06 if arm == runtime_regression_arm else 1.0),
             )
             for arm in ARMS
@@ -328,9 +402,384 @@ def _manifest(
         },
         "seeds": evidence,
     }
+    if lineage is not None:
+        components = {
+            "v3": (
+                "v3-experiment-decision-inputs",
+                "v3-experiment-orchestrator",
+            ),
+            "v3_1": (
+                "v3.1-experiment-decision-inputs",
+                "v3.1-experiment-orchestrator",
+            ),
+        }
+        lineage_component, output_component = components[lineage]
+        payload.update(
+            {
+                "lineage": lineage,
+                "lineage_component": lineage_component,
+                "output_identity": {
+                    "component": output_component,
+                    "lineage": lineage,
+                    "path": str(tmp_path.resolve()),
+                },
+            }
+        )
     path = tmp_path / "decision_inputs.json"
     path.write_text(json.dumps(payload), encoding="utf-8")
     return path
+
+
+def _mutate_arm_metrics(
+    manifest_path: Path,
+    *,
+    seed: int,
+    arm: str,
+    mutation: Callable[[dict[str, Any]], Any],
+) -> None:
+    """Mutate one bound metrics report and refresh its manifest hash."""
+
+    payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+    entry = payload["seeds"][str(seed)][arm]
+    metrics_path = Path(entry["metrics_json"])
+    metrics = json.loads(metrics_path.read_text(encoding="utf-8"))
+    mutation(metrics)
+    metrics_path.write_text(json.dumps(metrics), encoding="utf-8")
+    entry["metrics_sha256"] = _sha256(metrics_path)
+    manifest_path.write_text(json.dumps(payload), encoding="utf-8")
+
+
+def _mutate_arm_resolved_config(
+    manifest_path: Path,
+    *,
+    seed: int,
+    arm: str,
+    mutation: Callable[[dict[str, Any]], Any],
+) -> None:
+    _mutate_arm_metrics(
+        manifest_path,
+        seed=seed,
+        arm=arm,
+        mutation=lambda metrics: mutation(metrics["resolved_config"]),
+    )
+
+
+def _mutate_arm_records(
+    manifest_path: Path,
+    *,
+    seed: int,
+    arm: str,
+    mutation: Callable[[list[dict[str, Any]]], Any],
+) -> None:
+    """Mutate per-record evidence and refresh record/report/manifest hashes."""
+
+    payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+    entry = payload["seeds"][str(seed)][arm]
+    records_path = Path(entry["per_record_jsonl"])
+    rows = [
+        json.loads(line)
+        for line in records_path.read_text(encoding="utf-8").splitlines()
+    ]
+    mutation(rows)
+    records_path.write_text(
+        "".join(json.dumps(row) + "\n" for row in rows), encoding="utf-8"
+    )
+    records_sha256 = _sha256(records_path)
+    entry["per_record_jsonl_sha256"] = records_sha256
+    metrics_path = Path(entry["metrics_json"])
+    metrics = json.loads(metrics_path.read_text(encoding="utf-8"))
+    metrics["per_record_metrics"]["sha256"] = records_sha256
+    metrics_path.write_text(json.dumps(metrics), encoding="utf-8")
+    entry["metrics_sha256"] = _sha256(metrics_path)
+    manifest_path.write_text(json.dumps(payload), encoding="utf-8")
+
+
+def test_explicit_v3_lineage_remains_compatible(tmp_path: Path) -> None:
+    report = decide_manifest(
+        _manifest(tmp_path, lineage="v3"), bootstrap_replicates=200
+    )
+
+    assert report["decision"] == "GO"
+    assert report["input_errors"] == []
+
+
+def test_v31_manifest_and_resolved_protocols_are_accepted(tmp_path: Path) -> None:
+    report = decide_manifest(
+        _manifest(tmp_path, lineage="v3_1"), bootstrap_replicates=200
+    )
+
+    assert report["decision"] == "GO"
+    assert report["input_errors"] == []
+
+
+def test_legacy_arm_evidence_cannot_be_relabelled_as_v31(tmp_path: Path) -> None:
+    manifest_path = _manifest(tmp_path)
+    payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+    payload.update(
+        {
+            "lineage": "v3_1",
+            "lineage_component": "v3.1-experiment-decision-inputs",
+            "output_identity": {
+                "component": "v3.1-experiment-orchestrator",
+                "lineage": "v3_1",
+                "path": str(tmp_path.resolve()),
+            },
+        }
+    )
+    manifest_path.write_text(json.dumps(payload), encoding="utf-8")
+
+    report = decide_manifest(manifest_path, bootstrap_replicates=200)
+
+    assert report["decision"] == "NO-GO"
+    assert all(
+        any(
+            f"seed42.{arm} checkpoint SHA-256 binding differs" in error
+            for error in report["input_errors"]
+        )
+        for arm in ARMS
+    )
+
+
+@pytest.mark.parametrize(
+    ("mutation", "message"),
+    [
+        (lambda payload: payload.pop("lineage"), "must be supplied together"),
+        (
+            lambda payload: payload.__setitem__(
+                "lineage_component", "v3-experiment-decision-inputs"
+            ),
+            "lineage_component mismatch",
+        ),
+        (
+            lambda payload: payload["output_identity"].__setitem__(
+                "component", "v3-experiment-orchestrator"
+            ),
+            "output_identity mismatch",
+        ),
+        (
+            lambda payload: payload["output_identity"].__setitem__(
+                "lineage", "v3"
+            ),
+            "output_identity mismatch",
+        ),
+        (
+            lambda payload: payload["output_identity"].__setitem__(
+                "path", str(Path(payload["output_identity"]["path"]) / "foreign")
+            ),
+            "output_identity mismatch",
+        ),
+    ],
+)
+def test_v31_manifest_lineage_identity_fails_closed(
+    tmp_path: Path,
+    mutation: Callable[[dict[str, Any]], Any],
+    message: str,
+) -> None:
+    manifest_path = _manifest(tmp_path, lineage="v3_1")
+    payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+    mutation(payload)
+    manifest_path.write_text(json.dumps(payload), encoding="utf-8")
+
+    with pytest.raises(DecisionInputError, match=message):
+        decide_manifest(manifest_path, bootstrap_replicates=200)
+
+
+def test_v31_pixel_center_contract_is_required_for_every_arm(tmp_path: Path) -> None:
+    manifest_path = _manifest(tmp_path, lineage="v3_1")
+    for arm in ARMS:
+        _mutate_arm_resolved_config(
+            manifest_path,
+            seed=42,
+            arm=arm,
+            mutation=lambda resolved: resolved["calibration_conditioning_v3"].pop(
+                "pixel_center_contract"
+            ),
+        )
+
+    report = decide_manifest(manifest_path, bootstrap_replicates=200)
+
+    assert report["decision"] == "NO-GO"
+    for arm in ARMS:
+        assert any(
+            f"seed42.{arm} v3.1 pixel-center contract differs" in error
+            for error in report["input_errors"]
+        )
+
+
+@pytest.mark.parametrize(
+    ("section", "mutation"),
+    [
+        (
+            "measurement_ownership_v3_1",
+            lambda value: value.__setitem__("enabled", False),
+        ),
+        (
+            "measurement_ownership_v3_1",
+            lambda value: value.__setitem__("protocol_version", "legacy"),
+        ),
+        (
+            "measurement_ownership_v3_1",
+            lambda value: value.__setitem__(
+                "maximum_subpixel_residual_hr_px", 7.5
+            ),
+        ),
+        (
+            "temporal_candidate_fusion_v3_1",
+            lambda value: value.__setitem__("enabled", False),
+        ),
+        (
+            "temporal_candidate_fusion_v3_1",
+            lambda value: value.__setitem__("protocol_version", "legacy"),
+        ),
+        (
+            "temporal_candidate_fusion_v3_1",
+            lambda value: value.__setitem__("per_age_quota", 2.0),
+        ),
+    ],
+)
+def test_v31_arm_protocol_sections_fail_closed(
+    tmp_path: Path,
+    section: str,
+    mutation: Callable[[dict[str, Any]], Any],
+) -> None:
+    manifest_path = _manifest(tmp_path, lineage="v3_1")
+    _mutate_arm_resolved_config(
+        manifest_path,
+        seed=42,
+        arm="A1",
+        mutation=lambda resolved: mutation(resolved[section]),
+    )
+
+    report = decide_manifest(manifest_path, bootstrap_replicates=200)
+
+    assert report["decision"] == "NO-GO"
+    assert any(
+        f"seed42.A1 {section} contract differs" in error
+        for error in report["input_errors"]
+    )
+
+
+@pytest.mark.parametrize(
+    ("arm", "field", "message"),
+    [
+        ("A1", "checkpoint_sha256", "checkpoint SHA-256 binding differs"),
+        ("B1", "checkpoint_sha256", "checkpoint SHA-256 binding differs"),
+        (
+            "B1",
+            "spatial_checkpoint_sha256",
+            "spatial checkpoint SHA-256 binding differs",
+        ),
+    ],
+)
+def test_v31_manifest_checkpoint_bindings_fail_closed(
+    tmp_path: Path, arm: str, field: str, message: str
+) -> None:
+    manifest_path = _manifest(tmp_path, lineage="v3_1")
+    payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+    payload["seeds"]["42"][arm][field] = "0" * 64
+    manifest_path.write_text(json.dumps(payload), encoding="utf-8")
+
+    report = decide_manifest(manifest_path, bootstrap_replicates=200)
+
+    assert report["decision"] == "NO-GO"
+    assert any(
+        f"seed42.{arm} {message}" in error for error in report["input_errors"]
+    )
+
+
+def test_v31_metrics_checkpoint_binding_fails_closed(tmp_path: Path) -> None:
+    manifest_path = _manifest(tmp_path, lineage="v3_1")
+    _mutate_arm_metrics(
+        manifest_path,
+        seed=42,
+        arm="B0",
+        mutation=lambda metrics: metrics["checkpoint"].__setitem__(
+            "checkpoint_sha256", "f" * 64
+        ),
+    )
+
+    report = decide_manifest(manifest_path, bootstrap_replicates=200)
+
+    assert report["decision"] == "NO-GO"
+    assert any(
+        "seed42.B0 checkpoint SHA-256 binding differs" in error
+        for error in report["input_errors"]
+    )
+
+
+def test_v31_aggregate_topk_diagnostics_require_valid_finite_count(
+    tmp_path: Path,
+) -> None:
+    manifest_path = _manifest(tmp_path, lineage="v3_1")
+    _mutate_arm_metrics(
+        manifest_path,
+        seed=42,
+        arm="B0",
+        mutation=lambda metrics: metrics["diagnostics"][
+            "topk_candidate_complementarity_v3_1"
+        ]["unique_age_fraction"].__setitem__("count", 0),
+    )
+
+    report = decide_manifest(manifest_path, bootstrap_replicates=200)
+
+    assert report["decision"] == "NO-GO"
+    assert any(
+        "seed42.B0 aggregate topk_unique_age_fraction diagnostic count is invalid"
+        in error
+        for error in report["input_errors"]
+    )
+
+
+def test_v31_per_record_topk_key_is_required_on_every_row(tmp_path: Path) -> None:
+    manifest_path = _manifest(tmp_path, lineage="v3_1")
+    _mutate_arm_records(
+        manifest_path,
+        seed=42,
+        arm="B1",
+        mutation=lambda rows: rows[0]["metrics"].pop("topk_unique_age_fraction"),
+    )
+
+    report = decide_manifest(manifest_path, bootstrap_replicates=200)
+
+    assert report["decision"] == "NO-GO"
+    assert any(
+        "seed42.B1 per-record topk_unique_age_fraction is missing on row 1" in error
+        for error in report["input_errors"]
+    )
+
+
+def test_v31_per_record_topk_allows_null_rows_but_requires_finite_population(
+    tmp_path: Path,
+) -> None:
+    accepted = _manifest(tmp_path / "accepted", lineage="v3_1")
+    _mutate_arm_records(
+        accepted,
+        seed=42,
+        arm="B1",
+        mutation=lambda rows: rows[0]["metrics"].__setitem__(
+            "topk_age2_survival_rate", None
+        ),
+    )
+    accepted_report = decide_manifest(accepted, bootstrap_replicates=200)
+    assert accepted_report["input_errors"] == []
+
+    rejected = _manifest(tmp_path / "rejected", lineage="v3_1")
+    _mutate_arm_records(
+        rejected,
+        seed=42,
+        arm="B1",
+        mutation=lambda rows: [
+            row["metrics"].__setitem__("topk_age2_survival_rate", None)
+            for row in rows
+        ],
+    )
+    rejected_report = decide_manifest(rejected, bootstrap_replicates=200)
+    assert rejected_report["decision"] == "NO-GO"
+    assert any(
+        "per-record top-K diagnostics have no valid values" in error
+        and "age2_survival_rate" in error
+        for error in rejected_report["input_errors"]
+    )
 
 
 def test_three_seed_paired_evidence_selects_rays_and_temporal_only(

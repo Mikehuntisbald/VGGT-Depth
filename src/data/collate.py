@@ -246,6 +246,9 @@ def collate_temporal_training_samples(
         "temporal_pose_valid_sequence": _stack_temporal_required(
             samples, "temporal_pose_valid_sequence"
         ),
+        "temporal_pose_quality_score_sequence": _stack_temporal_required(
+            samples, "temporal_pose_quality_score_sequence"
+        ),
         "static_prior_valid_sequence": _stack_temporal_required(
             samples, "static_prior_valid_sequence"
         ),

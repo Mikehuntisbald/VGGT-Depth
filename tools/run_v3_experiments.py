@@ -301,6 +301,9 @@ def _path_identity(path: Path, *, directory: bool = False) -> dict[str, Any]:
 
 
 def _input_identities(args: argparse.Namespace) -> dict[str, Any]:
+    train_calibration_receipt = args.train_calibration_sidecar.with_suffix(
+        ".receipt.json"
+    )
     calibration_receipt = args.validation_calibration_receipt
     if calibration_receipt is None:
         calibration_receipt = args.validation_calibration_sidecar.with_suffix(
@@ -320,6 +323,9 @@ def _input_identities(args: argparse.Namespace) -> dict[str, Any]:
         "train_calibration_sidecar": _path_identity(
             args.train_calibration_sidecar
         ),
+        "train_calibration_receipt": _path_identity(
+            train_calibration_receipt
+        ),
         "validation_manifest": _path_identity(args.validation_manifest),
         "validation_observation_cache_root": _path_identity(
             args.validation_observation_cache_root, directory=True
@@ -333,11 +339,7 @@ def _input_identities(args: argparse.Namespace) -> dict[str, Any]:
         "validation_calibration_sidecar": _path_identity(
             args.validation_calibration_sidecar
         ),
-        "validation_calibration_receipt": (
-            _path_identity(calibration_receipt)
-            if calibration_receipt.is_file()
-            else {"path": str(calibration_receipt.resolve()), "sha256": None}
-        ),
+        "validation_calibration_receipt": _path_identity(calibration_receipt),
     }
     temporal_pose_audit = getattr(args, "temporal_pose_audit", None)
     if temporal_pose_audit is not None:
@@ -964,6 +966,53 @@ class Orchestrator:
                 f"selected checkpoint changed after completion: seed {seed} {arm}"
             )
 
+    def _assert_evaluation_checkpoint_binding(
+        self,
+        *,
+        seed: int,
+        arm: str,
+        metrics_path: Path,
+    ) -> dict[str, str | None]:
+        """Bind an evaluation report to the selected primary/A3 checkpoints."""
+
+        report = _strict_json(metrics_path, f"seed {seed} {arm} metrics")
+        expected_primary = self.selected_train_hashes.get((seed, arm))
+        if expected_primary is None:
+            raise OrchestrationError(
+                f"seed {seed} {arm} has no selected training checkpoint"
+            )
+        checkpoint = report.get("checkpoint")
+        if (
+            not isinstance(checkpoint, Mapping)
+            or checkpoint.get("checkpoint_sha256") != expected_primary
+        ):
+            raise OrchestrationError(
+                f"seed {seed} {arm} metrics checkpoint SHA does not match "
+                "the selected training checkpoint"
+            )
+
+        expected_spatial: str | None = None
+        if arm in STAGE_B_ARMS:
+            expected_spatial = self.selected_train_hashes.get((seed, "A3"))
+            if expected_spatial is None:
+                raise OrchestrationError(
+                    f"seed {seed} {arm} has no selected A3 checkpoint"
+                )
+            spatial_checkpoint = report.get("spatial_checkpoint")
+            if (
+                not isinstance(spatial_checkpoint, Mapping)
+                or spatial_checkpoint.get("checkpoint_sha256")
+                != expected_spatial
+            ):
+                raise OrchestrationError(
+                    f"seed {seed} {arm} metrics spatial-checkpoint SHA does not "
+                    "match the selected A3 checkpoint"
+                )
+        return {
+            "checkpoint_sha256": expected_primary,
+            "spatial_checkpoint_sha256": expected_spatial,
+        }
+
     def _initialize(self) -> None:
         self.output_root.mkdir(parents=True, exist_ok=True)
         if self.state_path.exists():
@@ -1208,7 +1257,11 @@ class Orchestrator:
             assert a3_final is not None
             self._assert_selected_checkpoint_unchanged(seed, "A3", a3_final)
         if self.args.resume and metrics_path.is_file():
-            _strict_json(metrics_path, f"seed {seed} {arm} metrics")
+            checkpoint_bindings = self._assert_evaluation_checkpoint_binding(
+                seed=seed,
+                arm=arm,
+                metrics_path=metrics_path,
+            )
             current_metrics_sha = _sha256(metrics_path)
             per_record_path = output_directory / self.args.per_record_filename
             current_per_record_sha = (
@@ -1238,6 +1291,7 @@ class Orchestrator:
                 metrics_json=str(metrics_path),
                 metrics_sha256=current_metrics_sha,
                 per_record_jsonl_sha256=current_per_record_sha,
+                **checkpoint_bindings,
             )
             return metrics_path
         command = build_eval_command(
@@ -1260,7 +1314,11 @@ class Orchestrator:
         )
         if receipt["status"] != "SUCCESS" or not metrics_path.is_file():
             raise OrchestrationError(f"{seed}/{arm} evaluation failed or lacks metrics.json")
-        _strict_json(metrics_path, f"seed {seed} {arm} metrics")
+        checkpoint_bindings = self._assert_evaluation_checkpoint_binding(
+            seed=seed,
+            arm=arm,
+            metrics_path=metrics_path,
+        )
         per_record_path = output_directory / self.args.per_record_filename
         self._set_job(
             seed,
@@ -1272,6 +1330,7 @@ class Orchestrator:
             per_record_jsonl_sha256=(
                 _sha256(per_record_path) if per_record_path.is_file() else None
             ),
+            **checkpoint_bindings,
             process_receipt=receipt["receipt_path"],
         )
         return metrics_path
@@ -1318,6 +1377,14 @@ class Orchestrator:
                     "metrics_sha256": metrics_sha,
                     "per_record_jsonl": str(per_record),
                     "per_record_jsonl_sha256": per_record_sha,
+                    "checkpoint_sha256": self.selected_train_hashes.get(
+                        (seed, arm)
+                    ),
+                    "spatial_checkpoint_sha256": (
+                        self.selected_train_hashes.get((seed, "A3"))
+                        if arm in STAGE_B_ARMS
+                        else None
+                    ),
                 }
             if arms:
                 seeds[str(seed)] = arms

@@ -302,6 +302,7 @@ def test_t3_window_is_causal_filtered_and_uses_one_crop(tmp_path: Path) -> None:
         4,
     )
     assert sample.temporal_pose_valid_sequence.tolist() == [True, False, False]
+    assert sample.temporal_pose_quality_score_sequence.tolist() == [1.0, 0.0, 0.0]
     assert sample.static_prior_valid_sequence.tolist() == [True, True, False]
     assert torch.count_nonzero(
         sample.vggt_extrinsics_camera_from_world_metric_sequence[1:]
@@ -379,6 +380,7 @@ def test_temporal_collate_retains_time_and_source_aliases(tmp_path: Path) -> Non
     assert batch["history_pose_valid_sequence"] is batch[
         "temporal_pose_valid_sequence"
     ]
+    assert batch["temporal_pose_quality_score_sequence"].shape == (2, 3)
     assert batch["target_disparity_hr_px_sequence"] is batch[
         "teacher_disparity_hr_px_sequence"
     ]

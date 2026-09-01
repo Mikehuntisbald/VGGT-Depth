@@ -67,6 +67,7 @@ from evaluation import (  # noqa: E402
     validate_spatial_checkpoint_binding,
     validate_temporal_batch_causality,
 )
+from losses import sample_hr_at_lr_centers  # noqa: E402
 from models.ffs_omega_tsr import ModelOutput, count_trainable_parameters  # noqa: E402
 from metrics.disparity import MetricResult  # noqa: E402
 from metrics.pointcloud import export_colored_point_cloud_ply  # noqa: E402
@@ -93,6 +94,7 @@ from train import (  # noqa: E402
     load_receipt_identity,
     physical_output_v2_from_config,
     temporal_history_v2_from_config,
+    temporal_candidate_fusion_v3_1_from_config,
     temporal_residual_v2_from_config,
     validate_v2_temporal_calibration,
 )
@@ -871,7 +873,18 @@ def _build_eval_topk_transport(
         ][:, time_index],
         temporal_pose_valid=batch["temporal_pose_valid_sequence"][:, time_index],
         contract=contract,
+        temporal_pose_quality_score=(
+            None
+            if batch.get("temporal_pose_quality_score_sequence") is None
+            else batch["temporal_pose_quality_score_sequence"][:, time_index]
+        ),
+        candidate_contract=temporal_candidate_fusion_v3_1_from_config(config),
         scale=int(config.data.scale),
+        align_corners_false_pixel_centers=(
+            calibration_conditioning_v3_from_config(
+                config
+            ).align_corners_false_pixel_centers
+        ),
         photometric_temperature=float(config.train.photometric_temperature),
         disparity_temperature_hr_px=float(
             config.train.disparity_temperature_hr_px
@@ -937,6 +950,7 @@ def _history_model_kwargs(
     *,
     rgb_dtype: torch.dtype,
     temporal_v2: bool = False,
+    temporal_candidate_v31: bool = False,
 ) -> dict[str, Tensor]:
     if transport is None:
         return {}
@@ -966,6 +980,27 @@ def _history_model_kwargs(
     result.update(
         {name: value for name, value in topk_values.items() if value is not None}
     )
+    if temporal_candidate_v31:
+        v31_values = {
+            "history_topk_depth_m": transport.topk_depth_m,
+            "history_topk_pose_quality": transport.topk_pose_quality,
+            "history_topk_depth_layer_index": transport.topk_depth_layer_index,
+            "history_topk_front_surface_mask": transport.topk_front_surface_mask,
+            "history_topk_context_only_mask": transport.topk_context_only_mask,
+            "history_topk_warped_hidden_feature": (
+                transport.topk_warped_hidden_feature
+            ),
+        }
+        missing_v31 = sorted(
+            name for name, value in v31_values.items() if value is None
+        )
+        if missing_v31:
+            raise RuntimeError(
+                f"v3.1 transport is missing model inputs: {missing_v31}"
+            )
+        result.update(
+            {name: value for name, value in v31_values.items() if value is not None}
+        )
     return result
 
 
@@ -1123,12 +1158,334 @@ def _explicit_validity_completion_metrics(
     }
 
 
+TOPK_V31_DIAGNOSTIC_NAMES = (
+    "unique_age_fraction",
+    "age2_survival_rate",
+    "fractional_phase_variance",
+    "attended_fractional_phase_variance",
+    "topk_weight_entropy",
+    "context_attention_weight_entropy",
+    "metric_attention_weight_entropy",
+    "candidate_depth_spread_m",
+    "rank0_disparity_epe_hr_px",
+    "weighted_disparity_epe_hr_px",
+    "weighted_minus_rank0_epe_hr_px",
+    "attention_weighted_disparity_epe_hr_px",
+    "attention_weighted_minus_rank0_epe_hr_px",
+)
+
+
+def _per_record_metric_values(
+    metrics: Mapping[str, MetricResult],
+    *,
+    require_topk_v31: bool,
+) -> dict[str, float | None]:
+    """Serialize one per-record metric row without losing v3.1 null domains.
+
+    Legacy/non-top-K metrics retain the existing compact behavior: invalid
+    metrics are omitted.  A v3.1 Stage-B interpretation row instead owns a
+    fixed 13-field schema; every ``topk_*`` key is emitted and an invalid
+    sample domain is represented by JSON ``null``.
+    """
+
+    result = {
+        name: float(metric.value)
+        for name, metric in metrics.items()
+        if metric.valid and metric.value is not None
+    }
+    if not require_topk_v31:
+        return result
+    for name in TOPK_V31_DIAGNOSTIC_NAMES:
+        field = f"topk_{name}"
+        metric = metrics.get(field)
+        if not isinstance(metric, MetricResult):
+            raise RuntimeError(
+                f"v3.1 per-record diagnostics are missing {field}"
+            )
+        result[field] = (
+            float(metric.value)
+            if metric.valid and metric.value is not None
+            else None
+        )
+    return result
+
+
+def _mean_metric(value: Tensor, domain: Tensor) -> MetricResult:
+    domain = domain.to(dtype=torch.bool)
+    count = int(domain.sum().item())
+    if count == 0:
+        return MetricResult.invalid()
+    selected = value.float()[domain]
+    if not bool(torch.isfinite(selected).all().item()):
+        return MetricResult.invalid(count=count)
+    numerator = float(selected.to(dtype=torch.float64).sum().item())
+    return MetricResult(numerator / count, numerator, count, True)
+
+
+def _rate_metric(event: Tensor, domain: Tensor) -> MetricResult:
+    domain = domain.to(dtype=torch.bool)
+    count = int(domain.sum().item())
+    if count == 0:
+        return MetricResult.invalid()
+    numerator = int((event.to(dtype=torch.bool) & domain).sum().item())
+    return MetricResult(float(numerator) / count, float(numerator), count, True)
+
+
+def _topk_v31_diagnostics(
+    transport: TemporalTransport,
+    output: ModelOutput,
+    *,
+    teacher_disparity_hr_px: Tensor,
+    teacher_trusted_mask_hr: Tensor,
+    scale: int,
+    item_index: int | None = None,
+) -> dict[str, MetricResult]:
+    """Audit whether v3.1 retained and used complementary observations."""
+
+    required_transport = (
+        transport.topk_disparity_history_hr_px,
+        transport.topk_depth_m,
+        transport.topk_fractional_offset_px,
+        transport.topk_temporal_age_frames,
+        transport.topk_valid_mask,
+        transport.topk_metric_prior_weights,
+        transport.topk_front_surface_mask,
+        transport.topk_age2_depth_consistent_available_mask,
+    )
+    required_output = (
+        output.history_topk_context_weights,
+        output.history_topk_effective_weights,
+        output.history_metric_disparity_hr_px,
+        output.history_metric_valid_mask,
+    )
+    if any(value is None for value in required_transport + required_output):
+        return {
+            name: MetricResult.invalid() for name in TOPK_V31_DIAGNOSTIC_NAMES
+        }
+    (
+        candidate_disparity,
+        candidate_depth,
+        candidate_phase,
+        candidate_age,
+        candidate_valid,
+        metric_prior_weights,
+        front_surface_mask,
+        age2_available,
+    ) = required_transport
+    (
+        context_weights,
+        metric_weights,
+        weighted_disparity,
+        weighted_valid,
+    ) = required_output
+    assert isinstance(candidate_disparity, Tensor)
+    assert isinstance(candidate_depth, Tensor)
+    assert isinstance(candidate_phase, Tensor)
+    assert isinstance(candidate_age, Tensor)
+    assert isinstance(candidate_valid, Tensor)
+    assert isinstance(metric_prior_weights, Tensor)
+    assert isinstance(front_surface_mask, Tensor)
+    assert isinstance(age2_available, Tensor)
+    assert isinstance(context_weights, Tensor)
+    assert isinstance(metric_weights, Tensor)
+    assert isinstance(weighted_disparity, Tensor)
+    assert isinstance(weighted_valid, Tensor)
+    if item_index is not None:
+        selection = slice(item_index, item_index + 1)
+        candidate_disparity = candidate_disparity[selection]
+        candidate_depth = candidate_depth[selection]
+        candidate_phase = candidate_phase[selection]
+        candidate_age = candidate_age[selection]
+        candidate_valid = candidate_valid[selection]
+        metric_prior_weights = metric_prior_weights[selection]
+        front_surface_mask = front_surface_mask[selection]
+        age2_available = age2_available[selection]
+        context_weights = context_weights[selection]
+        metric_weights = metric_weights[selection]
+        weighted_disparity = weighted_disparity[selection]
+        weighted_valid = weighted_valid[selection]
+        teacher_disparity_hr_px = teacher_disparity_hr_px[selection]
+        teacher_trusted_mask_hr = teacher_trusted_mask_hr[selection]
+
+    valid = candidate_valid.to(dtype=torch.bool)
+    target_domain = valid.any(dim=1, keepdim=True)
+    age_one = valid & torch.isclose(
+        candidate_age.float(), torch.ones_like(candidate_age.float())
+    )
+    age_two = valid & torch.isclose(
+        candidate_age.float(), torch.full_like(candidate_age.float(), 2.0)
+    )
+    unique_age = age_one.any(dim=1, keepdim=True) & age_two.any(
+        dim=1, keepdim=True
+    )
+    age2_survived = (
+        age_two & front_surface_mask.to(dtype=torch.bool)
+    ).any(dim=1, keepdim=True)
+
+    two_pi_phase = 2.0 * math.pi * torch.remainder(
+        candidate_phase.float(), 1.0
+    )
+    uniform_weights = valid.to(dtype=torch.float32)
+    uniform_count = uniform_weights.sum(dim=1, keepdim=True)
+    normalized_uniform = torch.where(
+        uniform_count > 0,
+        uniform_weights / uniform_count.clamp_min(1.0),
+        torch.zeros_like(uniform_weights),
+    )
+    retained_cosine_mean = (
+        normalized_uniform.unsqueeze(2) * torch.cos(two_pi_phase)
+    ).sum(dim=1)
+    retained_sine_mean = (
+        normalized_uniform.unsqueeze(2) * torch.sin(two_pi_phase)
+    ).sum(dim=1)
+    retained_phase_variance = (
+        1.0
+        - torch.sqrt(
+            retained_cosine_mean.square() + retained_sine_mean.square()
+        ).clamp(0.0, 1.0)
+    ).mean(dim=1, keepdim=True)
+
+    normalized_context = torch.where(
+        valid,
+        context_weights.float(),
+        torch.zeros_like(context_weights.float()),
+    )
+    context_sum = normalized_context.sum(dim=1, keepdim=True)
+    normalized_context = torch.where(
+        context_sum > 0,
+        normalized_context / context_sum.clamp_min(1e-12),
+        torch.zeros_like(normalized_context),
+    )
+    attended_cosine_mean = (
+        normalized_context.unsqueeze(2) * torch.cos(two_pi_phase)
+    ).sum(dim=1)
+    attended_sine_mean = (
+        normalized_context.unsqueeze(2) * torch.sin(two_pi_phase)
+    ).sum(dim=1)
+    attended_phase_variance = (
+        1.0
+        - torch.sqrt(
+            attended_cosine_mean.square() + attended_sine_mean.square()
+        ).clamp(0.0, 1.0)
+    ).mean(dim=1, keepdim=True)
+
+    normalized_prior = torch.where(
+        valid,
+        metric_prior_weights.float(),
+        torch.zeros_like(metric_prior_weights.float()),
+    )
+    prior_sum = normalized_prior.sum(dim=1, keepdim=True)
+    normalized_prior = torch.where(
+        prior_sum > 0,
+        normalized_prior / prior_sum.clamp_min(1e-12),
+        torch.zeros_like(normalized_prior),
+    )
+    prior_entropy = -(
+        normalized_prior * torch.log(normalized_prior.clamp_min(1e-12))
+    ).sum(dim=1, keepdim=True)
+    context_entropy = -(
+        normalized_context
+        * torch.log(normalized_context.clamp_min(1e-12))
+    ).sum(dim=1, keepdim=True)
+    normalized_metric = torch.where(
+        valid,
+        metric_weights.float(),
+        torch.zeros_like(metric_weights.float()),
+    )
+    metric_sum = normalized_metric.sum(dim=1, keepdim=True)
+    normalized_metric = torch.where(
+        metric_sum > 0,
+        normalized_metric / metric_sum.clamp_min(1e-12),
+        torch.zeros_like(normalized_metric),
+    )
+    metric_entropy = -(
+        normalized_metric * torch.log(normalized_metric.clamp_min(1e-12))
+    ).sum(dim=1, keepdim=True)
+
+    depth_min = torch.where(
+        valid, candidate_depth.float(), torch.full_like(candidate_depth.float(), torch.inf)
+    ).amin(dim=1, keepdim=True)
+    depth_max = torch.where(
+        valid, candidate_depth.float(), torch.full_like(candidate_depth.float(), -torch.inf)
+    ).amax(dim=1, keepdim=True)
+    depth_spread = torch.where(
+        target_domain, (depth_max - depth_min).clamp_min(0.0), torch.zeros_like(depth_min)
+    )
+
+    target_lr = sample_hr_at_lr_centers(
+        teacher_disparity_hr_px.float(), scale=scale
+    )
+    trusted_fraction_lr = sample_hr_at_lr_centers(
+        teacher_trusted_mask_hr.float(), scale=scale
+    )
+    trusted_lr = (
+        torch.isfinite(target_lr)
+        & (target_lr > 0)
+        & (trusted_fraction_lr >= 1.0 - 1e-6)
+    )
+    rank0_valid = valid[:, :1] & trusted_lr
+    prior_valid = (prior_sum > 0) & trusted_lr
+    attention_weighted_domain = weighted_valid.to(dtype=torch.bool) & trusted_lr
+    rank0_error = (candidate_disparity[:, :1].float() - target_lr).abs()
+    prior_disparity = (
+        normalized_prior * candidate_disparity.float()
+    ).sum(dim=1, keepdim=True)
+    prior_weighted_error = (prior_disparity - target_lr).abs()
+    attention_weighted_error = (weighted_disparity.float() - target_lr).abs()
+    rank0_epe = _mean_metric(rank0_error, rank0_valid)
+    prior_weighted_epe = _mean_metric(prior_weighted_error, prior_valid)
+    prior_paired_domain = rank0_valid & prior_valid
+    prior_weighted_minus_rank0 = _mean_metric(
+        prior_weighted_error - rank0_error, prior_paired_domain
+    )
+    attention_weighted_epe = _mean_metric(
+        attention_weighted_error, attention_weighted_domain
+    )
+    attention_paired_domain = rank0_valid & attention_weighted_domain
+    attention_weighted_minus_rank0 = _mean_metric(
+        attention_weighted_error - rank0_error,
+        attention_paired_domain,
+    )
+    return {
+        "unique_age_fraction": _rate_metric(unique_age, target_domain),
+        "age2_survival_rate": _rate_metric(
+            age2_survived, age2_available.to(dtype=torch.bool)
+        ),
+        "fractional_phase_variance": _mean_metric(
+            retained_phase_variance, target_domain
+        ),
+        "attended_fractional_phase_variance": _mean_metric(
+            attended_phase_variance, context_sum > 0
+        ),
+        "topk_weight_entropy": _mean_metric(
+            prior_entropy, prior_sum > 0
+        ),
+        "context_attention_weight_entropy": _mean_metric(
+            context_entropy, context_sum > 0
+        ),
+        "metric_attention_weight_entropy": _mean_metric(
+            metric_entropy, metric_sum > 0
+        ),
+        "candidate_depth_spread_m": _mean_metric(depth_spread, target_domain),
+        "rank0_disparity_epe_hr_px": rank0_epe,
+        "weighted_disparity_epe_hr_px": prior_weighted_epe,
+        "weighted_minus_rank0_epe_hr_px": prior_weighted_minus_rank0,
+        "attention_weighted_disparity_epe_hr_px": attention_weighted_epe,
+        "attention_weighted_minus_rank0_epe_hr_px": (
+            attention_weighted_minus_rank0
+        ),
+    }
+
+
 def _calibration_contract_for_model(model: torch.nn.Module) -> CalibrationConditioningV3:
     return CalibrationConditioningV3(
         enabled=bool(getattr(model, "calibration_conditioning_v3", False)),
         use_rays=bool(getattr(model, "use_rays", False)),
         use_stereo_pose=bool(getattr(model, "use_stereo_pose", False)),
         use_temporal_pose=bool(getattr(model, "use_temporal_pose", False)),
+        align_corners_false_pixel_centers=bool(
+            getattr(model, "align_corners_false_pixel_centers", False)
+        ),
     )
 
 
@@ -1284,6 +1641,7 @@ def _run_temporal_endpoint_ablation(
     output_no_vggt: ModelOutput | None = None
     history_contract = temporal_history_v2_from_config(config)
     residual_contract = temporal_residual_v2_from_config(config)
+    candidate_v31 = temporal_candidate_fusion_v3_1_from_config(config).enabled
     temporal_v2 = history_contract.enabled and residual_contract.enabled
     calibration_v3 = _calibration_contract_for_model(model)
     for time_index in range(3):
@@ -1386,6 +1744,7 @@ def _run_temporal_endpoint_ablation(
             transport,
             rgb_dtype=step["rgb_hr"].dtype,
             temporal_v2=temporal_v2,
+            temporal_candidate_v31=candidate_v31,
         )
         geometry_kwargs: dict[str, Any] = {
             "disparity_vggt_hr_px": batch["disparity_vggt_hr_px_sequence"][
@@ -1411,6 +1770,7 @@ def _run_temporal_endpoint_ablation(
             mask_off_transport,
             rgb_dtype=step["rgb_hr"].dtype,
             temporal_v2=temporal_v2,
+            temporal_candidate_v31=candidate_v31,
         )
         output_mask_off = model(
             step["rgb_hr"],
@@ -1425,6 +1785,7 @@ def _run_temporal_endpoint_ablation(
             no_vggt_transport,
             rgb_dtype=step["rgb_hr"].dtype,
             temporal_v2=temporal_v2,
+            temporal_candidate_v31=candidate_v31,
         )
         zero_vggt = torch.zeros_like(
             batch["disparity_vggt_hr_px_sequence"][:, time_index]
@@ -3193,6 +3554,9 @@ def run(args: argparse.Namespace) -> int:
     temporal_metric_v2 = temporal_residual_v2_from_config(config).enabled
     physical_metric_v2 = physical_output_v2_from_config(config).enabled
     calibration_metric_v3 = calibration_conditioning_v3_from_config(config).enabled
+    candidate_metric_v31 = temporal_candidate_fusion_v3_1_from_config(
+        config
+    ).enabled
     stage_label = "T1_SPATIAL_ONLY" if stage == "spatial" else "T3_CAUSAL_STAGE_B"
     seed_everything(int(config.seed), deterministic=True)
     model = build_model(config)
@@ -3466,6 +3830,11 @@ def run(args: argparse.Namespace) -> int:
     accumulators = {
         method_name: MethodMetricAccumulator() for method_name in method_names
     }
+    topk_v31_accumulator = (
+        MethodMetricAccumulator()
+        if stage == "temporal" and candidate_metric_v31
+        else None
+    )
     visualization_limit = min(int(config.eval.visualization_samples), sample_count)
     visualized = 0
     visualization_records: list[dict[str, Any]] = []
@@ -3847,6 +4216,16 @@ def run(args: argparse.Namespace) -> int:
                     ),
                     pose_valid=batch["temporal_pose_valid_sequence"][:, 2],
                 )
+                if topk_v31_accumulator is not None:
+                    topk_v31_accumulator.update(
+                        _topk_v31_diagnostics(
+                            temporal_visualization.shared_transport,
+                            temporal_visualization.vggt_on,
+                            teacher_disparity_hr_px=target.float(),
+                            teacher_trusted_mask_hr=target_trusted,
+                            scale=int(config.data.scale),
+                        )
+                    )
             predictions: dict[str, Tensor] = {}
             for method_name, prediction in raw_predictions.items():
                 predictions[method_name] = prediction
@@ -3974,6 +4353,21 @@ def run(args: argparse.Namespace) -> int:
                             ),
                         )
                     )
+                if stage == "temporal" and candidate_metric_v31:
+                    assert temporal_visualization is not None
+                    record_metrics.update(
+                        {
+                            f"topk_{name}": metric
+                            for name, metric in _topk_v31_diagnostics(
+                                temporal_visualization.shared_transport,
+                                temporal_visualization.vggt_on,
+                                teacher_disparity_hr_px=target.float(),
+                                teacher_trusted_mask_hr=target_trusted,
+                                scale=int(config.data.scale),
+                                item_index=item_index,
+                            ).items()
+                        }
+                    )
                 if stage == "spatial":
                     sequence_id = str(batch["sequence_id"][item_index])
                     frame_id = int(batch["frame_id"][item_index].item())
@@ -3996,11 +4390,12 @@ def run(args: argparse.Namespace) -> int:
                         "timestamp": timestamp,
                         "manifest_index": manifest_index,
                         "method": decision_method,
-                        "metrics": {
-                            name: float(metric.value)
-                            for name, metric in record_metrics.items()
-                            if metric.valid and metric.value is not None
-                        },
+                        "metrics": _per_record_metric_values(
+                            record_metrics,
+                            require_topk_v31=(
+                                stage == "temporal" and candidate_metric_v31
+                            ),
+                        ),
                     }
                 )
 
@@ -4347,6 +4742,14 @@ def run(args: argparse.Namespace) -> int:
         method: accumulator.finalize()
         for method, accumulator in accumulators.items()
     }
+    topk_v31_diagnostics = (
+        None
+        if topk_v31_accumulator is None
+        else {
+            name: result.to_dict()
+            for name, result in topk_v31_accumulator.finalize().items()
+        }
+    )
     finalized = {
         method: {name: result.to_dict() for name, result in metrics.items()}
         for method, metrics in aggregate_methods.items()
@@ -4502,7 +4905,8 @@ def run(args: argparse.Namespace) -> int:
                 None
                 if t3_vggt_sign_health is None
                 else t3_vggt_sign_health.finalize()
-            )
+            ),
+            "topk_candidate_complementarity_v3_1": topk_v31_diagnostics,
         },
         "point_to_plane": dict(POINT_TO_PLANE_NOT_AVAILABLE),
         "records_evaluated": sample_count,

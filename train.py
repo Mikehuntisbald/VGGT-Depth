@@ -64,11 +64,13 @@ from losses import (  # noqa: E402
     validity_completion_loss,
 )
 from geometry.history_confidence import history_confidence  # noqa: E402
+from geometry.camera import resize_intrinsics_align_corners_false  # noqa: E402
 from geometry.calibration_context import (  # noqa: E402
     rectified_stereo_transform_4x4,
     temporal_conditioning_transforms,
 )
 from geometry.topk_splat import (  # noqa: E402
+    TOPK_DIVERSITY_V31_CONTRACT,
     TopKSplatResult,
     merge_topk_splat_results,
     topk_z_aware_splat,
@@ -226,6 +228,15 @@ class PhysicalOutputV2:
 TEMPORAL_HISTORY_V2_PROTOCOL = "topk_z_aware_hidden_warp_v2"
 TEMPORAL_RESIDUAL_V2_PROTOCOL = "teacher_gt_temporal_residual_v2"
 CALIBRATION_CONDITIONING_V3_PROTOCOL = "dense_rays_factorized_pose_v3"
+ALIGN_CORNERS_FALSE_PIXEL_CENTER_CONTRACT = (
+    "align_corners_false_half_pixel_v3_1"
+)
+MEASUREMENT_OWNERSHIP_V31_PROTOCOL = (
+    "lr_center_projection_bounded_subpixel_v3_1"
+)
+TEMPORAL_CANDIDATE_FUSION_V31_PROTOCOL = (
+    "current_conditioned_age_phase_diverse_v3_1"
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -260,6 +271,141 @@ class CalibrationConditioningV3:
     use_rays: bool = False
     use_stereo_pose: bool = False
     use_temporal_pose: bool = False
+    align_corners_false_pixel_centers: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class MeasurementOwnershipV31:
+    """Opt-in LR-observation-domain FFS ownership contract."""
+
+    enabled: bool = False
+    minimum_subpixel_residual_hr_px: float = 1.0
+    maximum_subpixel_residual_hr_px: float = 8.0
+    boundary_relative_scale: float = 0.10
+
+
+@dataclass(frozen=True, slots=True)
+class TemporalCandidateFusionV31:
+    """Age/phase-diverse transport plus current-conditioned candidate fusion."""
+
+    enabled: bool = False
+    per_age_quota: int = 2
+    surface_depth_gap_m: float = 0.05
+    surface_relative_depth_gap: float = 0.05
+    phase_redundancy_sigma_grid_px: float = 0.125
+    phase_redundancy_penalty: float = 0.25
+
+
+def measurement_ownership_v3_1_from_config(
+    config: Mapping[str, Any] | DictConfig,
+) -> MeasurementOwnershipV31:
+    section = config.get("measurement_ownership_v3_1")
+    if section is None:
+        return MeasurementOwnershipV31()
+    if not isinstance(section, Mapping):
+        raise ValueError("measurement_ownership_v3_1 must be a mapping")
+    enabled = section.get("enabled")
+    if enabled is False:
+        return MeasurementOwnershipV31()
+    if enabled is not True:
+        raise ValueError("measurement_ownership_v3_1.enabled must be a bool")
+    if section.get("protocol_version") != MEASUREMENT_OWNERSHIP_V31_PROTOCOL:
+        raise ValueError("measurement_ownership_v3_1 protocol version mismatch")
+
+    def finite(name: str, *, minimum: float, strict: bool) -> float:
+        value = section.get(name)
+        if (
+            isinstance(value, bool)
+            or not isinstance(value, (int, float))
+            or not math.isfinite(float(value))
+            or (float(value) <= minimum if strict else float(value) < minimum)
+        ):
+            comparison = ">" if strict else ">="
+            raise ValueError(
+                f"measurement_ownership_v3_1.{name} must be finite and "
+                f"{comparison} {minimum}"
+            )
+        return float(value)
+
+    minimum = finite(
+        "minimum_subpixel_residual_hr_px", minimum=0.0, strict=False
+    )
+    maximum = finite(
+        "maximum_subpixel_residual_hr_px", minimum=0.0, strict=False
+    )
+    if maximum < minimum:
+        raise ValueError(
+            "measurement_ownership_v3_1 maximum residual must be >= minimum"
+        )
+    return MeasurementOwnershipV31(
+        enabled=True,
+        minimum_subpixel_residual_hr_px=minimum,
+        maximum_subpixel_residual_hr_px=maximum,
+        boundary_relative_scale=finite(
+            "boundary_relative_scale", minimum=0.0, strict=True
+        ),
+    )
+
+
+def temporal_candidate_fusion_v3_1_from_config(
+    config: Mapping[str, Any] | DictConfig,
+) -> TemporalCandidateFusionV31:
+    section = config.get("temporal_candidate_fusion_v3_1")
+    if section is None:
+        return TemporalCandidateFusionV31()
+    if not isinstance(section, Mapping):
+        raise ValueError("temporal_candidate_fusion_v3_1 must be a mapping")
+    enabled = section.get("enabled")
+    if enabled is False:
+        return TemporalCandidateFusionV31()
+    if enabled is not True:
+        raise ValueError("temporal_candidate_fusion_v3_1.enabled must be a bool")
+    if section.get("protocol_version") != TEMPORAL_CANDIDATE_FUSION_V31_PROTOCOL:
+        raise ValueError("temporal_candidate_fusion_v3_1 protocol version mismatch")
+    per_age_quota = section.get("per_age_quota")
+    if (
+        isinstance(per_age_quota, bool)
+        or not isinstance(per_age_quota, int)
+        or per_age_quota <= 0
+    ):
+        raise ValueError(
+            "temporal_candidate_fusion_v3_1.per_age_quota must be positive"
+        )
+
+    def positive(name: str) -> float:
+        value = section.get(name)
+        if (
+            isinstance(value, bool)
+            or not isinstance(value, (int, float))
+            or not math.isfinite(float(value))
+            or float(value) <= 0
+        ):
+            raise ValueError(
+                f"temporal_candidate_fusion_v3_1.{name} must be finite and > 0"
+            )
+        return float(value)
+
+    phase_penalty = section.get("phase_redundancy_penalty")
+    if (
+        isinstance(phase_penalty, bool)
+        or not isinstance(phase_penalty, (int, float))
+        or not math.isfinite(float(phase_penalty))
+        or float(phase_penalty) < 0
+    ):
+        raise ValueError(
+            "temporal_candidate_fusion_v3_1.phase_redundancy_penalty must be "
+            "finite and >= 0"
+        )
+    return TemporalCandidateFusionV31(
+        enabled=True,
+        per_age_quota=per_age_quota,
+        surface_depth_gap_m=positive("surface_depth_gap_m"),
+        surface_relative_depth_gap=positive("surface_relative_depth_gap"),
+        phase_redundancy_sigma_grid_px=positive(
+            "phase_redundancy_sigma_grid_px"
+        ),
+        phase_redundancy_penalty=float(phase_penalty),
+    )
 
 
 def calibration_conditioning_v3_from_config(
@@ -270,6 +416,15 @@ def calibration_conditioning_v3_from_config(
         return CalibrationConditioningV3()
     if not isinstance(section, Mapping):
         raise ValueError("calibration_conditioning_v3 must be a mapping")
+    pixel_center_contract = section.get("pixel_center_contract")
+    if (
+        pixel_center_contract is not None
+        and pixel_center_contract != ALIGN_CORNERS_FALSE_PIXEL_CENTER_CONTRACT
+    ):
+        raise ValueError(
+            "calibration_conditioning_v3.pixel_center_contract must be absent "
+            f"for legacy behavior or {ALIGN_CORNERS_FALSE_PIXEL_CENTER_CONTRACT!r}"
+        )
     enabled = section.get("enabled")
     if enabled is False:
         return CalibrationConditioningV3()
@@ -283,7 +438,17 @@ def calibration_conditioning_v3_from_config(
         if not isinstance(value, bool):
             raise ValueError(f"calibration_conditioning_v3.{name} must be a bool")
         switches[name] = value
-    return CalibrationConditioningV3(enabled=True, **switches)
+    if pixel_center_contract is None:
+        corrected_pixel_centers = False
+    elif pixel_center_contract == ALIGN_CORNERS_FALSE_PIXEL_CENTER_CONTRACT:
+        corrected_pixel_centers = True
+    else:  # pragma: no cover - guarded before the enabled branch.
+        raise AssertionError("unreachable pixel-center contract")
+    return CalibrationConditioningV3(
+        enabled=True,
+        align_corners_false_pixel_centers=corrected_pixel_centers,
+        **switches,
+    )
 
 
 def temporal_history_v2_from_config(
@@ -608,10 +773,12 @@ def loss_weights_from_config(config: Mapping[str, Any] | DictConfig) -> LossWeig
 
 
 def _validate_common_training_config(config: DictConfig, *, total_steps: int) -> None:
-    physical_output_v2_from_config(config)
+    physical_v2 = physical_output_v2_from_config(config)
     temporal_history = temporal_history_v2_from_config(config)
     temporal_residual = temporal_residual_v2_from_config(config)
     calibration_v3 = calibration_conditioning_v3_from_config(config)
+    measurement_v31 = measurement_ownership_v3_1_from_config(config)
+    candidate_v31 = temporal_candidate_fusion_v3_1_from_config(config)
     if temporal_history.enabled != temporal_residual.enabled:
         raise ValueError(
             "temporal_history_v2 and temporal_residual_v2 must be enabled together"
@@ -623,7 +790,7 @@ def _validate_common_training_config(config: DictConfig, *, total_steps: int) ->
             raise ValueError("the V2 top-K candidate feature width is fixed to 32")
     derived_contract = str(config.data.derived_contract)
     if calibration_v3.enabled:
-        if not physical_output_v2_from_config(config).enabled or not temporal_history.enabled:
+        if not physical_v2.enabled or not temporal_history.enabled:
             raise ValueError("calibration v3 must extend the complete architecture-v2 lineage")
         if derived_contract != "calibrated_stereo_v2":
             raise ValueError("calibration v3 requires data.derived_contract=calibrated_stereo_v2")
@@ -633,6 +800,35 @@ def _validate_common_training_config(config: DictConfig, *, total_steps: int) ->
     else:
         if derived_contract != "legacy_v1":
             raise ValueError("legacy/v2 configs require data.derived_contract=legacy_v1")
+    if measurement_v31.enabled:
+        if not physical_v2.enabled or not calibration_v3.enabled:
+            raise ValueError(
+                "measurement ownership v3.1 requires physical output v2 and "
+                "calibration v3"
+            )
+        if not calibration_v3.align_corners_false_pixel_centers:
+            raise ValueError(
+                "measurement ownership v3.1 requires the corrected half-pixel contract"
+            )
+    if candidate_v31.enabled:
+        if not calibration_v3.enabled or not temporal_history.enabled:
+            raise ValueError(
+                "temporal candidate fusion v3.1 requires calibration v3 and "
+                "temporal history v2"
+            )
+        if not calibration_v3.align_corners_false_pixel_centers:
+            raise ValueError(
+                "temporal candidate fusion v3.1 requires the corrected "
+                "half-pixel contract"
+            )
+        if temporal_history.top_k < 4 or temporal_history.memory_frames != 2:
+            raise ValueError(
+                "temporal candidate fusion v3.1 requires top_k>=4 and two ages"
+            )
+        if candidate_v31.per_age_quota > temporal_history.top_k // 2:
+            raise ValueError(
+                "v3.1 per-age quota must not exceed floor(top_k/2)"
+            )
     if int(config.data.scale) != 2 or int(config.model.convex_scale) != 2:
         raise ValueError("the first-round training pipeline is fixed to x2")
     if list(config.model.rgb_channels) != [32, 64, 96]:
@@ -991,6 +1187,8 @@ def build_model(config: DictConfig) -> FFSOmegaTSR:
     physical_v2 = physical_output_v2_from_config(config)
     calibration_v3 = calibration_conditioning_v3_from_config(config)
     temporal_history_v2 = temporal_history_v2_from_config(config)
+    measurement_v31 = measurement_ownership_v3_1_from_config(config)
+    candidate_v31 = temporal_candidate_fusion_v3_1_from_config(config)
     model = FFSOmegaTSR(
         rgb_channels=tuple(int(value) for value in config.model.rgb_channels),
         geometry_channels=int(config.model.geometry_channels),
@@ -1018,6 +1216,20 @@ def build_model(config: DictConfig) -> FFSOmegaTSR:
         use_rays=calibration_v3.use_rays,
         use_stereo_pose=calibration_v3.use_stereo_pose,
         use_temporal_pose=calibration_v3.use_temporal_pose,
+        align_corners_false_pixel_centers=(
+            calibration_v3.align_corners_false_pixel_centers
+        ),
+        measurement_ownership_v3_1=measurement_v31.enabled,
+        measurement_minimum_subpixel_residual_hr_px=(
+            measurement_v31.minimum_subpixel_residual_hr_px
+        ),
+        measurement_maximum_subpixel_residual_hr_px=(
+            measurement_v31.maximum_subpixel_residual_hr_px
+        ),
+        measurement_boundary_relative_scale=(
+            measurement_v31.boundary_relative_scale
+        ),
+        current_conditioned_history_v3_1=candidate_v31.enabled,
     )
     parameter_count = count_trainable_parameters(model)
     if parameter_count <= 0 or parameter_count >= 12_000_000:
@@ -1221,7 +1433,15 @@ class TemporalTransport:
     topk_fractional_offset_px: Tensor | None = None
     topk_temporal_age_frames: Tensor | None = None
     topk_z_aware_weights: Tensor | None = None
+    topk_metric_prior_weights: Tensor | None = None
     topk_valid_mask: Tensor | None = None
+    topk_depth_m: Tensor | None = None
+    topk_pose_quality: Tensor | None = None
+    topk_depth_layer_index: Tensor | None = None
+    topk_front_surface_mask: Tensor | None = None
+    topk_context_only_mask: Tensor | None = None
+    topk_age2_depth_consistent_available_mask: Tensor | None = None
+    topk_warped_hidden_feature: Tensor | None = None
     warped_hidden_state: tuple[Tensor, ...] | None = None
 
 
@@ -1290,15 +1510,38 @@ def _rgb_photometric_residual_from_winners(
     )
 
 
-def _sample_hr_winner_grid_to_lr(value: Tensor, *, scale: int) -> Tensor:
-    """Select HR coordinates ``(s*v,s*u)`` matching ``K_lr=K_hr/s``.
+def _sample_hr_winner_grid_to_lr(
+    value: Tensor,
+    *,
+    scale: int,
+    align_corners_false_pixel_centers: bool = False,
+) -> Tensor:
+    """Sample an HR transport field on the selected LR pixel-centre contract.
 
-    This is nearest winner selection, never area averaging.  It preserves
-    disparity in HR-pixel units and fractional offsets in HR-pixel units.
+    The default is the immutable v1/v2 integer selection ``(s*v,s*u)``.
+    Architecture v3 passes ``align_corners_false_pixel_centers=True`` so
+    floating fields use the same point operator as the LR observation and
+    boolean validity requires the complete bilinear point-sample support.
+    Disparity values remain in HR-pixel units.
     """
 
     if value.ndim != 4 or value.shape[-2] % scale or value.shape[-1] % scale:
         raise ValueError("HR transport tensor must be [B,C,sH,sW]")
+    if not isinstance(align_corners_false_pixel_centers, bool):
+        raise TypeError("align_corners_false_pixel_centers must be a bool")
+    if align_corners_false_pixel_centers:
+        if value.dtype == torch.bool:
+            support = sample_hr_at_lr_centers(
+                value.to(dtype=torch.float32), scale=scale
+            )
+            # A point-sampled disparity/depth is valid only when every pixel
+            # participating in that exact bilinear centre sample is valid.
+            # ``nearest-exact`` would arbitrarily choose one of the four x2
+            # support pixels and could validate a foreground/background mix.
+            return support >= 1.0 - 1e-6
+        if not value.is_floating_point():
+            raise TypeError("corrected HR-to-LR sampling requires float or bool")
+        return sample_hr_at_lr_centers(value, scale=scale).contiguous()
     return value[..., ::scale, ::scale].contiguous()
 
 
@@ -1489,13 +1732,33 @@ def build_temporal_transport(
     )
 
 
-def _lr_intrinsics_from_hr(intrinsics_hr: Tensor, *, scale: int) -> Tensor:
-    """Return calibrated LR-grid intrinsics without changing disparity units."""
+def _lr_intrinsics_from_hr(
+    intrinsics_hr: Tensor,
+    *,
+    scale: int,
+    align_corners_false_pixel_centers: bool = False,
+) -> Tensor:
+    """Return LR-grid intrinsics without changing disparity units.
+
+    ``align_corners_false_pixel_centers=False`` is the immutable v1/v2
+    ``K_lr=K_hr/scale`` convention.  Architecture v3 passes ``True`` because
+    its LR observations are produced by ``F.interpolate(...,
+    align_corners=False)``; those pixel centres require
+    ``c_lr=(c_hr+0.5)/scale-0.5``.
+    """
 
     if intrinsics_hr.ndim != 3 or intrinsics_hr.shape[-2:] != (3, 3):
         raise ValueError("intrinsics_hr must have shape [B,3,3]")
     if isinstance(scale, bool) or not isinstance(scale, int) or scale <= 0:
         raise ValueError("scale must be a positive integer")
+    if not isinstance(align_corners_false_pixel_centers, bool):
+        raise TypeError("align_corners_false_pixel_centers must be a bool")
+    if align_corners_false_pixel_centers:
+        return resize_intrinsics_align_corners_false(
+            intrinsics_hr,
+            scale_x=1.0 / float(scale),
+            scale_y=1.0 / float(scale),
+        )
     intrinsics_lr = intrinsics_hr.clone()
     intrinsics_lr[:, 0, :] /= float(scale)
     intrinsics_lr[:, 1, :] /= float(scale)
@@ -1655,11 +1918,13 @@ def _topk_splat_for_memory(
 
 
 def _merge_topk_results(
-    results: Sequence[TopKSplatResult], contract: TemporalHistoryV2
+    results: Sequence[TopKSplatResult],
+    contract: TemporalHistoryV2,
+    candidate_contract: TemporalCandidateFusionV31 = TemporalCandidateFusionV31(),
 ) -> TopKSplatResult:
     if not results:
         raise ValueError("top-K temporal memory cannot be empty")
-    if len(results) == 1:
+    if len(results) == 1 and not candidate_contract.enabled:
         return results[0]
     return merge_topk_splat_results(
         results,
@@ -1667,6 +1932,18 @@ def _merge_topk_results(
         depth_temperature_m=contract.depth_temperature_m,
         age_temperature_frames=contract.age_temperature_frames,
         source_collision_penalty=contract.source_collision_penalty,
+        selection_contract=(
+            TOPK_DIVERSITY_V31_CONTRACT
+            if candidate_contract.enabled
+            else "global_depth_v2"
+        ),
+        per_age_quota=candidate_contract.per_age_quota,
+        surface_depth_gap_m=candidate_contract.surface_depth_gap_m,
+        surface_relative_depth_gap=candidate_contract.surface_relative_depth_gap,
+        phase_redundancy_sigma_grid_px=(
+            candidate_contract.phase_redundancy_sigma_grid_px
+        ),
+        phase_redundancy_penalty=candidate_contract.phase_redundancy_penalty,
     )
 
 
@@ -1720,6 +1997,56 @@ def _topk_depth_layer_collision(
         & ((result.depth_m[:, 1:] - nearest_depth) > threshold)
     )
     return competing.any(dim=1, keepdim=True)
+
+
+def _topk_context_prior_weights(
+    result: TopKSplatResult, contract: TemporalHistoryV2
+) -> Tensor:
+    """Normalize a finite prior over every valid front/back candidate.
+
+    ``TopKSplatResult.z_aware_weights`` is intentionally metric-only in v3.1:
+    back layers receive zero so they cannot create a mixed disparity.  The
+    current-conditioned context branch still needs a weak, depth-aware prior
+    over those candidates.  This helper mirrors the explicit confidence,
+    footprint, age, depth and collision factors without the front-layer mask.
+    """
+
+    compute_dtype = result.depth_m.dtype
+    if compute_dtype in {torch.float16, torch.bfloat16}:
+        compute_dtype = torch.float32
+    nearest = result.depth_m[:, :1].to(dtype=compute_dtype)
+    depth_delta = (
+        result.depth_m.to(dtype=compute_dtype) - nearest
+    ).clamp_min(0.0)
+    collision_factor = torch.where(
+        result.source_collision_mask,
+        torch.full_like(
+            result.confidence.to(dtype=compute_dtype),
+            contract.source_collision_penalty,
+        ),
+        torch.ones_like(result.confidence, dtype=compute_dtype),
+    )
+    unnormalized = torch.where(
+        result.valid_mask,
+        result.confidence.to(dtype=compute_dtype).clamp(0.0, 1.0)
+        * result.footprint_weight.to(dtype=compute_dtype).clamp_min(0.0)
+        * torch.exp(-depth_delta / contract.depth_temperature_m).clamp_min(1e-6)
+        * torch.exp(
+            -result.temporal_age_frames.to(dtype=compute_dtype)
+            / contract.age_temperature_frames
+        ).clamp_min(1e-6)
+        * collision_factor,
+        torch.zeros_like(result.confidence, dtype=compute_dtype),
+    )
+    unnormalized = torch.nan_to_num(
+        unnormalized, nan=0.0, posinf=0.0, neginf=0.0
+    )
+    denominator = unnormalized.sum(dim=1, keepdim=True)
+    return torch.where(
+        denominator > 0,
+        unnormalized / denominator.clamp_min(torch.finfo(compute_dtype).tiny),
+        torch.zeros_like(unnormalized),
+    ).to(dtype=result.z_aware_weights.dtype)
 
 
 def _topk_quality_masks(
@@ -1820,7 +2147,10 @@ def build_topk_temporal_transport(
     temporal_extrinsics_camera_from_world: Tensor,
     temporal_pose_valid: Tensor,
     contract: TemporalHistoryV2,
+    temporal_pose_quality_score: Tensor | None = None,
+    candidate_contract: TemporalCandidateFusionV31 = TemporalCandidateFusionV31(),
     scale: int = 2,
+    align_corners_false_pixel_centers: bool = False,
     photometric_temperature: float = 0.10,
     disparity_temperature_hr_px: float = 2.0,
     reject_conflict_hr_px: float = 2.0,
@@ -1838,6 +2168,10 @@ def build_topk_temporal_transport(
 
     if not contract.enabled:
         raise ValueError("build_topk_temporal_transport requires an enabled contract")
+    if candidate_contract.enabled and not align_corners_false_pixel_centers:
+        raise ValueError(
+            "v3.1 candidate fusion requires align_corners_false pixel centres"
+        )
     if not memory:
         raise ValueError("top-K temporal transport requires at least one memory")
     selected = list(memory)[-contract.memory_frames :]
@@ -1849,15 +2183,49 @@ def build_topk_temporal_transport(
         raise ValueError("temporal memory contains duplicate frame ages")
 
     batch_size = current_ffs_disparity_hr_px.shape[0]
+    if candidate_contract.enabled:
+        if (
+            not isinstance(temporal_pose_quality_score, Tensor)
+            or not temporal_pose_quality_score.is_floating_point()
+            or temporal_pose_quality_score.shape not in {
+                (batch_size,),
+                (batch_size, 1),
+            }
+            or temporal_pose_quality_score.device
+            != current_ffs_disparity_hr_px.device
+        ):
+            raise ValueError(
+                "v3.1 temporal_pose_quality_score must be floating [B] on "
+                "the transport device"
+            )
+        quality_score = temporal_pose_quality_score.reshape(batch_size)
+        pose_gate = temporal_pose_valid.reshape(batch_size).to(dtype=torch.bool)
+        if (
+            not bool(torch.isfinite(quality_score).all())
+            or bool(((quality_score < 0) | (quality_score > 1)).any())
+            or bool((pose_gate & (quality_score <= 0)).any())
+            or bool(((~pose_gate) & (quality_score != 0)).any())
+        ):
+            raise ValueError(
+                "temporal pose quality must be in (0,1] for valid poses and "
+                "exact zero for rejected poses"
+            )
+    else:
+        quality_score = None
     if intrinsics_current_hr.shape != (batch_size, 3, 3):
         raise ValueError("intrinsics_current_hr must have shape [B,3,3]")
     if baseline_current_m.shape not in {(batch_size,), (batch_size, 1)}:
         raise ValueError("baseline_current_m must have shape [B] or [B,1]")
     intrinsics_current_lr = _lr_intrinsics_from_hr(
-        intrinsics_current_hr, scale=scale
+        intrinsics_current_hr,
+        scale=scale,
+        align_corners_false_pixel_centers=(
+            align_corners_false_pixel_centers
+        ),
     )
     hr_results: list[TopKSplatResult] = []
-    lr_results: list[TopKSplatResult] = []
+    lr_hidden_results: list[TopKSplatResult] = []
+    lr_candidate_results: list[TopKSplatResult] = []
     hidden_widths: tuple[int, ...] | None = None
     age_one_hr: TopKSplatResult | None = None
 
@@ -1871,7 +2239,11 @@ def build_topk_temporal_transport(
                 "temporal memory baseline_m must have shape [B] or [B,1]"
             )
         intrinsics_previous_lr = _lr_intrinsics_from_hr(
-            entry.intrinsics_hr, scale=scale
+            entry.intrinsics_hr,
+            scale=scale,
+            align_corners_false_pixel_centers=(
+                align_corners_false_pixel_centers
+            ),
         )
         previous_pose, current_pose, pose_valid = _vggt_pose_pair_for_age(
             temporal_extrinsics_camera_from_world,
@@ -1913,49 +2285,107 @@ def build_topk_temporal_transport(
         if age == 1:
             age_one_hr = hr_result
 
-        # A ConvGRU state already summarizes all earlier recurrent context.
-        # Warp only the latest state; directly mixing age-2 hidden again would
-        # double-inject information already contained in the age-1 state.
-        if age == 1:
+        # The corrected v3 path constructs model candidates directly on the
+        # align_corners=False LR grid. This avoids assigning an HR winner at
+        # ``s*u`` to an LR centre which physically lies at
+        # ``(u+0.5)*s-0.5``. Legacy v2 keeps its exact historical behaviour.
+        # Age-1 alone owns the recurrent initial state.  V3.1 additionally
+        # carries each age's final-layer hidden feature as a per-candidate
+        # attention value; that feature never bypasses the learned candidate
+        # selector into the recurrent state.
+        if age == 1 or align_corners_false_pixel_centers:
             if not entry.output.hidden_state:
-                raise ValueError("top-K hidden warp requires a non-empty ConvGRU state")
-            hidden_widths = tuple(
-                int(state.shape[1]) for state in entry.output.hidden_state
-            )
-            hidden_feature = torch.cat(tuple(entry.output.hidden_state), dim=1)
+                raise ValueError(
+                    "top-K hidden warp requires a non-empty ConvGRU state"
+                )
+            if age == 1:
+                hidden_widths = tuple(
+                    int(state.shape[1]) for state in entry.output.hidden_state
+                )
+                recurrent_hidden_feature: Tensor | None = torch.cat(
+                    tuple(entry.output.hidden_state), dim=1
+                )
+            else:
+                recurrent_hidden_feature = None
             previous_disparity_lr = _sample_hr_winner_grid_to_lr(
-                previous_disparity_hr, scale=scale
+                previous_disparity_hr,
+                scale=scale,
+                align_corners_false_pixel_centers=(
+                    align_corners_false_pixel_centers
+                ),
             )
             previous_confidence_lr = _sample_hr_winner_grid_to_lr(
-                previous_confidence_hr, scale=scale
+                previous_confidence_hr,
+                scale=scale,
+                align_corners_false_pixel_centers=(
+                    align_corners_false_pixel_centers
+                ),
             )
             previous_valid_lr = _sample_hr_winner_grid_to_lr(
-                previous_valid_hr, scale=scale
+                previous_valid_hr,
+                scale=scale,
+                align_corners_false_pixel_centers=(
+                    align_corners_false_pixel_centers
+                ),
             )
-            lr_results.append(
-                _topk_splat_for_memory(
-                    disparity_hr_px=previous_disparity_lr,
-                    confidence=previous_confidence_lr,
-                    hidden_feature=hidden_feature,
-                    source_valid_mask=previous_valid_lr,
-                    intrinsics_previous_grid=intrinsics_previous_lr,
-                    intrinsics_current_grid=intrinsics_current_lr,
-                    intrinsics_previous_hr=entry.intrinsics_hr,
-                    intrinsics_current_hr=intrinsics_current_hr,
-                    baseline_previous_m=entry.baseline_m,
-                    baseline_current_m=baseline_current_m,
-                    previous_pose=previous_pose,
-                    current_pose=current_pose,
-                    pose_valid=pose_valid,
-                    age_frames=age,
-                    contract=contract,
+            lr_result = _topk_splat_for_memory(
+                disparity_hr_px=previous_disparity_lr,
+                confidence=previous_confidence_lr,
+                hidden_feature=recurrent_hidden_feature,
+                source_valid_mask=previous_valid_lr,
+                intrinsics_previous_grid=intrinsics_previous_lr,
+                intrinsics_current_grid=intrinsics_current_lr,
+                intrinsics_previous_hr=entry.intrinsics_hr,
+                intrinsics_current_hr=intrinsics_current_hr,
+                baseline_previous_m=entry.baseline_m,
+                baseline_current_m=baseline_current_m,
+                previous_pose=previous_pose,
+                current_pose=current_pose,
+                pose_valid=pose_valid,
+                age_frames=age,
+                contract=contract,
+            )
+            if age == 1:
+                lr_hidden_results.append(lr_result)
+            if align_corners_false_pixel_centers:
+                candidate_hidden = (
+                    entry.output.history_value_feature
+                    if candidate_contract.enabled
+                    else None
                 )
-            )
+                if candidate_contract.enabled and candidate_hidden is None:
+                    raise ValueError(
+                        "v3.1 memory entry lacks compressed history value feature"
+                    )
+                lr_candidate_results.append(
+                    _topk_splat_for_memory(
+                        disparity_hr_px=previous_disparity_lr,
+                        confidence=previous_confidence_lr,
+                        hidden_feature=candidate_hidden,
+                        source_valid_mask=previous_valid_lr,
+                        intrinsics_previous_grid=intrinsics_previous_lr,
+                        intrinsics_current_grid=intrinsics_current_lr,
+                        intrinsics_previous_hr=entry.intrinsics_hr,
+                        intrinsics_current_hr=intrinsics_current_hr,
+                        baseline_previous_m=entry.baseline_m,
+                        baseline_current_m=baseline_current_m,
+                        previous_pose=previous_pose,
+                        current_pose=current_pose,
+                        pose_valid=pose_valid,
+                        age_frames=age,
+                        contract=contract,
+                    )
+                )
 
     if age_one_hr is None or hidden_widths is None:
         raise ValueError("top-K transport requires the immediate age-1 memory")
-    merged_hr = _merge_topk_results(hr_results, contract)
-    merged_lr = _merge_topk_results(lr_results, contract)
+    merged_hr = _merge_topk_results(hr_results, contract, candidate_contract)
+    merged_lr_hidden = _merge_topk_results(lr_hidden_results, contract)
+    merged_lr_candidates = (
+        _merge_topk_results(lr_candidate_results, contract, candidate_contract)
+        if align_corners_false_pixel_centers
+        else None
+    )
     _, _, pose_valid = _vggt_pose_pair_for_age(
         temporal_extrinsics_camera_from_world,
         temporal_pose_valid,
@@ -2022,14 +2452,23 @@ def build_topk_temporal_transport(
         torch.zeros_like(age_one_hr.weighted_disparity_hr_px),
     ).detach()
 
-    effective_valid_lr = _sample_hr_winner_grid_to_lr(
-        effective_valid_hr, scale=scale
+    def sample_hr_to_lr(value: Tensor) -> Tensor:
+        return _sample_hr_winner_grid_to_lr(
+            value,
+            scale=scale,
+            align_corners_false_pixel_centers=(
+                align_corners_false_pixel_centers
+            ),
+        )
+
+    effective_valid_lr = sample_hr_to_lr(
+        effective_valid_hr
     )
-    merged_hidden = merged_lr.weighted_hidden_feature
+    merged_hidden = merged_lr_hidden.weighted_hidden_feature
     if merged_hidden is None:
         raise RuntimeError("LR top-K transport did not return a hidden feature")
     hidden_valid_lr = (
-        merged_lr.aggregate_valid_mask
+        merged_lr_hidden.aggregate_valid_mask
         & pose_valid.reshape(-1, 1, 1, 1)
         & effective_valid_lr
     )
@@ -2052,31 +2491,178 @@ def build_topk_temporal_transport(
         merged_hr.z_aware_weights,
         torch.zeros_like(merged_hr.z_aware_weights),
     )
+    topk_depth_lr: Tensor | None = None
+    topk_pose_quality_lr: Tensor | None = None
+    topk_depth_layer_lr: Tensor | None = None
+    topk_front_surface_lr: Tensor | None = None
+    topk_context_only_lr: Tensor | None = None
+    topk_age2_available_lr: Tensor | None = None
+    topk_warped_hidden_lr: Tensor | None = None
+    topk_metric_prior_lr: Tensor | None = None
+    if align_corners_false_pixel_centers:
+        if merged_lr_candidates is None:
+            raise RuntimeError("v3 LR top-K candidates were not constructed")
+        candidate_valid_lr = (
+            merged_lr_candidates.valid_mask
+            & effective_valid_lr
+            & pose_valid.reshape(-1, 1, 1, 1)
+        )
+        metric_candidate_weights_lr = torch.where(
+            candidate_valid_lr,
+            merged_lr_candidates.z_aware_weights,
+            torch.zeros_like(merged_lr_candidates.z_aware_weights),
+        )
+        topk_metric_prior_lr = metric_candidate_weights_lr
+        candidate_weights_lr = (
+            torch.where(
+                candidate_valid_lr,
+                _topk_context_prior_weights(
+                    merged_lr_candidates, contract
+                ),
+                torch.zeros_like(merged_lr_candidates.z_aware_weights),
+            )
+            if candidate_contract.enabled
+            else metric_candidate_weights_lr
+        )
+        disparity_history_lr = torch.where(
+            effective_valid_lr,
+            merged_lr_candidates.weighted_disparity_hr_px,
+            torch.zeros_like(merged_lr_candidates.weighted_disparity_hr_px),
+        )
+        topk_disparity_lr = torch.where(
+            candidate_valid_lr,
+            merged_lr_candidates.disparity_hr_px,
+            torch.zeros_like(merged_lr_candidates.disparity_hr_px),
+        )
+        topk_confidence_lr = torch.where(
+            candidate_valid_lr,
+            merged_lr_candidates.confidence,
+            torch.zeros_like(merged_lr_candidates.confidence),
+        )
+        topk_fractional_lr = torch.where(
+            candidate_valid_lr.unsqueeze(2),
+            merged_lr_candidates.fractional_offset_grid_px,
+            torch.zeros_like(merged_lr_candidates.fractional_offset_grid_px),
+        )
+        topk_age_lr = torch.where(
+            candidate_valid_lr,
+            merged_lr_candidates.temporal_age_frames,
+            torch.zeros_like(merged_lr_candidates.temporal_age_frames),
+        )
+        if candidate_contract.enabled:
+            for name, value in (
+                ("front_surface_mask", merged_lr_candidates.front_surface_mask),
+                ("context_only_mask", merged_lr_candidates.context_only_mask),
+                ("depth_layer_index", merged_lr_candidates.depth_layer_index),
+                (
+                    "age2_depth_consistent_available_mask",
+                    merged_lr_candidates.age2_depth_consistent_available_mask,
+                ),
+                ("warped_hidden_feature", merged_lr_candidates.warped_hidden_feature),
+            ):
+                if value is None:
+                    raise RuntimeError(
+                        f"v3.1 candidate merge did not populate {name}"
+                    )
+            assert merged_lr_candidates.front_surface_mask is not None
+            assert merged_lr_candidates.context_only_mask is not None
+            assert merged_lr_candidates.depth_layer_index is not None
+            assert (
+                merged_lr_candidates.age2_depth_consistent_available_mask
+                is not None
+            )
+            assert merged_lr_candidates.warped_hidden_feature is not None
+            topk_depth_lr = torch.where(
+                candidate_valid_lr,
+                merged_lr_candidates.depth_m,
+                torch.zeros_like(merged_lr_candidates.depth_m),
+            )
+            assert quality_score is not None
+            topk_pose_quality_lr = (
+                quality_score.to(dtype=topk_depth_lr.dtype)
+                .reshape(batch_size, 1, 1, 1)
+                .expand_as(topk_depth_lr)
+                * candidate_valid_lr.to(dtype=topk_depth_lr.dtype)
+            )
+            topk_depth_layer_lr = torch.where(
+                candidate_valid_lr,
+                merged_lr_candidates.depth_layer_index,
+                torch.full_like(merged_lr_candidates.depth_layer_index, -1),
+            )
+            topk_front_surface_lr = (
+                candidate_valid_lr
+                & merged_lr_candidates.front_surface_mask
+            )
+            topk_context_only_lr = (
+                candidate_valid_lr
+                & merged_lr_candidates.context_only_mask
+            )
+            topk_age2_available_lr = (
+                merged_lr_candidates.age2_depth_consistent_available_mask
+                & effective_valid_lr
+            )
+            topk_warped_hidden_lr = torch.where(
+                candidate_valid_lr.unsqueeze(2),
+                merged_lr_candidates.warped_hidden_feature,
+                torch.zeros_like(merged_lr_candidates.warped_hidden_feature),
+            )
+        # Aggregate from the explicit [B,K,2,H,W] candidate layout. The
+        # generic splat result's historical flat reshape is retained for v2,
+        # while corrected v3 phase must stay attached to its target pixel.
+        fractional_offset_lr = (
+            metric_candidate_weights_lr.unsqueeze(2) * topk_fractional_lr
+        ).sum(dim=1)
+        fractional_offset_lr = torch.where(
+            effective_valid_lr.expand(-1, 2, -1, -1),
+            fractional_offset_lr,
+            torch.zeros_like(fractional_offset_lr),
+        )
+    else:
+        candidate_valid_lr = sample_hr_to_lr(candidate_valid_hr)
+        candidate_weights_lr = sample_hr_to_lr(candidate_weights_hr)
+        topk_metric_prior_lr = candidate_weights_lr
+        disparity_history_lr = sample_hr_to_lr(disparity_history_hr)
+        fractional_offset_lr = sample_hr_to_lr(fractional_hr)
+        topk_disparity_lr = sample_hr_to_lr(
+            torch.where(
+                candidate_valid_hr,
+                merged_hr.disparity_hr_px,
+                torch.zeros_like(merged_hr.disparity_hr_px),
+            )
+        )
+        topk_confidence_lr = sample_hr_to_lr(
+            torch.where(
+                candidate_valid_hr,
+                merged_hr.confidence,
+                torch.zeros_like(merged_hr.confidence),
+            )
+        )
+        topk_fractional_lr = (
+            torch.where(
+                candidate_valid_hr.unsqueeze(2),
+                merged_hr.fractional_offset_grid_px,
+                torch.zeros_like(merged_hr.fractional_offset_grid_px),
+            )[..., ::scale, ::scale]
+            .contiguous()
+        )
+        topk_age_lr = sample_hr_to_lr(
+            torch.where(
+                candidate_valid_hr,
+                merged_hr.temporal_age_frames,
+                torch.zeros_like(merged_hr.temporal_age_frames),
+            )
+        )
     return TemporalTransport(
-        disparity_history_hr_px=_sample_hr_winner_grid_to_lr(
-            disparity_history_hr, scale=scale
-        ),
-        confidence_history=_sample_hr_winner_grid_to_lr(
-            confidence_history_hr.detach(), scale=scale
-        ),
-        visibility_mask=_sample_hr_winner_grid_to_lr(
-            visibility_hr.detach(), scale=scale
-        ),
+        disparity_history_hr_px=disparity_history_lr.detach(),
+        confidence_history=sample_hr_to_lr(confidence_history_hr.detach()),
+        visibility_mask=sample_hr_to_lr(visibility_hr.detach()),
         valid_history=effective_valid_lr.detach(),
-        collision_mask=_sample_hr_winner_grid_to_lr(
-            collision_hr.detach(), scale=scale
-        ),
-        photometric_residual=_sample_hr_winner_grid_to_lr(
-            photometric_hr.detach(), scale=scale
-        ),
-        fractional_offset_px=_sample_hr_winner_grid_to_lr(
-            fractional_hr, scale=scale
-        ),
-        static_mask=_sample_hr_winner_grid_to_lr(
-            static_hr.detach(), scale=scale
-        ),
-        geometry_consistent_mask=_sample_hr_winner_grid_to_lr(
-            geometry_consistent_hr.detach(), scale=scale
+        collision_mask=sample_hr_to_lr(collision_hr.detach()),
+        photometric_residual=sample_hr_to_lr(photometric_hr.detach()),
+        fractional_offset_px=fractional_offset_lr.detach(),
+        static_mask=sample_hr_to_lr(static_hr.detach()),
+        geometry_consistent_mask=sample_hr_to_lr(
+            geometry_consistent_hr.detach()
         ),
         disparity_history_loss_hr_px=loss_disparity_hr,
         confidence_history_hr=loss_confidence_hr.detach(),
@@ -2086,45 +2672,36 @@ def build_topk_temporal_transport(
         photometric_residual_hr=loss_photometric_hr.detach(),
         static_mask_hr=loss_static_hr.detach(),
         geometry_consistent_mask_hr=loss_geometry_consistent_hr.detach(),
-        topk_disparity_history_hr_px=_sample_hr_winner_grid_to_lr(
-            torch.where(
-                candidate_valid_hr,
-                merged_hr.disparity_hr_px,
-                torch.zeros_like(merged_hr.disparity_hr_px),
-            ),
-            scale=scale,
-        ).detach(),
-        topk_confidence_history=_sample_hr_winner_grid_to_lr(
-            torch.where(
-                candidate_valid_hr,
-                merged_hr.confidence,
-                torch.zeros_like(merged_hr.confidence),
-            ),
-            scale=scale,
-        ).detach(),
-        topk_fractional_offset_px=(
-            torch.where(
-                candidate_valid_hr.unsqueeze(2),
-                merged_hr.fractional_offset_grid_px,
-                torch.zeros_like(merged_hr.fractional_offset_grid_px),
-            )[..., ::scale, ::scale]
-            .contiguous()
-            .detach()
+        topk_disparity_history_hr_px=topk_disparity_lr.detach(),
+        topk_confidence_history=topk_confidence_lr.detach(),
+        topk_fractional_offset_px=topk_fractional_lr.detach(),
+        topk_temporal_age_frames=topk_age_lr.detach(),
+        topk_z_aware_weights=candidate_weights_lr.detach(),
+        topk_metric_prior_weights=(
+            None
+            if topk_metric_prior_lr is None
+            else topk_metric_prior_lr.detach()
         ),
-        topk_temporal_age_frames=_sample_hr_winner_grid_to_lr(
-            torch.where(
-                candidate_valid_hr,
-                merged_hr.temporal_age_frames,
-                torch.zeros_like(merged_hr.temporal_age_frames),
-            ),
-            scale=scale,
-        ).detach(),
-        topk_z_aware_weights=_sample_hr_winner_grid_to_lr(
-            candidate_weights_hr, scale=scale
-        ).detach(),
-        topk_valid_mask=_sample_hr_winner_grid_to_lr(
-            candidate_valid_hr, scale=scale
-        ).detach(),
+        topk_valid_mask=candidate_valid_lr.detach(),
+        topk_depth_m=(None if topk_depth_lr is None else topk_depth_lr.detach()),
+        topk_pose_quality=(
+            None if topk_pose_quality_lr is None else topk_pose_quality_lr.detach()
+        ),
+        topk_depth_layer_index=(
+            None if topk_depth_layer_lr is None else topk_depth_layer_lr.detach()
+        ),
+        topk_front_surface_mask=(
+            None if topk_front_surface_lr is None else topk_front_surface_lr.detach()
+        ),
+        topk_context_only_mask=(
+            None if topk_context_only_lr is None else topk_context_only_lr.detach()
+        ),
+        topk_age2_depth_consistent_available_mask=(
+            None if topk_age2_available_lr is None else topk_age2_available_lr.detach()
+        ),
+        # Hidden values remain differentiable through the causal three-step
+        # unroll; projection indices and every geometric field above detach.
+        topk_warped_hidden_feature=topk_warped_hidden_lr,
         warped_hidden_state=tuple(hidden_state),
     )
 
@@ -2502,6 +3079,7 @@ def _forward_temporal_loss(
     temporal_history_v2 = temporal_history_v2_from_config(config)
     temporal_residual_v2 = temporal_residual_v2_from_config(config)
     calibration_v3 = calibration_conditioning_v3_from_config(config)
+    candidate_v31 = temporal_candidate_fusion_v3_1_from_config(config)
     if temporal_history_v2.enabled and not calibration_v3.enabled:
         validate_v2_temporal_calibration(
             batch["K_hr_sequence"], batch["baseline_m_sequence"]
@@ -2534,7 +3112,19 @@ def _forward_temporal_loss(
                     ][:, time_index],
                     temporal_pose_valid=pose_valid,
                     contract=temporal_history_v2,
+                    temporal_pose_quality_score=(
+                        None
+                        if batch.get("temporal_pose_quality_score_sequence")
+                        is None
+                        else batch["temporal_pose_quality_score_sequence"][
+                            :, time_index
+                        ]
+                    ),
+                    candidate_contract=candidate_v31,
                     scale=int(config.data.scale),
+                    align_corners_false_pixel_centers=(
+                        calibration_v3.align_corners_false_pixel_centers
+                    ),
                     photometric_temperature=float(config.train.photometric_temperature),
                     disparity_temperature_hr_px=float(
                         config.train.disparity_temperature_hr_px
@@ -2668,6 +3258,29 @@ def _forward_temporal_loss(
                         "history_topk_valid_mask": topk_values[5],
                     }
                 )
+                if candidate_v31.enabled:
+                    v31_values = (
+                        transport.topk_depth_m,
+                        transport.topk_pose_quality,
+                        transport.topk_depth_layer_index,
+                        transport.topk_front_surface_mask,
+                        transport.topk_context_only_mask,
+                        transport.topk_warped_hidden_feature,
+                    )
+                    if any(value is None for value in v31_values):
+                        raise RuntimeError(
+                            "v3.1 transport did not populate candidate metadata"
+                        )
+                    model_kwargs.update(
+                        {
+                            "history_topk_depth_m": v31_values[0],
+                            "history_topk_pose_quality": v31_values[1],
+                            "history_topk_depth_layer_index": v31_values[2],
+                            "history_topk_front_surface_mask": v31_values[3],
+                            "history_topk_context_only_mask": v31_values[4],
+                            "history_topk_warped_hidden_feature": v31_values[5],
+                        }
+                    )
         output = model(
             step["rgb_hr"],
             step["disparity_ffs_hr_px"],
@@ -3038,11 +3651,32 @@ def run(args: argparse.Namespace) -> int:
             {
                 "enabled": True,
                 "protocol_version": CALIBRATION_CONDITIONING_V3_PROTOCOL,
+                **(
+                    {
+                        "pixel_center_contract": (
+                            ALIGN_CORNERS_FALSE_PIXEL_CENTER_CONTRACT
+                        )
+                    }
+                    if calibration_v3.align_corners_false_pixel_centers
+                    else {}
+                ),
                 "use_rays": True,
                 "use_stereo_pose": True,
                 "use_temporal_pose": False,
             }
             if calibration_v3.enabled
+            else None
+        )
+        required_v31_sections = (
+            {
+                "measurement_ownership_v3_1": dict(
+                    config.measurement_ownership_v3_1
+                ),
+                "temporal_candidate_fusion_v3_1": dict(
+                    config.temporal_candidate_fusion_v3_1
+                ),
+            }
+            if calibration_v3.align_corners_false_pixel_centers
             else None
         )
         initialization_lineage = load_model_initialization_checkpoint(
@@ -3052,6 +3686,7 @@ def run(args: argparse.Namespace) -> int:
             required_sequence_length=1,
             required_seed=int(config.seed) if calibration_v3.enabled else None,
             required_calibration_conditioning_v3=required_stage_a_v3,
+            required_config_sections=required_v31_sections,
         )
         if (
             initialization_lineage["checkpoint_sha256"]

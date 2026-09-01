@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+import torch.nn.functional as functional
 from torch import Tensor, nn
 
 
@@ -61,12 +62,22 @@ class RGBPyramidEncoder(nn.Module):
     by the training data pipeline.
     """
 
-    def __init__(self, channels: tuple[int, int, int] = (32, 64, 96)) -> None:
+    def __init__(
+        self,
+        channels: tuple[int, int, int] = (32, 64, 96),
+        *,
+        align_corners_false_pixel_centers: bool = False,
+    ) -> None:
         super().__init__()
         if len(channels) != 3 or any(channel <= 0 for channel in channels):
             raise ValueError(f"channels must contain three positive values, got {channels}")
         channels_hr, channels_mid, channels_lr = channels
         self.channels = channels
+        if not isinstance(align_corners_false_pixel_centers, bool):
+            raise TypeError("align_corners_false_pixel_centers must be a bool")
+        self.align_corners_false_pixel_centers = (
+            align_corners_false_pixel_centers
+        )
         self.hr_stage = nn.Sequential(
             ConvNormAct(3, channels_hr),
             ConvNormAct(channels_hr, channels_hr),
@@ -92,5 +103,43 @@ class RGBPyramidEncoder(nn.Module):
         if rgb_hr.ndim != 4 or rgb_hr.shape[1] != 3:
             raise ValueError(f"rgb_hr must have shape [B,3,2H,2W], got {rgb_hr.shape}")
         feature_hr = self.hr_stage(rgb_hr)
-        feature_lr = self.lr_stage(feature_hr)
+        if self.align_corners_false_pixel_centers:
+            # FFS observations and calibrated LR rays live at continuous HR
+            # centres ``(2j+0.5, 2i+0.5)``. A stride-2 k3/p1 convolution is
+            # centred at integer HR coordinate ``(2j,2i)`` instead. Resample
+            # the HR feature with the exact x2 bilinear centre-sampling
+            # operator first, then
+            # reuse the same stored convolution weights at stride one on the
+            # physical LR grid. No parameter/state key changes are introduced.
+            height_hr, width_hr = feature_hr.shape[-2:]
+            if height_hr % 2 or width_hr % 2:
+                raise ValueError(
+                    "corrected x2 RGB grid requires even HR height and width"
+                )
+            # For an integer x2 reduction, a 2x2 average is exactly bilinear
+            # point sampling at the align-corners-false centre.  The explicit
+            # pooling kernel also has deterministic CUDA backward, unlike the
+            # antialiased interpolate backward used by some PyTorch builds.
+            feature_lr_input = functional.avg_pool2d(
+                feature_hr, kernel_size=2, stride=2
+            )
+            downsample_block = self.lr_stage[0]
+            assert isinstance(downsample_block, ConvNormAct)
+            convolution = downsample_block[0]
+            normalization = downsample_block[1]
+            activation = downsample_block[2]
+            assert isinstance(convolution, nn.Conv2d)
+            feature_lr = functional.conv2d(
+                feature_lr_input,
+                convolution.weight,
+                convolution.bias,
+                stride=1,
+                padding=convolution.padding,
+                dilation=convolution.dilation,
+                groups=convolution.groups,
+            )
+            feature_lr = activation(normalization(feature_lr))
+            feature_lr = self.lr_stage[1:](feature_lr)
+        else:
+            feature_lr = self.lr_stage(feature_hr)
         return RGBPyramidFeatures(feature_hr=feature_hr, feature_lr=feature_lr)

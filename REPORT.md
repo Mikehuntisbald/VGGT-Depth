@@ -759,11 +759,100 @@ Current v3 decision boundary:
 - all canonical v1/v2 checkpoints, metrics and historical decisions:
   unchanged.
 
+## Architecture v3.1 correction receipt (replacement training pending)
+
+The original v3 runner was stopped after a pixel-centre audit found that FFS
+observation images use bilinear `align_corners=False` but LR intrinsics/rays
+used `K_hr/2`. The missing principal-point term was 0.25 LR px = 0.5 HR px at
+x2 (and would be 0.375 LR px = 1.5 HR px at x4). This does not alter stereo
+disparity because the common coordinate shift cancels, but it invalidates ray,
+3D reprojection, hidden-transport and fractional-phase claims. The superseded
+root `outputs/ffs_omega_tsr_x2_v3` is preserved with completed seed-42 A0/A1
+and an interrupted A2; none is eligible v3.1 evidence.
+
+The corrected opt-in contract is now implemented under the independent v3.1
+configs. It uses
+
+```text
+cx_lr = (cx_hr + 0.5) / scale - 0.5
+cy_lr = (cy_hr + 0.5) / scale - 0.5
+```
+
+for dense rays and every LR source/target top-K or hidden transport. Legacy
+camera scaling remains the default when the v3.1 field is absent. HR teacher
+correspondence continues to use explicit HR source/target K and B. The learned
+LR RGB/ConvGRU grid now uses the same align-corners-false feature resampling
+before stride-one convolution; the superseded integer-centred stride-two path
+remains unchanged for v1/v2/original v3.
+
+FFS ownership is now projected onto the native LR-centre measurement operator.
+The former trusted-region HR-wide bilinear overwrite is retained only on the
+legacy path. V3.1 permits bounded HR detail in the measurement null space,
+uses confidence/boundary-aware correction limits, remains non-negative, and
+requires VGGT/history metric support before declaring an FFS-hole completion.
+
+The v3.1 temporal merge keeps at most two candidates per age, guarantees a
+front-layer age-2 candidate when available, penalizes redundant fractional
+phase and keeps rank zero as the nearest physical layer. Current-conditioned
+attention sees RGB/FFS geometry, disparity/depth/confidence, phase, age,
+a window-level continuous pose-quality score, depth layer, factorized motion
+and an 8-channel transported projection of each age's warped final ConvGRU
+feature, embedded into the selector's 32-channel candidate space. Only
+front/same-surface candidates create the
+history disparity proposal; back layers feed context only. Age one alone
+initializes recurrent state, so age-two hidden context cannot directly replace
+the current recurrent state.
+
+The corrected model has 1,778,244 trainable parameters and 106 state entries,
+still far below 12M. Original v3 remains 1,771,884 parameters and 92 entries;
+its state-key golden hash and legacy v1/v2 outputs are regression-tested.
+Stage C remains disabled/unchanged for this lineage.
+
+The continuous score is `exp(-mean(residual/threshold))` over audited
+baseline-CV, maximum stereo rotation, photometric residual, depth weighted-MAE
+and depth median-absolute-error components; the boolean pose gate remains
+authoritative. All 240 formal validation derived records parse without cache
+rebuild: 178 valid scores span 0.61968–0.89360 and 62 rejected records are exact
+zero.
+
+Evaluation now records unique-age fraction, front-layer age-2 survival,
+uniform retained-set and learned-attended fractional-phase variance,
+transport-prior/context-attention/metric-attention entropy, candidate depth
+spread, and rank-zero versus prior-weighted versus attention-weighted teacher
+EPE. These diagnostics do not by themselves satisfy an accuracy promotion
+threshold.
+
+The v3.1 decision path now binds its lineage/output identity, exact pixel,
+measurement and candidate contracts, selected primary checkpoint SHA and the
+Stage-B A3 checkpoint SHA. Both Stage-B arms must publish all 13 aggregate
+top-K diagnostics with a non-empty finite domain and the same fixed 13-key
+schema on every one of 238 per-record rows; an invalid row writes JSON `null`.
+Missing evidence cannot be relabelled into a v3.1 GO.
+
+A real-cache RTX 5090 BF16 Stage-B optimizer update at the formal 4x2 schedule
+completed with finite loss and gradients after activation-checkpointing only
+the learned candidate-attention core. It peaked at 23,948,250,112 allocated
+and 25,105,006,592 reserved CUDA bytes. Against the matched original-v3 smoke
+(23,426,135,552 / 24,519,901,184 bytes), the allocated/reserved increases are
+2.2288% / 2.3862%, both below the 5% engineering ceiling. This is a training
+memory smoke receipt, not accuracy or formal evaluator-latency evidence; the
+latter remains owned by the completed ablation evaluations.
+
+Current v3.1 decision boundary:
+
+- code, geometry, compatibility and CPU test readiness: **GO**;
+- original-v3 A0/A1/A2 artifacts: **INVALIDATED / DO NOT RESUME**;
+- rays promotion, temporal-pose promotion and overall project acceptance:
+  **NO-GO / NOT ESTABLISHED** until the new v3.1 runner completes and writes a
+  bound `decision.json`;
+- static stereo-pose attribution on the single-rig corpus:
+  **NOT_IDENTIFIABLE**.
+
 ## Tests
 
 ```text
 conda run --no-capture-output -n env-tsr python -m pytest -q
-526 passed in 22.38s
+610 passed in 25.11s
 ```
 
 The current suite includes receipt/cache identity, manifest/crop/intrinsics,

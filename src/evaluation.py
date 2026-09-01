@@ -8,6 +8,7 @@ temporal domains. All disparities passed here are expressed in HR pixels.
 
 from __future__ import annotations
 
+import json
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -34,6 +35,11 @@ from utils.checkpoint import CHECKPOINT_SCHEMA_VERSION, CheckpointMismatchError
 
 
 PSEUDO_GT_LABEL = "trusted_hr_ffs_teacher_pseudo_gt"
+V31_PIXEL_CENTER_CONTRACT = "align_corners_false_half_pixel_v3_1"
+V31_BEHAVIOR_CONFIG_SECTIONS = (
+    "measurement_ownership_v3_1",
+    "temporal_candidate_fusion_v3_1",
+)
 POINT_TO_PLANE_NOT_AVAILABLE = {
     "status": "NOT_AVAILABLE",
     "reason": "target point normals and explicit correspondences are unavailable",
@@ -395,6 +401,25 @@ def _required_mapping(value: object, name: str) -> Mapping[str, Any]:
     return value
 
 
+def _strict_config_mapping_fingerprint(
+    value: Mapping[str, Any], name: str
+) -> str:
+    """Canonical JSON preserving numeric types for exact behavior matching."""
+
+    try:
+        return json.dumps(
+            dict(value),
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=True,
+            allow_nan=False,
+        )
+    except (TypeError, ValueError) as exc:
+        raise CheckpointMismatchError(
+            f"{name} must contain only finite JSON values"
+        ) from exc
+
+
 def _identity_mapping(value: object, name: str) -> dict[str, Any]:
     mapping = _required_mapping(value, name)
     fields = {
@@ -491,6 +516,20 @@ def validate_checkpoint_lineage(
         raise CheckpointMismatchError(
             "checkpoint calibration and derived-cache contracts disagree"
         )
+    pixel_center_contract = saved_calibration.get("pixel_center_contract")
+    if pixel_center_contract is not None and (
+        pixel_center_contract != V31_PIXEL_CENTER_CONTRACT
+    ):
+        raise CheckpointMismatchError(
+            "checkpoint calibration has an unsupported pixel-center contract"
+        )
+    if (
+        pixel_center_contract == V31_PIXEL_CENTER_CONTRACT
+        and evaluation_config is None
+    ):
+        raise CheckpointMismatchError(
+            "v3.1 lineage validation requires the resolved evaluation config"
+        )
     if evaluation_config is not None:
         current_config = _required_mapping(
             evaluation_config, "resolved evaluation config"
@@ -503,6 +542,27 @@ def validate_checkpoint_lineage(
             raise CheckpointMismatchError(
                 "evaluation calibration conditioning differs from checkpoint"
             )
+        if pixel_center_contract == V31_PIXEL_CENTER_CONTRACT:
+            for section_name in V31_BEHAVIOR_CONFIG_SECTIONS:
+                saved_section = _required_mapping(
+                    config.get(section_name),
+                    f"checkpoint {section_name} config",
+                )
+                current_section = _required_mapping(
+                    current_config.get(section_name),
+                    f"evaluation {section_name} config",
+                )
+                if _strict_config_mapping_fingerprint(
+                    current_section,
+                    f"evaluation {section_name} config",
+                ) != _strict_config_mapping_fingerprint(
+                    saved_section,
+                    f"checkpoint {section_name} config",
+                ):
+                    raise CheckpointMismatchError(
+                        "evaluation v3.1 behavior config differs from checkpoint: "
+                        f"{section_name}"
+                    )
         current_data = _required_mapping(
             current_config.get("data"), "evaluation data config"
         )
@@ -706,10 +766,17 @@ def validate_temporal_batch_causality(batch: Mapping[str, Any]) -> dict[str, int
     manifest_indices = batch.get("manifest_indices")
     metadata = batch.get("identity_metadata")
     pose_valid = batch.get("temporal_pose_valid_sequence")
+    pose_quality = batch.get("temporal_pose_quality_score_sequence")
     prior_valid = batch.get("static_prior_valid_sequence")
     if not all(
         isinstance(value, Tensor)
-        for value in (frame_ids, timestamps, manifest_indices, pose_valid, prior_valid)
+        for value in (
+            frame_ids,
+            timestamps,
+            manifest_indices,
+            pose_valid,
+            prior_valid,
+        )
     ):
         raise ValueError("temporal batch causal tensors are missing")
     if frame_ids.ndim != 2 or frame_ids.shape[1] != 3:
@@ -723,6 +790,23 @@ def validate_temporal_batch_causality(batch: Mapping[str, Any]) -> dict[str, int
     ):
         if value.shape != expected_shape:
             raise ValueError(f"{name} must have shape {tuple(expected_shape)}")
+    if pose_quality is not None:
+        if not isinstance(pose_quality, Tensor) or pose_quality.shape != expected_shape:
+            raise ValueError(
+                "temporal_pose_quality_score_sequence must have shape "
+                f"{tuple(expected_shape)}"
+            )
+        if (
+            not pose_quality.is_floating_point()
+            or not bool(torch.isfinite(pose_quality).all().item())
+            or bool(((pose_quality < 0) | (pose_quality > 1)).any().item())
+            or bool((pose_valid & (pose_quality <= 0)).any().item())
+            or bool(((~pose_valid) & (pose_quality != 0)).any().item())
+        ):
+            raise ValueError(
+                "temporal pose quality must be in (0,1] for valid poses and "
+                "zero for rejected poses"
+            )
     if not bool((timestamps[:, 1:] > timestamps[:, :-1]).all().item()):
         raise ValueError("temporal batch contains non-increasing/future timestamps")
     if not bool(torch.isfinite(timestamps).all().item()):

@@ -5,6 +5,10 @@ from .calibration_conditioner import (
     dense_unit_rays_from_K_hr,
 )
 from .convex_upsampler import ConvexUpsampler
+from .current_conditioned_history import (
+    CurrentConditionedHistoryOutput,
+    CurrentConditionedTopKAttention,
+)
 from .epipolar_refiner import (
     EpipolarRefinementOutput,
     HREpipolarRefiner,
@@ -19,6 +23,8 @@ from .topk_history_encoder import TopKHistoryEncoder, TopKHistoryEncoding
 __all__ = [
     "ConvGRUCell",
     "ConvexUpsampler",
+    "CurrentConditionedHistoryOutput",
+    "CurrentConditionedTopKAttention",
     "CalibrationConditionerV3",
     "EpipolarRefinementOutput",
     "FFSOmegaTSR",
