@@ -1004,12 +1004,6 @@ class CachedTemporalTrainingDataset(Dataset[TemporalTrainingSample]):
             student_sequence_length=STUDENT_SEQUENCE_LENGTH,
             vggt_context_pairs=VGGT_CONTEXT_PAIRS,
         )
-        # Keep the exact five-record causal context for each endpoint.  Raw
-        # VGGT caches carry the same context, but GT-pose experiments must
-        # reconstruct it from the manifest without borrowing a predicted pose.
-        self._vggt_context_indices_by_endpoint = {
-            window.endpoint_index: window.vggt_indices for window in candidates
-        }
         self.windows = [
             window
             for window in candidates
@@ -1106,14 +1100,34 @@ class CachedTemporalTrainingDataset(Dataset[TemporalTrainingSample]):
 
         A Spring manifest stores one left-camera pose per frame.  The right
         camera is the fixed rectified partner and is derived with the physical
-        baseline.  Returning ``None`` for a manifest without GT pose metadata
-        keeps legacy XD manifests backward-compatible; a partially populated
-        context is rejected by :meth:`__getitem__` below.
+        baseline.  Early T=3 slices are left-padded with the earliest causal
+        pose because no future frame may be borrowed.  Returning ``None`` for
+        a manifest without GT pose metadata keeps legacy XD manifests
+        backward-compatible; a partially populated context is rejected by
+        :meth:`__getitem__` below.
         """
 
-        context_indices = self._vggt_context_indices_by_endpoint.get(endpoint_index)
-        if context_indices is None:
+        if endpoint_index < 0 or endpoint_index >= len(self.records):
             return None
+        endpoint_record = self.records[endpoint_index]
+        causal_indices = [
+            index
+            for index, record in enumerate(self.records)
+            if index <= endpoint_index
+            and record.sequence_id == endpoint_record.sequence_id
+        ]
+        if not causal_indices:
+            return None
+        # Early student frames (the first two entries of a T=3 sample) do not
+        # themselves have a complete five-pair VGGT context.  Pad only the
+        # oldest side with its earliest causal pose; the transport/calibration
+        # age gates never consume those padded slots, while indices 6/8 remain
+        # the exact age-1/current poses required by T=3.
+        context_indices = causal_indices[-VGGT_CONTEXT_PAIRS:]
+        if len(context_indices) < VGGT_CONTEXT_PAIRS:
+            context_indices = [context_indices[0]] * (
+                VGGT_CONTEXT_PAIRS - len(context_indices)
+            ) + context_indices
         poses: list[Tensor] = []
         for context_index in context_indices:
             record = self.records[context_index]
