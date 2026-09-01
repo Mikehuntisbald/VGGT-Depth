@@ -16,14 +16,17 @@
     "training_git_hash": "3e0df0b543f5000d0bf8490740b5f34ad979e3b6"
   },
   "evaluator": {
-    "git_hash": "ea377a5ebc3b703199068562f0ff09c25a21280d",
-    "eval_py_sha256": "d3cbc5083c2e6933383886f99a71e882fd8781982982da27644b8c65dc699a08",
+    "git_hash": "4ce38eb3cd0f18c60681f090272d76b982992ec9",
+    "eval_py_sha256": "3fe494aff9158ca268727bb563643d60c1e1206adab18af6ddfe9df23be90380",
     "evaluation_module_sha256": "9ce1551ba73585eb800b5f3749a44250a26a063f1b2eaea8c45f1b794504fa18",
     "torch_version": "2.10.0+cu128",
     "cuda_version": "12.8"
   },
   "coverage": {
-    "acceptance_eligible": true,
+    "coverage_eligible": true,
+    "final_training_checkpoint": false,
+    "final_acceptance_eligible": false,
+    "evaluation_status": "INTERMEDIATE_CHECKPOINT_EVALUATION_COMPLETE",
     "formal_holdout": true,
     "future_frames": false,
     "manifest_records": 244,
@@ -109,11 +112,11 @@
     }
   ],
   "artifacts": {
-    "metrics_json": "outputs/ffs_omega_tsr_x2/stage_b/eval_step7500_fixed/metrics.json",
-    "metrics_json_sha256": "7c0b3f524b8253ff36245d46c210d59a2fb3d437f1a59b47d35101878b8fdcc8",
-    "metrics_csv": "outputs/ffs_omega_tsr_x2/stage_b/eval_step7500_fixed/metrics.csv",
+    "metrics_json": "outputs/ffs_omega_tsr_x2/stage_b/eval_step7500_claims_v2/metrics.json",
+    "metrics_json_sha256": "cf788188b9a2be44e1a4bfb73fb4ce5dacf3d1ebf46ec542a9b578369d8773e5",
+    "metrics_csv": "outputs/ffs_omega_tsr_x2/stage_b/eval_step7500_claims_v2/metrics.csv",
     "metrics_csv_sha256": "5d20694a862cf69d8f0929471210a29e78546ce132a7c936d08ee74c8b7b6e1c",
     "visualizations_written": 4,
-    "elapsed_seconds": 227.17926699299994
+    "elapsed_seconds": 269.39239004
   }
 }
