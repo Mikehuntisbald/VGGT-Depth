@@ -457,9 +457,11 @@ def spring_gt_pose_from_manifest(record: ManifestRecord) -> np.ndarray:
 
     if not isinstance(record, ManifestRecord):
         raise TypeError("record must be a ManifestRecord")
-    if record.extras.get("dataset") != "spring":
+    if str(record.extras.get("dataset", "")).strip().lower() != "spring":
         raise SpringFormatError("manifest record is not a Spring record")
     value = record.extras.get("gt_extrinsics_camera_from_world")
+    if value is None:
+        value = record.extras.get("gt_pose_camera_from_world")
     try:
         pose = np.asarray(value, dtype=np.float64)
     except (TypeError, ValueError) as exc:
