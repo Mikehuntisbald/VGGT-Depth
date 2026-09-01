@@ -41,6 +41,12 @@ BASELINE_LOSS_TERMS = (
     "total",
     "uncertainty_nll",
 )
+PHYSICAL_OUTPUT_V2_PROTOCOL = "explicit_valid_completion_nonnegative_v2"
+PHYSICAL_OUTPUT_V2_LOSS_TERMS = (
+    "completion_bce",
+    "valid_bce",
+    "validity_calibration",
+)
 SHA256_PATTERN = re.compile(r"^[0-9a-f]{64}$")
 GIT_HASH_PATTERN = re.compile(r"^(?:[0-9a-f]{40}|unknown)$")
 
@@ -216,29 +222,41 @@ def _configured_stage_and_steps(config: Mapping[str, Any]) -> tuple[str, int]:
     return str(stage), int(configured_steps)
 
 
+def _enabled_config_section(config: Mapping[str, Any], name: str) -> Mapping[str, Any] | None:
+    """Return an enabled optional config section, validating its switch strictly."""
+
+    section = config.get(name)
+    if section is None:
+        return None
+    _require(isinstance(section, Mapping), f"checkpoint {name} must be a mapping")
+    enabled = section.get("enabled")
+    _require(isinstance(enabled, bool), f"checkpoint {name}.enabled must be boolean")
+    return section if enabled else None
+
+
 def _expected_loss_terms(config: Mapping[str, Any]) -> tuple[str, ...]:
     """Derive the exact log schema from the checkpoint's resolved config.
 
-    Baseline Stage-A/B runs retain the historical eight-term schema.  The
-    separate D-025 run is the only declared extension: it must carry exactly
-    one additional, weighted ``positivity_penalty`` term in every log record.
+    Baseline Stage-A/B runs retain the historical eight-term schema.  D-025
+    carries exactly ``positivity_penalty``.  The separate physical-output-v2
+    lineage instead carries exactly its three validity/completion diagnostics.
     """
 
-    positivity = config.get("positivity_ablation")
-    if positivity is None:
-        return BASELINE_LOSS_TERMS
+    positivity = _enabled_config_section(config, "positivity_ablation")
+    physical_v2 = _enabled_config_section(config, "physical_output_v2")
     _require(
-        isinstance(positivity, Mapping),
-        "checkpoint positivity_ablation must be a mapping",
+        not (positivity is not None and physical_v2 is not None),
+        "checkpoint physical_output_v2 and positivity_ablation cannot both be enabled",
     )
-    enabled = positivity.get("enabled")
-    _require(
-        isinstance(enabled, bool),
-        "checkpoint positivity_ablation.enabled must be boolean",
-    )
-    if not enabled:
-        return BASELINE_LOSS_TERMS
-    return tuple(sorted((*BASELINE_LOSS_TERMS, "positivity_penalty")))
+    if physical_v2 is not None:
+        _require(
+            physical_v2.get("protocol_version") == PHYSICAL_OUTPUT_V2_PROTOCOL,
+            "checkpoint physical_output_v2 protocol version mismatch",
+        )
+        return tuple(sorted((*BASELINE_LOSS_TERMS, *PHYSICAL_OUTPUT_V2_LOSS_TERMS)))
+    if positivity is not None:
+        return tuple(sorted((*BASELINE_LOSS_TERMS, "positivity_penalty")))
+    return BASELINE_LOSS_TERMS
 
 
 def _learning_rate_multiplier(update_index: int, total_steps: int, warmup_steps: int) -> float:
@@ -432,6 +450,7 @@ def _validate_training_log(
     learning_rates: list[float] = []
     gradient_norms: list[float] = []
     expected_loss_terms = _expected_loss_terms(checkpoint.config)
+    physical_output_v2_enabled = "valid_bce" in expected_loss_terms
     losses: dict[str, list[float]] = {name: [] for name in expected_loss_terms}
 
     for line_number, record in enumerate(records, start=1):
@@ -465,6 +484,11 @@ def _validate_training_log(
                     value >= 0.0,
                     f"negative positivity_penalty at line {line_number}",
                 )
+            if name in PHYSICAL_OUTPUT_V2_LOSS_TERMS:
+                _require(
+                    value >= 0.0,
+                    f"negative physical-output-v2 loss {name} at line {line_number}",
+                )
             losses[name].append(value)
         if previous_elapsed is not None and elapsed <= previous_elapsed:
             resume_boundaries.append(int(step))
@@ -490,6 +514,7 @@ def _validate_training_log(
         "losses": losses,
         "expected_loss_terms": list(expected_loss_terms),
         "positivity_ablation_enabled": "positivity_penalty" in expected_loss_terms,
+        "physical_output_v2_enabled": physical_output_v2_enabled,
         "resume_boundaries": resume_boundaries,
     }
 
@@ -793,6 +818,20 @@ def audit_training_run(
             "byte_size": len(summary_bytes),
         }
 
+    loss_schema_report: dict[str, Any] = {
+        "terms": log_validation["expected_loss_terms"],
+        "positivity_ablation_enabled": log_validation[
+            "positivity_ablation_enabled"
+        ],
+    }
+    if log_validation["physical_output_v2_enabled"]:
+        # Preserve the exact historical baseline/D-025 report shape.  This key
+        # identifies only the explicitly versioned V2 checkpoint lineage.
+        loss_schema_report["physical_output_v2"] = {
+            "enabled": True,
+            "protocol_version": PHYSICAL_OUTPUT_V2_PROTOCOL,
+        }
+
     report = {
         "schema_version": AUDIT_SCHEMA_VERSION,
         "component": "training-run-audit",
@@ -819,12 +858,7 @@ def audit_training_run(
             "checkpoint_identity_consistent": final is None or complete,
             "learning_rates_nonnegative": True,
             "learning_rate_schedule_exact": True,
-            "loss_schema": {
-                "terms": log_validation["expected_loss_terms"],
-                "positivity_ablation_enabled": log_validation[
-                    "positivity_ablation_enabled"
-                ],
-            },
+            "loss_schema": loss_schema_report,
             "completion_receipt_valid": complete,
             "resume_boundaries": log_validation["resume_boundaries"],
         },

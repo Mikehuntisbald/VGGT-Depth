@@ -29,6 +29,12 @@ LOSS_TERMS = (
     "total",
     "uncertainty_nll",
 )
+PHYSICAL_OUTPUT_V2_PROTOCOL = "explicit_valid_completion_nonnegative_v2"
+PHYSICAL_OUTPUT_V2_LOSS_TERMS = (
+    "completion_bce",
+    "valid_bce",
+    "validity_calibration",
+)
 
 
 def _multiplier(update_index: int, *, total_steps: int, warmup_steps: int) -> float:
@@ -51,6 +57,8 @@ def _build_run(
     complete: bool,
     gradient_norm: float = 2.5,
     positivity_ablation: bool = False,
+    physical_output_v2: bool = False,
+    physical_output_v2_protocol: str = PHYSICAL_OUTPUT_V2_PROTOCOL,
 ) -> dict:
     root.mkdir(parents=True)
     total_steps = 4
@@ -72,12 +80,18 @@ def _build_run(
     }
     if positivity_ablation:
         config["positivity_ablation"] = {"enabled": True}
+    if physical_output_v2:
+        config["physical_output_v2"] = {
+            "enabled": True,
+            "protocol_version": physical_output_v2_protocol,
+        }
     stage = str(config["train"]["stage"])
-    loss_terms = (
-        tuple(sorted((*LOSS_TERMS, "positivity_penalty")))
-        if positivity_ablation
-        else LOSS_TERMS
-    )
+    if physical_output_v2:
+        loss_terms = tuple(sorted((*LOSS_TERMS, *PHYSICAL_OUTPUT_V2_LOSS_TERMS)))
+    elif positivity_ablation:
+        loss_terms = tuple(sorted((*LOSS_TERMS, "positivity_penalty")))
+    else:
+        loss_terms = LOSS_TERMS
     model = nn.Linear(3, 2)
     optimizer = torch.optim.AdamW(model.parameters(), lr=base_lr)
     scheduler = torch.optim.lr_scheduler.LambdaLR(
@@ -276,6 +290,94 @@ def test_d025_positivity_missing_extra_or_negative_loss_terms_are_rejected(
     )
     with pytest.raises(TrainingAuditError, match="negative positivity_penalty"):
         audit_training_run(negative)
+
+
+def test_physical_output_v2_requires_exact_three_nonnegative_losses(tmp_path: Path) -> None:
+    run = tmp_path / "physical_v2"
+    _build_run(run, complete=True, physical_output_v2=True)
+
+    report = audit_training_run(run)
+
+    assert report["status"] == "PASS"
+    assert report["validation"]["loss_schema"] == {
+        "terms": list(tuple(sorted((*LOSS_TERMS, *PHYSICAL_OUTPUT_V2_LOSS_TERMS)))),
+        "positivity_ablation_enabled": False,
+        "physical_output_v2": {
+            "enabled": True,
+            "protocol_version": PHYSICAL_OUTPUT_V2_PROTOCOL,
+        },
+    }
+    for name in PHYSICAL_OUTPUT_V2_LOSS_TERMS:
+        statistics = report["statistics"]["loss"][name]
+        assert statistics["count"] == 4
+        assert statistics["minimum"] >= 0.0
+
+
+@pytest.mark.parametrize("loss_name", PHYSICAL_OUTPUT_V2_LOSS_TERMS)
+def test_physical_output_v2_rejects_missing_and_negative_loss(
+    tmp_path: Path, loss_name: str
+) -> None:
+    missing = tmp_path / f"missing_{loss_name}"
+    _build_run(missing, complete=True, physical_output_v2=True)
+    records = [json.loads(line) for line in (missing / "train.jsonl").read_text().splitlines()]
+    del records[0]["loss"][loss_name]
+    (missing / "train.jsonl").write_text(
+        "".join(json.dumps(record) + "\n" for record in records), encoding="utf-8"
+    )
+    with pytest.raises(TrainingAuditError, match="loss schema mismatch"):
+        audit_training_run(missing)
+
+    negative = tmp_path / f"negative_{loss_name}"
+    _build_run(negative, complete=True, physical_output_v2=True)
+    records = [json.loads(line) for line in (negative / "train.jsonl").read_text().splitlines()]
+    records[0]["loss"][loss_name] = -0.1
+    (negative / "train.jsonl").write_text(
+        "".join(json.dumps(record) + "\n" for record in records), encoding="utf-8"
+    )
+    with pytest.raises(TrainingAuditError, match=f"negative physical-output-v2 loss {loss_name}"):
+        audit_training_run(negative)
+
+
+def test_physical_output_v2_rejects_extra_and_nonfinite_loss(tmp_path: Path) -> None:
+    extra = tmp_path / "extra"
+    _build_run(extra, complete=True, physical_output_v2=True)
+    records = [json.loads(line) for line in (extra / "train.jsonl").read_text().splitlines()]
+    records[0]["loss"]["malicious_extra"] = 0.0
+    (extra / "train.jsonl").write_text(
+        "".join(json.dumps(record) + "\n" for record in records), encoding="utf-8"
+    )
+    with pytest.raises(TrainingAuditError, match="loss schema mismatch"):
+        audit_training_run(extra)
+
+    nonfinite = tmp_path / "nonfinite"
+    _build_run(nonfinite, complete=True, physical_output_v2=True)
+    log_path = nonfinite / "train.jsonl"
+    payload = log_path.read_text().replace('"valid_bce": 0.1', '"valid_bce": NaN', 1)
+    log_path.write_text(payload, encoding="utf-8")
+    with pytest.raises(TrainingAuditError, match="non-finite"):
+        audit_training_run(nonfinite)
+
+
+def test_physical_output_v2_protocol_and_lineage_are_strict(tmp_path: Path) -> None:
+    wrong_protocol = tmp_path / "wrong_protocol"
+    _build_run(
+        wrong_protocol,
+        complete=True,
+        physical_output_v2=True,
+        physical_output_v2_protocol="almost-v2",
+    )
+    with pytest.raises(TrainingAuditError, match="protocol version mismatch"):
+        audit_training_run(wrong_protocol)
+
+    mixed = tmp_path / "mixed"
+    _build_run(
+        mixed,
+        complete=True,
+        positivity_ablation=True,
+        physical_output_v2=True,
+    )
+    with pytest.raises(TrainingAuditError, match="cannot both be enabled"):
+        audit_training_run(mixed)
 
 
 def test_false_completion_and_summary_sha_mismatch_are_rejected(tmp_path: Path) -> None:
