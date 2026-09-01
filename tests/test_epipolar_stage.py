@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from dataclasses import replace
+
 import pytest
 import torch
 from torch import nn
@@ -127,6 +129,87 @@ def test_empty_teacher_mask_returns_differentiable_finite_zero() -> None:
     assert loss.correction_regularizer.item() == pytest.approx(0.0)
     assert loss.total.requires_grad
     loss.total.backward()
+
+
+def test_empty_teacher_mask_safely_ignores_nonfinite_model_fields() -> None:
+    stage, _ = _stage()
+    output = stage(_batch(batch_size=1))
+    nonfinite_refinement = replace(
+        output.refinement,
+        correlation=output.refinement.correlation * float("nan"),
+    )
+    nonfinite_output = replace(
+        output,
+        refined_disparity_hr_px=(
+            output.refined_disparity_hr_px * float("nan")
+        ),
+        correction_hr_px=output.correction_hr_px * float("nan"),
+        confidence=output.confidence * float("nan"),
+        refinement=nonfinite_refinement,
+    )
+    target = torch.ones_like(output.refined_disparity_hr_px)
+
+    loss = compute_epipolar_stage_loss(
+        nonfinite_output,
+        target,
+        torch.zeros_like(target, dtype=torch.bool),
+    )
+
+    assert loss.valid_pixel_count == 0
+    assert loss.total.item() == pytest.approx(0.0)
+    assert loss.total.requires_grad
+    loss.total.backward()
+
+
+@pytest.mark.parametrize(
+    "field",
+    ["refined_disparity_hr_px", "correction_hr_px", "confidence", "correlation"],
+)
+def test_supervised_domain_nonfinite_model_fields_fail_fast(field: str) -> None:
+    stage, _ = _stage()
+    output = stage(_batch(batch_size=1))
+    if field == "correlation":
+        candidate_mask = output.refinement.candidate_valid_mask
+        candidate_index = candidate_mask.nonzero(as_tuple=False)[0]
+        correlation = output.refinement.correlation.clone()
+        batch_index, offset_index, row_index, column_index = (
+            int(value) for value in candidate_index
+        )
+        correlation[
+            batch_index, 0, offset_index, row_index, column_index
+        ] = float("nan")
+        corrupted = replace(
+            output,
+            refinement=replace(output.refinement, correlation=correlation),
+        )
+    else:
+        value = getattr(output, field).clone()
+        value[..., 0, -1] = float("nan")
+        corrupted = replace(output, **{field: value})
+    target = torch.full_like(output.refined_disparity_hr_px, 2.0)
+
+    with pytest.raises(FloatingPointError, match="non-finite"):
+        compute_epipolar_stage_loss(
+            corrupted,
+            target,
+            torch.ones_like(target, dtype=torch.bool),
+        )
+
+
+def test_supervised_domain_nonfinite_target_confidence_fails_fast() -> None:
+    stage, _ = _stage()
+    output = stage(_batch(batch_size=1))
+    target = torch.full_like(output.refined_disparity_hr_px, 2.0)
+    confidence = torch.ones_like(target)
+    confidence[..., 0, -1] = float("nan")
+
+    with pytest.raises(FloatingPointError, match="target confidence"):
+        compute_epipolar_stage_loss(
+            output,
+            target,
+            torch.ones_like(target, dtype=torch.bool),
+            target_confidence=confidence,
+        )
 
 
 def test_stage_rejects_mismatched_right_crop_shape() -> None:

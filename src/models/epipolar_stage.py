@@ -253,6 +253,37 @@ def compute_epipolar_stage_loss(
         & torch.isfinite(target_disparity_hr_px)
         & (target_disparity_hr_px > 0)
     )
+    valid_pixel_count = int(usable.sum().item())
+    if valid_pixel_count:
+        finite_fields = (
+            ("refined disparity", output.refined_disparity_hr_px, usable),
+            ("correction", output.correction_hr_px, usable),
+            ("epipolar confidence", output.confidence, usable),
+        )
+        for name, value, mask in finite_fields:
+            if not bool((torch.isfinite(value) | ~mask).all().item()):
+                raise FloatingPointError(
+                    f"Stage-C {name} is non-finite on the supervised domain"
+                )
+        correlation_usable = (
+            usable.unsqueeze(2)
+            & output.refinement.candidate_valid_mask.unsqueeze(1)
+        )
+        if not bool(
+            (
+                torch.isfinite(output.refinement.correlation)
+                | ~correlation_usable
+            ).all().item()
+        ):
+            raise FloatingPointError(
+                "Stage-C correlation is non-finite on a supervised valid candidate"
+            )
+        if target_confidence is not None and not bool(
+            (torch.isfinite(target_confidence) | ~usable).all().item()
+        ):
+            raise FloatingPointError(
+                "Stage-C target confidence is non-finite on the supervised domain"
+            )
     disparity = disparity_loss(
         output.refined_disparity_hr_px,
         target_disparity_hr_px,
@@ -269,7 +300,7 @@ def compute_epipolar_stage_loss(
         total=total,
         disparity=disparity,
         correction_regularizer=correction_regularizer,
-        valid_pixel_count=int(usable.sum().item()),
+        valid_pixel_count=valid_pixel_count,
     )
 
 
