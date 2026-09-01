@@ -1339,9 +1339,14 @@ def validate_epipolar_batch_causality(
             raise ValueError("endpoint stereo source-size lineage is missing")
         try:
             record_intrinsics_left = np.asarray(record["K"], dtype=np.float64)
-            record_intrinsics_right = np.asarray(
-                record["K_right"], dtype=np.float64
-            )
+            right_value = record.get("K_right")
+            # Spring's rectified cam_data publishes one calibrated K per
+            # frame, shared by the left/right virtual cameras.  Preserve the
+            # explicit manifest.K_right contract while accepting that
+            # dataset-level representation.
+            if right_value is None and str(record.get("dataset", "")).strip().lower() == "spring":
+                right_value = record["K"]
+            record_intrinsics_right = np.asarray(right_value, dtype=np.float64)
         except (KeyError, TypeError, ValueError) as exc:
             raise ValueError("endpoint calibrated stereo intrinsics are missing") from exc
         if record_intrinsics_left.shape != (3, 3) or (

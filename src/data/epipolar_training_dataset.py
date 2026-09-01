@@ -113,7 +113,13 @@ def _cropped_right_intrinsics(
 ) -> tuple[Tensor, str]:
     """Return calibrated right intrinsics in the shared HR crop frame."""
 
-    source = "manifest.K_right" if "K_right" in record.extras else "manifest.K"
+    # Spring's published cam_data has one rectified intrinsics row per frame;
+    # the same K is the calibrated owner for both virtual stereo cameras.
+    # Treat that explicit dataset convention as manifest.K_right so the
+    # epipolar runtime contract does not silently fall back to an ambiguous
+    # generic manifest.K source.
+    spring_single_k = str(record.extras.get("dataset", "")).strip().lower() == "spring"
+    source = "manifest.K_right" if "K_right" in record.extras or spring_single_k else "manifest.K"
     value = record.extras.get("K_right", record.K)
     try:
         matrix = np.asarray(value, dtype=np.float64)

@@ -277,6 +277,7 @@ def main() -> int:
         )
         if not isinstance(raw_method, Mapping):
             raw_method = {}
+        legacy_raw_method = method_metrics(report, method_name)
         native_topk = (
             native_report.get("topk_diagnostics")
             if isinstance(native_report, Mapping)
@@ -284,12 +285,14 @@ def main() -> int:
         )
         auxiliary = {
             "temporal_residual_error_native_px": get_metric(
-                raw_method,
+                legacy_raw_method,
                 "temporal_residual_error_native_px",
-                "rigid_temporal_residual_error",
+            ),
+            "legacy_temporal_error_native_px": get_metric(
+                legacy_raw_method, "temporal_disparity_error_native_px"
             ),
             "temporal_residual_error_paired_px": get_metric(
-                raw_method, "temporal_residual_error_paired_px"
+                legacy_raw_method, "temporal_residual_error_paired_px"
             ),
             "topk_diagnostics_status": (
                 "AVAILABLE"
