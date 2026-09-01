@@ -1,0 +1,16 @@
+experiment: spring_S3_t3_topk_gt_pose
+defaults_from: configs/temporal_x2_v2.yaml
+seed: 42
+arm: S3
+data:
+  temporal_pose_source: gt
+model:
+  use_vggt_pose: false
+  use_vggt_depth: false
+train:
+  steps: 500
+  micro_batch_size: 1
+  grad_accumulation: 1
+  effective_batch_size: 1
+  num_workers: 0
+  persistent_workers: false

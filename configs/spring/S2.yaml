@@ -1,0 +1,16 @@
+experiment: spring_S2_t3_gt_pose_history
+defaults_from: configs/temporal_x2.yaml
+seed: 42
+arm: S2
+data:
+  temporal_pose_source: gt
+model:
+  use_vggt_pose: false
+  use_vggt_depth: false
+train:
+  steps: 500
+  micro_batch_size: 1
+  grad_accumulation: 1
+  effective_batch_size: 1
+  num_workers: 0
+  persistent_workers: false

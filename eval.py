@@ -21,7 +21,7 @@ import tempfile
 import time
 from contextlib import contextmanager, nullcontext
 from collections.abc import Callable, Mapping
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, fields, replace
 from pathlib import Path
 from typing import Any
 
@@ -49,6 +49,7 @@ from data.training_dataset import (  # noqa: E402
     CachedFFSTrainingDataset,
     build_causal_windows,
 )
+from data.spring import load_spring_disparity  # noqa: E402
 from data.temporal_training_dataset import CachedTemporalTrainingDataset  # noqa: E402
 from evaluation import (  # noqa: E402
     MethodMetricAccumulator,
@@ -74,6 +75,14 @@ from metrics.pointcloud import export_colored_point_cloud_ply  # noqa: E402
 from metrics.temporal import (  # noqa: E402
     temporal_disparity_error,
     temporal_residual_error,
+)
+from metrics.spring_arms import (  # noqa: E402
+    SPRING_NATIVE_FIELDS,
+    SpringNativeMapError,
+    aggregate_spring_rows,
+    spring_disparity_row,
+    spring_map_bundle,
+    topk_diagnostics as spring_topk_diagnostics,
 )
 from train import (  # noqa: E402
     CalibrationConditioningV3,
@@ -249,6 +258,14 @@ def build_parser() -> argparse.ArgumentParser:
         help=(
             "allow a limited T3 pipeline smoke whose checkpoint trained on the "
             "same validation artifacts; report is forcibly marked non-formal"
+        ),
+    )
+    parser.add_argument(
+        "--spring-native-metrics",
+        action="store_true",
+        help=(
+            "opt in to CPU-only native Spring detail/match/rigid metric "
+            "post-processing; the regular FFS pseudo-GT report is unchanged"
         ),
     )
     parser.add_argument(
@@ -1481,6 +1498,387 @@ def _topk_v31_diagnostics(
             attention_weighted_minus_rank0
         ),
     }
+
+
+def _spring_item_record_and_crop(
+    batch: Mapping[str, Any], *, stage: str, item_index: int
+) -> tuple[Mapping[str, Any], tuple[int, int, int, int] | None]:
+    """Return the manifest record and HR crop for one evaluated endpoint."""
+
+    if stage == "spatial":
+        metadata = batch["identity_metadata"][item_index]
+    else:
+        metadata = batch["identity_metadata"][item_index]["per_time_ffs"][2]
+    if not isinstance(metadata, Mapping):
+        raise SpringNativeMapError("evaluation batch identity metadata is malformed")
+    record = metadata.get("manifest_record")
+    if not isinstance(record, Mapping):
+        raise SpringNativeMapError("evaluation batch lacks Spring manifest_record")
+    crop_value = metadata.get("crop_hr_px")
+    if crop_value is None:
+        return record, None
+    if not isinstance(crop_value, Mapping):
+        raise SpringNativeMapError("evaluation crop metadata is malformed")
+    try:
+        crop = tuple(
+            int(crop_value[name]) for name in ("x", "y", "width", "height")
+        )
+    except (KeyError, TypeError, ValueError) as exc:
+        raise SpringNativeMapError("evaluation crop metadata is incomplete") from exc
+    if any(value < 0 for value in crop) or crop[2] <= 0 or crop[3] <= 0:
+        raise SpringNativeMapError("evaluation crop metadata is invalid")
+    return record, crop
+
+
+def _spring_temporal_split_metrics(
+    *,
+    prediction_hr_px: Tensor,
+    transport: TemporalTransport,
+    reference_transport: ReferenceTemporalWarp | None,
+    current_reference_valid_hr: Tensor,
+    rigid_mask_hr: Tensor | None,
+) -> dict[str, Any]:
+    """Compute native Spring rigid/non-rigid V2 residual rows.
+
+    The evaluator's V2 reference transport already carries the exact same
+    teacher/GT correspondence used by its primary residual metric.  We reuse
+    that tensor path and only partition the resulting pixel error with
+    Spring's backward rigid map; no alternate warp or pseudo-target is built.
+    Unlike the primary strict-static metric, the split intentionally keeps
+    the non-rigid domain instead of masking it out with ``static_mask_hr``.
+    """
+
+    if reference_transport is None:
+        return {
+            "rigid_temporal_residual_error": None,
+            "non_rigid_temporal_residual_error": None,
+            "temporal_residual_status": "UNAVAILABLE",
+            "temporal_residual_reason": "legacy evaluator has no carried GT/reference warp",
+        }
+    previous_prediction = reference_transport.prediction_disparity_hr_px
+    previous_reference = reference_transport.disparity_hr_px
+    if previous_prediction is None:
+        return {
+            "rigid_temporal_residual_error": None,
+            "non_rigid_temporal_residual_error": None,
+            "temporal_residual_status": "UNAVAILABLE",
+            "temporal_residual_reason": "reference warp lacks carried prediction",
+        }
+    # For the Spring split, the rigid/non-rigid map *is* the scene-motion
+    # partition.  Do not apply the canonical ``static_mask_hr`` gate to the
+    # non-rigid branch: doing so would silently remove the dynamic pixels the
+    # requested diagnostic is meant to expose.  Visibility, collision,
+    # geometry-consistency, and valid history remain common safety gates.
+    safe = (
+        transport.visibility_mask_hr.to(dtype=torch.bool)
+        & ~transport.collision_mask_hr.to(dtype=torch.bool)
+        & transport.geometry_consistent_mask_hr.to(dtype=torch.bool)
+        & transport.valid_history_hr.to(dtype=torch.bool)
+    )
+    current_reference = current_reference_valid_hr.to(dtype=torch.bool)
+    previous_reference_valid = reference_transport.valid_mask_hr.to(dtype=torch.bool)
+    usable = (
+        safe
+        & current_reference
+        & previous_reference_valid
+        & torch.isfinite(prediction_hr_px)
+        & torch.isfinite(previous_prediction)
+        & torch.isfinite(reference_transport.disparity_hr_px)
+        & torch.isfinite(previous_reference)
+        & (reference_transport.disparity_hr_px > 0)
+        & (previous_reference > 0)
+    )
+    error = (
+        (prediction_hr_px - previous_prediction)
+        - (reference_transport.disparity_hr_px - previous_reference)
+    ).abs()
+    if rigid_mask_hr is None:
+        return {
+            "rigid_temporal_residual_error": None,
+            "non_rigid_temporal_residual_error": None,
+            "temporal_residual_status": "UNAVAILABLE",
+            "temporal_residual_reason": "Spring rigidmap_BW_left is missing",
+        }
+    rigid = rigid_mask_hr.to(dtype=torch.bool)
+    result: dict[str, Any] = {"temporal_residual_status": "AVAILABLE"}
+    for name, domain in (
+        ("rigid_temporal_residual_error", usable & rigid),
+        ("non_rigid_temporal_residual_error", usable & ~rigid),
+    ):
+        count = int(domain.sum().item())
+        result[f"{name}_count"] = count
+        if count == 0:
+            result[name] = None
+            continue
+        selected = error[domain].float()
+        if not bool(torch.isfinite(selected).all().item()):
+            result[name] = None
+            continue
+        result[name] = float(selected.mean().item())
+    result["temporal_residual_valid_count"] = int(usable.sum().item())
+    return result
+
+
+def _spring_slice_transport(
+    transport: TemporalTransport | ReferenceTemporalWarp | None,
+    item_index: int,
+) -> TemporalTransport | ReferenceTemporalWarp | None:
+    """Take one batch item from a transport dataclass without touching storage."""
+
+    if transport is None:
+        return None
+    values: dict[str, Any] = {}
+    for field_info in fields(transport):
+        value = getattr(transport, field_info.name)
+        if isinstance(value, Tensor) and value.ndim > 0:
+            # Every transport tensor is batch-major.  Scalar validity flags
+            # (if present in future receipts) are intentionally left intact.
+            values[field_info.name] = value[item_index : item_index + 1]
+        elif isinstance(value, tuple) and value and all(
+            isinstance(item, Tensor) for item in value
+        ):
+            values[field_info.name] = tuple(
+                item[item_index : item_index + 1] for item in value
+            )
+        else:
+            values[field_info.name] = value
+    return replace(transport, **values)
+
+
+def _spring_topk_gain_buckets(
+    *,
+    candidate: np.ndarray,
+    phase: np.ndarray,
+    weights: np.ndarray,
+    valid: np.ndarray,
+    target: Tensor,
+    scale: int,
+) -> dict[str, float]:
+    """Return deterministic retained-vs-rank0 gains by fractional phase."""
+
+    if candidate.ndim != 3 or phase.ndim != 4 or weights.ndim != 3 or valid.ndim != 3:
+        return {}
+    if phase.shape[0] != candidate.shape[0] or phase.shape[1] != 2:
+        return {}
+    target_lr = sample_hr_at_lr_centers(target.float(), scale=scale)[0, 0]
+    target_np = target_lr.detach().cpu().numpy()
+    finite = (
+        valid.astype(bool)
+        & np.isfinite(candidate)
+        & np.isfinite(weights)
+        & np.isfinite(target_np)[None]
+    )
+    positive = np.where(finite, np.maximum(weights, 0.0), 0.0)
+    weight_sum = positive.sum(axis=0)
+    domain = finite.any(axis=0) & (weight_sum > 0) & np.isfinite(target_np)
+    if not np.any(domain):
+        return {}
+    weighted = (positive * np.nan_to_num(candidate, nan=0.0)).sum(axis=0)
+    weighted = weighted / np.maximum(weight_sum, 1e-12)
+    rank0 = candidate[0]
+    gain = np.abs(rank0 - target_np) - np.abs(weighted - target_np)
+    phase_mag = np.sqrt(np.square(phase).sum(axis=1))
+    phase_mean = (positive * phase_mag).sum(axis=0) / np.maximum(weight_sum, 1e-12)
+    buckets = {
+        "phase_lt_0.25": phase_mean < 0.25,
+        "phase_0.25_0.5": (phase_mean >= 0.25) & (phase_mean < 0.5),
+        "phase_ge_0.5": phase_mean >= 0.5,
+    }
+    return {
+        name: float(np.mean(gain[domain & mask]))
+        for name, mask in buckets.items()
+        if np.any(domain & mask) and np.isfinite(gain[domain & mask]).all()
+    }
+
+
+def _spring_topk_overall_gain(
+    *,
+    candidate: np.ndarray,
+    weights: np.ndarray,
+    valid: np.ndarray,
+    target: Tensor,
+    scale: int,
+) -> float | None:
+    """Return retained weighted-vs-rank0 EPE gain for one endpoint."""
+
+    if candidate.ndim != 3 or weights.ndim != 3 or valid.ndim != 3:
+        return None
+    target_lr = sample_hr_at_lr_centers(target.float(), scale=scale)[0, 0]
+    target_np = target_lr.detach().cpu().numpy()
+    finite = (
+        valid.astype(bool)
+        & np.isfinite(candidate)
+        & np.isfinite(weights)
+        & np.isfinite(target_np)[None]
+    )
+    positive = np.where(finite, np.maximum(weights, 0.0), 0.0)
+    weight_sum = positive.sum(axis=0)
+    domain = finite.any(axis=0) & (weight_sum > 0) & np.isfinite(target_np)
+    if not np.any(domain):
+        return None
+    weighted = (positive * np.nan_to_num(candidate, nan=0.0)).sum(axis=0)
+    weighted = weighted / np.maximum(weight_sum, 1e-12)
+    gain = np.abs(candidate[0] - target_np) - np.abs(weighted - target_np)
+    selected = gain[domain]
+    return float(np.mean(selected)) if np.isfinite(selected).all() else None
+
+
+def _spring_camera_motion_score(
+    batch: Mapping[str, Any], *, item_index: int
+) -> float | None:
+    """Return a dimensionless GT-pose motion score for a T=3 endpoint."""
+
+    poses = batch.get("gt_extrinsics_camera_from_world_sequence")
+    if isinstance(poses, Tensor) and poses.ndim == 4 and poses.shape[1] >= 3:
+        previous = poses[item_index, 1].float()
+        current = poses[item_index, 2].float()
+    else:
+        # The Spring temporal dataset keeps GT poses in immutable per-time
+        # manifest metadata even when the model pose source is VGGT.  Recover
+        # that explicit metadata here rather than substituting VGGT poses.
+        try:
+            per_time = batch["identity_metadata"][item_index]["per_time_ffs"]
+            previous_value = per_time[1]["manifest_record"][
+                "gt_extrinsics_camera_from_world"
+            ]
+            current_value = per_time[2]["manifest_record"][
+                "gt_extrinsics_camera_from_world"
+            ]
+            previous = torch.as_tensor(previous_value, dtype=torch.float32)
+            current = torch.as_tensor(current_value, dtype=torch.float32)
+        except (KeyError, IndexError, TypeError, ValueError):
+            return None
+    if previous.shape != (4, 4) or current.shape != (4, 4):
+        return None
+    try:
+        relative = current @ torch.linalg.inv(previous)
+    except RuntimeError:
+        return None
+    translation = torch.linalg.vector_norm(relative[:3, 3])
+    rotation = relative[:3, :3]
+    cosine = ((torch.trace(rotation) - 1.0) / 2.0).clamp(-1.0, 1.0)
+    angle = torch.acos(cosine)
+    score = translation + angle
+    value = float(score.detach().cpu().item())
+    return value if math.isfinite(value) else None
+
+
+def _spring_topk_native_diagnostics(
+    *,
+    transport: TemporalTransport,
+    endpoint_K_hr: Tensor,
+    endpoint_baseline_m: Tensor,
+    target_hr_px: Tensor,
+    scale: int,
+    item_index: int,
+    camera_motion_score: float | None = None,
+) -> dict[str, Any]:
+    """Adapt legacy V2 transport taps to the Spring diagnostic contract."""
+
+    values = (
+        transport.topk_disparity_history_hr_px,
+        transport.topk_fractional_offset_px,
+        transport.topk_temporal_age_frames,
+        transport.topk_z_aware_weights,
+        transport.topk_valid_mask,
+    )
+    if any(value is None for value in values):
+        return {
+            "status": "UNAVAILABLE",
+            "reason": "transport does not expose top-K candidate taps",
+        }
+    candidate_t, phase_t, age_t, weights_t, valid_t = values
+    assert all(isinstance(value, Tensor) for value in values)
+    candidate = candidate_t[item_index].detach().float().cpu().numpy()
+    phase = phase_t[item_index].detach().float().cpu().numpy()
+    age = age_t[item_index].detach().float().cpu().numpy()
+    weights = weights_t[item_index].detach().float().cpu().numpy()
+    valid = valid_t[item_index].detach().cpu().numpy().astype(bool)
+    # V2 keeps candidate disparities on the LR grid but in HR-pixel units.
+    # The metric depth conversion therefore uses the endpoint HR focal length
+    # and physical baseline without an extra scale factor.
+    focal = float(endpoint_K_hr[item_index, 0, 0].detach().cpu().item())
+    baseline = float(endpoint_baseline_m[item_index].detach().cpu().item())
+    depth = np.divide(
+        focal * baseline,
+        candidate,
+        out=np.zeros_like(candidate, dtype=np.float32),
+        where=np.isfinite(candidate) & (candidate > 0),
+    )
+    diagnostics = spring_topk_diagnostics(
+        age=age,
+        phase=phase,
+        depth=depth,
+        weights=weights,
+        valid=valid,
+    )
+    diagnostics["gain_by_fractional_phase_bucket"] = _spring_topk_gain_buckets(
+        candidate=candidate,
+        phase=phase,
+        weights=weights,
+        valid=valid,
+        target=target_hr_px[item_index : item_index + 1],
+        scale=scale,
+    )
+    diagnostics["overall_gain"] = _spring_topk_overall_gain(
+        candidate=candidate,
+        weights=weights,
+        valid=valid,
+        target=target_hr_px[item_index : item_index + 1],
+        scale=scale,
+    )
+    diagnostics["camera_motion_score"] = camera_motion_score
+    diagnostics["status"] = "AVAILABLE"
+    return diagnostics
+
+
+def _spring_json_safe(value: Any) -> Any:
+    """Convert native-side-channel NaN values to explicit JSON nulls."""
+
+    if isinstance(value, np.generic):
+        return _spring_json_safe(value.item())
+    if isinstance(value, Mapping):
+        return {str(key): _spring_json_safe(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_spring_json_safe(item) for item in value]
+    if isinstance(value, float) and not math.isfinite(value):
+        return None
+    return value
+
+
+def _aggregate_spring_temporal_rows(
+    rows: Sequence[Mapping[str, Any]],
+) -> dict[str, Any]:
+    """Aggregate rigid/non-rigid residuals by their explicit pixel counts."""
+
+    result: dict[str, Any] = {}
+    for name in (
+        "rigid_temporal_residual_error",
+        "non_rigid_temporal_residual_error",
+    ):
+        weighted_sum = 0.0
+        count_sum = 0
+        for row in rows:
+            value = row.get(name)
+            count = row.get(f"{name}_count", 0)
+            if not isinstance(value, (int, float)) or not math.isfinite(float(value)):
+                continue
+            if not isinstance(count, int) or count <= 0:
+                continue
+            weighted_sum += float(value) * count
+            count_sum += count
+        result[name] = weighted_sum / count_sum if count_sum else None
+        result[f"{name}_count"] = count_sum
+    result["temporal_residual_records"] = len(rows)
+    result["temporal_residual_valid_count"] = int(
+        sum(int(row.get("temporal_residual_valid_count", 0) or 0) for row in rows)
+    )
+    result["temporal_residual_status"] = (
+        "AVAILABLE"
+        if any(row.get("temporal_residual_status") == "AVAILABLE" for row in rows)
+        else "UNAVAILABLE"
+    )
+    return result
 
 
 def _calibration_contract_for_model(model: torch.nn.Module) -> CalibrationConditioningV3:
@@ -3637,6 +4035,7 @@ def _audit_temporal_holdout_and_raw_lineage(
 def run(args: argparse.Namespace) -> int:
     config = resolve_evaluation_config(args.config, args.overrides)
     _update_cli_values(config, args)
+    spring_native_enabled = bool(getattr(args, "spring_native_metrics", False))
     stage = validate_evaluation_config(config)
     temporal_metric_v2 = temporal_residual_v2_from_config(config).enabled
     physical_metric_v2 = physical_output_v2_from_config(config).enabled
@@ -3773,6 +4172,23 @@ def run(args: argparse.Namespace) -> int:
         collate_function = collate_temporal_training_samples
     if len(dataset) == 0:
         raise ValueError("validation dataset is empty")
+    if spring_native_enabled:
+        # Native Spring metrics are intentionally impossible to enable on a
+        # generic manifest or an FFS-only teacher cache.  Fail closed before
+        # model inference rather than emitting a mislabeled Spring_GT report.
+        records_for_native = getattr(dataset, "records", ())
+        if not records_for_native or any(
+            str(getattr(record, "extras", {}).get("dataset", "")).lower()
+            != "spring"
+            for record in records_for_native
+        ):
+            raise ValueError(
+                "--spring-native-metrics requires a manifest whose records are explicitly dataset=spring"
+            )
+        if not str(teacher_identity.upstream_commit).startswith("Spring_GT:"):
+            raise ValueError(
+                "--spring-native-metrics requires a Spring_GT teacher cache identity"
+            )
     calibration_sidecar_lineage = (
         None
         if calibration_index is None
@@ -3931,6 +4347,23 @@ def run(args: argparse.Namespace) -> int:
     accumulators = {
         method_name: MethodMetricAccumulator() for method_name in method_names
     }
+    # Native Spring metrics are an explicit opt-in side channel.  Keeping the
+    # accumulators separate preserves the canonical evaluator's pseudo-GT
+    # schema and makes accidental promotion of a bounded Spring result
+    # impossible.
+    spring_native_rows: dict[str, list[dict[str, Any]]] = {
+        method_name: [] for method_name in method_names
+    }
+    spring_native_temporal_rows: dict[str, list[dict[str, Any]]] = {
+        method_name: [] for method_name in method_names
+    }
+    spring_native_topk_rows: list[dict[str, Any]] = []
+    spring_native_map_cache: dict[tuple[Any, ...], dict[str, Any]] = {}
+    spring_native_gt_cache: dict[tuple[Any, ...], np.ndarray] = {}
+    spring_native_map_errors: list[str] = []
+    spring_native_map_paths: set[str] = set()
+    spring_native_gt_paths: set[str] = set()
+    spring_native_endpoint_ids: set[str] = set()
     topk_v31_accumulator = (
         MethodMetricAccumulator()
         if stage == "temporal" and candidate_metric_v31
@@ -4341,6 +4774,103 @@ def run(args: argparse.Namespace) -> int:
                 predictions[f"{method_name}_clamp0"] = (
                     physical_disparity_clamp_min_zero(prediction)
                 )
+            spring_item_context: dict[
+                int, tuple[Mapping[str, Any], dict[str, Any], np.ndarray]
+            ] = {}
+            if spring_native_enabled:
+                # Load each endpoint's native Spring maps once per batch item;
+                # all raw/clamp variants share the exact same domains.
+                for item_index in range(target.shape[0]):
+                    try:
+                        record, crop = _spring_item_record_and_crop(
+                            batch, stage=stage, item_index=item_index
+                        )
+                        crop_key = None if crop is None else tuple(crop)
+                        frame_key = (
+                            str(record.get("sequence_id")),
+                            int(record.get("frame_id")),
+                            tuple(int(value) for value in target.shape[-2:]),
+                            crop_key,
+                        )
+                        maps = spring_native_map_cache.get(frame_key)
+                        if maps is None:
+                            maps = spring_map_bundle(
+                                record,
+                                target_hw=tuple(int(value) for value in target.shape[-2:]),
+                                manifest_path=manifest_path,
+                                crop_hr_xywh=crop,
+                                # Detail/match metrics remain useful when a
+                                # sequence has no backward rigid map (e.g.
+                                # its first frame).  The temporal splitter
+                                # records that sub-domain as unavailable
+                                # instead of discarding all native rows.
+                                require_rigid=False,
+                            )
+                            spring_native_map_cache[frame_key] = maps
+                        if isinstance(maps.get("paths"), Mapping):
+                            spring_native_map_paths.update(
+                                str(path)
+                                for path in maps["paths"].values()
+                                if isinstance(path, str)
+                            )
+                        gt_key = frame_key
+                        native_gt = spring_native_gt_cache.get(gt_key)
+                        if native_gt is None:
+                            gt_value = record.get("gt_disparity_path")
+                            if not isinstance(gt_value, str) or not gt_value.strip():
+                                raise SpringNativeMapError(
+                                    "Spring manifest record has no gt_disparity_path"
+                                )
+                            gt_path = Path(gt_value).expanduser()
+                            if not gt_path.is_absolute():
+                                gt_path = manifest_path.parent / gt_path
+                            native_gt = load_spring_disparity(
+                                gt_path.resolve(), resolution="image", sign="positive"
+                            )
+                            spring_native_gt_paths.add(str(gt_path.resolve()))
+                            if crop is not None:
+                                x, y, width, height = crop
+                                native_gt = native_gt[y : y + height, x : x + width]
+                            if tuple(native_gt.shape) != tuple(
+                                int(value) for value in target.shape[-2:]
+                            ):
+                                raise SpringNativeMapError(
+                                    "Spring GT shape does not match evaluated output: "
+                                    f"{native_gt.shape} vs {tuple(target.shape[-2:])}"
+                                )
+                            spring_native_gt_cache[gt_key] = native_gt
+                        spring_item_context[item_index] = (record, maps, native_gt)
+                        spring_native_endpoint_ids.add(
+                            f"{record.get('sequence_id')}/{record.get('frame_id')}"
+                        )
+                        if stage == "temporal":
+                            # The V2 reference warp consumes the previous
+                            # teacher/GT frames as well; retain their source
+                            # paths in the lineage receipt even though only
+                            # the endpoint GT is loaded for native EPE.
+                            per_time = batch["identity_metadata"][item_index].get(
+                                "per_time_ffs", []
+                            )
+                            for time_metadata in per_time:
+                                if not isinstance(time_metadata, Mapping):
+                                    continue
+                                time_record = time_metadata.get("manifest_record")
+                                if not isinstance(time_record, Mapping):
+                                    continue
+                                gt_value = time_record.get("gt_disparity_path")
+                                if not isinstance(gt_value, str) or not gt_value.strip():
+                                    continue
+                                gt_path = Path(gt_value).expanduser()
+                                if not gt_path.is_absolute():
+                                    gt_path = manifest_path.parent / gt_path
+                                if gt_path.is_file():
+                                    spring_native_gt_paths.add(str(gt_path.resolve()))
+                    except (SpringNativeMapError, OSError, ValueError) as exc:
+                        # Native mode is fail-closed per endpoint.  Keep the
+                        # canonical metrics running while recording the exact
+                        # missing/invalid map reason in the side-channel
+                        # receipt; no field is imputed from a pseudo-domain.
+                        spring_native_map_errors.append(str(exc))
             for method_name, prediction in predictions.items():
                 sample_metrics = compute_sample_metrics(
                     prediction,
@@ -4393,6 +4923,125 @@ def run(args: argparse.Namespace) -> int:
                         else paired_temporal_results[base_method_name]
                     )
                 accumulators[method_name].update(sample_metrics)
+                if spring_native_enabled:
+                    for item_index in range(target.shape[0]):
+                        context = spring_item_context.get(item_index)
+                        if context is None:
+                            continue
+                        _record, maps, native_gt = context
+                        native = spring_disparity_row(
+                            prediction[item_index, 0].detach().float().cpu().numpy(),
+                            native_gt,
+                            detail_mask=maps["detail"],
+                            match_mask=maps["matched"],
+                            ffs_trusted_mask=trusted_hr[item_index, 0]
+                            .detach()
+                            .cpu()
+                            .numpy(),
+                            ffs_prediction=baseline[item_index, 0]
+                            .detach()
+                            .float()
+                            .cpu()
+                            .numpy(),
+                            boundary_epe=(
+                                sample_metrics["boundary_epe_px"].value
+                                if sample_metrics["boundary_epe_px"].valid
+                                else None
+                            ),
+                        )
+                        native["image_pixel_count"] = int(target[item_index].numel())
+                        native["record_id"] = (
+                            f"{batch['sequence_id'][item_index]}/"
+                            f"{batch['frame_id'][item_index].item()}"
+                            if stage == "spatial"
+                            else f"{batch['sequence_id'][item_index]}/"
+                            f"{batch['frame_ids'][item_index, 2].item()}"
+                        )
+                        spring_native_rows[method_name].append(native)
+
+            if spring_native_enabled and stage == "temporal":
+                assert temporal_visualization is not None
+                # Branch-specific reference transports are already produced
+                # by the evaluator for V2.  Keep the pose switch explicit and
+                # never use the VGGT branch's reference for GT-pose S2/S3.
+                branch_transports: dict[str, tuple[TemporalTransport, ReferenceTemporalWarp | None]] = {
+                    "T1": (
+                        spatial_endpoint.transport,
+                        spatial_endpoint.reference_transport,
+                    ),
+                    "T3": (
+                        temporal_visualization.no_vggt_transport,
+                        temporal_visualization.no_vggt_reference_transport,
+                    ),
+                    "T3_VGGT": (
+                        temporal_visualization.shared_transport,
+                        temporal_visualization.reference_transport,
+                    ),
+                    "T3_VGGT_mask_off": (
+                        temporal_visualization.source_mask_off_transport,
+                        temporal_visualization.source_mask_off_reference_transport,
+                    ),
+                }
+                for item_index in range(target.shape[0]):
+                    context = spring_item_context.get(item_index)
+                    if context is None:
+                        continue
+                    _record, maps, _native_gt = context
+                    rigid_np = maps.get("rigid")
+                    rigid_hr = (
+                        None
+                        if rigid_np is None
+                        else torch.from_numpy(rigid_np).to(
+                            device=target.device, dtype=torch.bool
+                        )[None, None]
+                    )
+                    current_reference_valid = (
+                        target_valid[item_index : item_index + 1].bool()
+                        & target_trusted[item_index : item_index + 1].bool()
+                        & torch.isfinite(target[item_index : item_index + 1])
+                        & (target[item_index : item_index + 1] > 0)
+                    )
+                    for branch_name, (branch_transport, branch_reference) in branch_transports.items():
+                        branch_result = _spring_temporal_split_metrics(
+                            prediction_hr_px=raw_predictions[branch_name][
+                                item_index : item_index + 1
+                            ],
+                            transport=_spring_slice_transport(
+                                branch_transport, item_index
+                            ),
+                            reference_transport=_spring_slice_transport(
+                                branch_reference, item_index
+                            ),
+                            current_reference_valid_hr=current_reference_valid,
+                            rigid_mask_hr=rigid_hr,
+                        )
+                        branch_result["record_id"] = (
+                            f"{batch['sequence_id'][item_index]}/"
+                            f"{batch['frame_ids'][item_index, 2].item()}"
+                        )
+                        spring_native_temporal_rows[branch_name].append(branch_result)
+
+                    # V2 top-K taps are present for S2/S3 even when the
+                    # optional v3.1 candidate-attention contract is disabled.
+                    # Report the retained-set diagnostics for the configured
+                    # no-VGGT branch; v1 legacy S2 correctly remains null.
+                    if temporal_metric_v2:
+                        topk_result = _spring_topk_native_diagnostics(
+                            transport=temporal_visualization.no_vggt_transport,
+                            endpoint_K_hr=endpoint_K_hr,
+                            endpoint_baseline_m=endpoint_baseline_m,
+                            target_hr_px=target,
+                            scale=int(config.data.scale),
+                            item_index=item_index,
+                            camera_motion_score=_spring_camera_motion_score(
+                                batch, item_index=item_index
+                            ),
+                        )
+                        topk_result["record_id"] = (
+                            f"{batch['sequence_id'][item_index]}/"
+                            f"{batch['frame_ids'][item_index, 2].item()}"
+                        )
+                        spring_native_topk_rows.append(topk_result)
 
             # Write one paired-bootstrap row per source frame/window.  These
             # are raw candidate metrics, never clamp/postprocess variants.
@@ -4848,6 +5497,177 @@ def run(args: argparse.Namespace) -> int:
         method: accumulator.finalize()
         for method, accumulator in accumulators.items()
     }
+    spring_native_report: dict[str, Any] | None = None
+    if spring_native_enabled:
+        native_methods: dict[str, Any] = {}
+        for method_name, rows in spring_native_rows.items():
+            if not rows:
+                continue
+            aggregate = aggregate_spring_rows(rows)
+            temporal_rows = spring_native_temporal_rows.get(method_name, [])
+            if temporal_rows:
+                aggregate.update(_aggregate_spring_temporal_rows(temporal_rows))
+            native_methods[method_name] = _spring_json_safe(aggregate)
+
+        topk_aggregate: dict[str, Any] | None = None
+        if spring_native_topk_rows:
+            topk_aggregate = {"records": len(spring_native_topk_rows)}
+            for name in (
+                "age_2_survival_rate",
+                "unique_age_fraction",
+                "phase_variance",
+                "candidate_depth_spread",
+                "attention_entropy",
+            ):
+                values = [
+                    float(row[name])
+                    for row in spring_native_topk_rows
+                    if isinstance(row.get(name), (int, float))
+                    and math.isfinite(float(row[name]))
+                ]
+                topk_aggregate[name] = None if not values else float(np.mean(values))
+            for name in (
+                "gain_by_fractional_phase_bucket",
+                "gain_by_camera_motion_bucket",
+            ):
+                bucket_values: dict[str, list[float]] = {}
+                for row in spring_native_topk_rows:
+                    buckets = row.get(name)
+                    if not isinstance(buckets, Mapping):
+                        continue
+                    for bucket, value in buckets.items():
+                        if isinstance(value, (int, float)) and math.isfinite(float(value)):
+                            bucket_values.setdefault(str(bucket), []).append(float(value))
+                topk_aggregate[name] = {
+                    bucket: float(np.mean(values))
+                    for bucket, values in bucket_values.items()
+                    if values
+                }
+            topk_aggregate["status"] = "AVAILABLE"
+            motion_rows = [
+                row
+                for row in spring_native_topk_rows
+                if isinstance(row.get("camera_motion_score"), (int, float))
+                and math.isfinite(float(row["camera_motion_score"]))
+                and isinstance(row.get("overall_gain"), (int, float))
+                and math.isfinite(float(row["overall_gain"]))
+            ]
+            if motion_rows:
+                scores = np.asarray(
+                    [float(row["camera_motion_score"]) for row in motion_rows],
+                    dtype=np.float64,
+                )
+                q1, q2 = np.quantile(scores, [1.0 / 3.0, 2.0 / 3.0])
+                buckets: dict[str, list[float]] = {
+                    "motion_low_tertile": [],
+                    "motion_mid_tertile": [],
+                    "motion_high_tertile": [],
+                }
+                for row in motion_rows:
+                    score = float(row["camera_motion_score"])
+                    bucket = (
+                        "motion_low_tertile"
+                        if score <= q1
+                        else "motion_mid_tertile"
+                        if score <= q2
+                        else "motion_high_tertile"
+                    )
+                    buckets[bucket].append(float(row["overall_gain"]))
+                topk_aggregate["gain_by_camera_motion_bucket"] = {
+                    bucket: float(np.mean(values))
+                    for bucket, values in buckets.items()
+                    if values
+                }
+                topk_aggregate["camera_motion_bucket_status"] = (
+                    "AVAILABLE_EXPLORATORY_TERTILES"
+                )
+                topk_aggregate["camera_motion_bucket_thresholds"] = {
+                    "low_mid_boundary": float(q1),
+                    "mid_high_boundary": float(q2),
+                    "score_definition": "||T_cur*T_prev^-1 translation||_m + rotation_angle_rad",
+                }
+            else:
+                topk_aggregate["camera_motion_bucket_status"] = "UNAVAILABLE"
+                topk_aggregate["camera_motion_bucket_reason"] = (
+                    "GT pose motion score is unavailable for evaluated windows"
+                )
+            topk_aggregate = _spring_json_safe(topk_aggregate)
+
+        native_record_path = output_dir / "spring_native_per_record_metrics.jsonl"
+        native_records: list[dict[str, Any]] = []
+        for method_name, rows in spring_native_rows.items():
+            for row in rows:
+                native_records.append(
+                    {
+                        "method": method_name,
+                        **_spring_json_safe(row),
+                    }
+                )
+        for method_name, rows in spring_native_temporal_rows.items():
+            for row in rows:
+                native_records.append(
+                    {
+                        "method": method_name,
+                        "temporal": True,
+                        **_spring_json_safe(row),
+                    }
+                )
+        _write_jsonl_atomic(native_record_path, native_records)
+        native_status = "AVAILABLE" if native_methods and not spring_native_map_errors else "UNAVAILABLE"
+        native_reason = None
+        if native_status != "AVAILABLE":
+            native_reason = (
+                "; ".join(sorted(set(spring_native_map_errors)))
+                if spring_native_map_errors
+                else "no native Spring rows were evaluated"
+            )
+        spring_native_report = {
+            "status": native_status,
+            "target": {
+                "type": "Spring_GT",
+                "paper_gt": True,
+                "paper_accuracy": False,
+                "disparity_unit": "full_hd_pixels",
+            },
+            "contract": {
+                "fields": list(SPRING_NATIVE_FIELDS),
+                "maps": "detailmap_disp1_left + matchmap_disp1_left + rigidmap_BW_left",
+                "rigid_map_direction": "backward current-endpoint left camera",
+                "aggregation": "frame_mean_except_output_health_rates_pixel_weighted",
+                "topk_v2_age2_denominator": "pixels with at least one retained valid candidate (no pre-truncation tap)",
+                "topk_fractional_phase_buckets": "weighted mean candidate phase magnitude: <0.25, 0.25-0.5, >=0.5 target-grid pixels",
+                "topk_camera_motion_buckets": "exploratory tertiles over evaluated GT-pose motion scores; score=translation_m+rotation_rad",
+                "canonical_pseudo_gt_metrics_unchanged": True,
+            },
+            "methods": native_methods,
+            "topk_diagnostics": topk_aggregate,
+            "records": int(sum(len(rows) for rows in spring_native_rows.values())),
+            "endpoint_records": len(spring_native_endpoint_ids),
+            "expected_endpoint_records": int(sample_count),
+            "temporal_records": int(
+                sum(len(rows) for rows in spring_native_temporal_rows.values())
+            ),
+            "per_record_path": str(native_record_path),
+            "map_lineage": {
+                "paths": sorted(spring_native_map_paths),
+                "sha256": {
+                    path: sha256_file(Path(path))
+                    for path in sorted(spring_native_map_paths)
+                    if Path(path).is_file()
+                },
+            },
+            "gt_lineage": {
+                "paths": sorted(spring_native_gt_paths),
+                "sha256": {
+                    path: sha256_file(Path(path))
+                    for path in sorted(spring_native_gt_paths)
+                    if Path(path).is_file()
+                },
+            },
+            "map_errors": sorted(set(spring_native_map_errors)),
+            "reason": native_reason,
+            "device_scope": "CPU post-processing; model device is reported separately",
+        }
     topk_v31_diagnostics = (
         None
         if topk_v31_accumulator is None
@@ -5058,6 +5878,11 @@ def run(args: argparse.Namespace) -> int:
         "calibration_sidecar_lineage": calibration_sidecar_lineage,
         "formal_temporal_coverage": formal_coverage,
         "holdout_and_raw_lineage": holdout_raw_lineage,
+        **(
+            {}
+            if spring_native_report is None
+            else {"spring_native_metrics": spring_native_report}
+        ),
         "causal_contract": (
             None
             if stage == "spatial"

@@ -1,0 +1,16 @@
+experiment: spring_S1_t1_spatial_tsr
+defaults_from: configs/mvp_x2.yaml
+seed: 42
+arm: S1
+data:
+  temporal_pose_source: gt
+model:
+  use_vggt_depth: false
+train:
+  # Screening defaults; the runner can override these for a longer run.
+  steps_spatial: 500
+  micro_batch_size: 1
+  grad_accumulation: 1
+  effective_batch_size: 1
+  num_workers: 0
+  persistent_workers: false

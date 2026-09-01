@@ -6,12 +6,17 @@ constructed from exactly five same-sequence timepoints ordered as
 ``L[t-4], R[t-4], ..., L[t], R[t]``.  VGGT-Omega geometry remains in its
 native arbitrary scale here; metric baseline scaling and FFS alignment are
 separate geometry stages.
+
+CUDA is the default and formal inference path.  An explicit ``--device cpu``
+mode is provided for bounded screening when CUDA capacity is unavailable; its
+receipt records the device and the upstream-autocast compatibility shim.
 """
 
 from __future__ import annotations
 
 import argparse
-from dataclasses import dataclass
+from contextlib import contextmanager, nullcontext
+from dataclasses import dataclass, replace
 import json
 import os
 import re
@@ -28,8 +33,13 @@ sys.path.insert(0, str(PROJECT_ROOT))
 sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
 import torch
+import torch.nn.functional as F
 
-from backbones.vggt_omega_adapter import VGGTOmegaAdapter, VGGTOmegaOutput
+from backbones.vggt_omega_adapter import (
+    ImagePreprocessMetadata,
+    VGGTOmegaAdapter,
+    VGGTOmegaOutput,
+)
 from data.cache_dataset import (
     CacheIdentity,
     CacheMismatchError,
@@ -244,7 +254,12 @@ def _atomic_jsonl(path: Path, rows: Iterable[Mapping[str, Any]]) -> None:
     os.replace(temporary_path, path)
 
 
-def _load_official_model(checkpoint: Path, repo: Path) -> torch.nn.Module:
+def _load_official_model(
+    checkpoint: Path,
+    repo: Path,
+    *,
+    device: torch.device,
+) -> torch.nn.Module:
     sys.path.insert(0, str(repo.resolve()))
     from vggt_omega.models import VGGTOmega
 
@@ -254,7 +269,163 @@ def _load_official_model(checkpoint: Path, repo: Path) -> torch.nn.Module:
         raise TypeError("VGGT-Omega checkpoint must contain a state_dict mapping")
     model.load_state_dict(state_dict, strict=True)
     del state_dict
-    return model.requires_grad_(False).eval().cuda()
+    return model.requires_grad_(False).eval().to(device)
+
+
+@contextmanager
+def _inference_context(device: torch.device):
+    """Provide a narrow CPU compatibility shim for the pinned upstream model.
+
+    VGGT-Omega's released ``forward`` wraps both encoder/head passes in a
+    CUDA autocast context unconditionally.  The model itself has no CUDA-only
+    tensor operations, so an explicit CPU screening run can safely disable
+    those contexts for the duration of cache generation.  The monkeypatch is
+    process-local and restored even when inference raises; pinned upstream
+    source remains untouched and the receipt records the actual device.
+    """
+
+    if device.type != "cpu":
+        yield
+        return
+
+    original_autocast = torch.autocast
+    original_bf16_probe = torch.cuda.is_bf16_supported
+
+    def cpu_safe_autocast(device_type: str, *args: Any, **kwargs: Any):
+        if str(device_type).lower() == "cuda":
+            return nullcontext()
+        return original_autocast(device_type, *args, **kwargs)
+
+    torch.autocast = cpu_safe_autocast  # type: ignore[assignment]
+    torch.cuda.is_bf16_supported = lambda *args, **kwargs: False  # type: ignore[assignment]
+    try:
+        yield
+    finally:
+        torch.autocast = original_autocast  # type: ignore[assignment]
+        torch.cuda.is_bf16_supported = original_bf16_probe  # type: ignore[assignment]
+
+
+def _left_scale_transform(
+    matrix: tuple[tuple[float, float, float], ...],
+    *,
+    scale_x: float,
+    scale_y: float,
+) -> tuple[tuple[float, float, float], ...]:
+    """Left-multiply a homogeneous pixel transform by an axis scale."""
+
+    return (
+        tuple(float(scale_x * value) for value in matrix[0]),
+        tuple(float(scale_y * value) for value in matrix[1]),
+        tuple(float(value) for value in matrix[2]),
+    )
+
+
+def _resample_output_grid(
+    output: VGGTOmegaOutput,
+    target_hw: tuple[int, int],
+) -> VGGTOmegaOutput:
+    """Resample dense outputs to the FFS x2 grid while preserving coordinates.
+
+    VGGT's patch-grid dimensions must be divisible by its patch size, whereas
+    Spring's x2 FFS grid is exactly 540x960.  The model is therefore run at
+    its native grid and the dense depth/confidence maps are resized once at
+    cache time.  The recorded pixel transforms and calibrated model
+    intrinsics are composed with the same axis scale, so downstream geometry
+    still operates in the target grid's coordinate system.
+    """
+
+    if len(target_hw) != 2 or any(int(value) <= 0 for value in target_hw):
+        raise ValueError(f"target dense grid must be positive (H,W), got {target_hw!r}")
+    target_height, target_width = (int(target_hw[0]), int(target_hw[1]))
+    if output.depth.ndim != 5 or output.depth.shape[0] != 1:
+        raise ValueError(f"VGGT depth must be [1,S,H,W,1], got {tuple(output.depth.shape)}")
+    native_height, native_width = (
+        int(output.depth.shape[2]),
+        int(output.depth.shape[3]),
+    )
+    if (native_height, native_width) == (target_height, target_width):
+        return output
+    if output.depth_conf.ndim != 4 or tuple(output.depth_conf.shape[:2]) != tuple(output.depth.shape[:2]):
+        raise ValueError("VGGT depth_conf shape does not match depth batch/sequence")
+    scale_x = target_width / native_width
+    scale_y = target_height / native_height
+    depth_dtype = output.depth.dtype
+    conf_dtype = output.depth_conf.dtype
+    depth = F.interpolate(
+        output.depth[..., 0].reshape(-1, 1, native_height, native_width).float(),
+        size=(target_height, target_width),
+        mode="bilinear",
+        align_corners=False,
+    ).reshape(1, output.depth.shape[1], target_height, target_width, 1).to(depth_dtype)
+    depth_conf = F.interpolate(
+        output.depth_conf.reshape(-1, 1, native_height, native_width).float(),
+        size=(target_height, target_width),
+        mode="bilinear",
+        align_corners=False,
+    ).reshape(1, output.depth_conf.shape[1], target_height, target_width).to(conf_dtype)
+
+    preprocessing: list[ImagePreprocessMetadata] = []
+    for item in output.preprocessing:
+        original_to_target = _left_scale_transform(
+            item.original_to_model_3x3,
+            scale_x=scale_x,
+            scale_y=scale_y,
+        )
+        # The inverse of diag(scale_x, scale_y, 1) @ original_to_model is
+        # model_to_original @ diag(1/scale_x, 1/scale_y, 1).
+        inverse_scale = (
+            (1.0 / scale_x, 0.0, 0.0),
+            (0.0, 1.0 / scale_y, 0.0),
+            (0.0, 0.0, 1.0),
+        )
+        old_inverse = item.model_to_original_3x3
+        model_to_target_original = tuple(
+            tuple(
+                float(
+                    old_inverse[row][0] * inverse_scale[0][column]
+                    + old_inverse[row][1] * inverse_scale[1][column]
+                    + old_inverse[row][2] * inverse_scale[2][column]
+                )
+                for column in range(3)
+            )
+            for row in range(3)
+        )
+        preprocessing.append(
+            replace(
+                item,
+                model_size_hw=(target_height, target_width),
+                original_to_model_3x3=original_to_target,
+                model_to_original_3x3=model_to_target_original,
+            )
+        )
+
+    calibrated_model = output.intrinsics_calibrated_model
+    if calibrated_model is not None:
+        scale = torch.eye(3, dtype=calibrated_model.dtype, device=calibrated_model.device)
+        scale[0, 0] = scale_x
+        scale[1, 1] = scale_y
+        calibrated_model = scale.unsqueeze(0).unsqueeze(0) @ calibrated_model
+    metadata = dict(output.metadata)
+    metadata.update(
+        {
+            "native_model_grid_hw": [native_height, native_width],
+            "cached_dense_grid_hw": [target_height, target_width],
+            "cache_grid_resample": "bilinear_align_corners_false",
+        }
+    )
+    return VGGTOmegaOutput(
+        depth=depth,
+        depth_conf=depth_conf,
+        pose_enc=output.pose_enc,
+        extrinsics=output.extrinsics,
+        intrinsics_pred=output.intrinsics_pred,
+        camera_tokens=output.camera_tokens,
+        register_tokens=output.register_tokens,
+        preprocessing=tuple(preprocessing),
+        intrinsics_calibrated_original=output.intrinsics_calibrated_original,
+        intrinsics_calibrated_model=calibrated_model,
+        metadata=metadata,
+    )
 
 
 def _window_source_metadata(
@@ -399,6 +570,25 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--patch-size", type=int, default=16)
     parser.add_argument("--cache-dtype", choices=["float16", "float32"], default="float16")
     parser.add_argument(
+        "--device",
+        choices=["cpu", "cuda"],
+        default="cuda",
+        help=(
+            "inference device; CUDA is the default/formal path, while CPU is "
+            "an explicit bounded-screening fallback"
+        ),
+    )
+    parser.add_argument(
+        "--output-grid",
+        type=int,
+        nargs=2,
+        metavar=("HEIGHT", "WIDTH"),
+        help=(
+            "optional cached dense grid (H W); useful when the downstream FFS "
+            "grid is not divisible by the VGGT patch size"
+        ),
+    )
+    parser.add_argument(
         "--all-view-dense",
         action="store_true",
         help="Also cache depth/conf for all 10 views; default stores current-left only",
@@ -421,12 +611,15 @@ def main() -> int:
         raise ValueError("image-resolution and patch-size must be positive")
     if args.image_resolution % args.patch_size:
         raise ValueError("image-resolution must be divisible by patch-size")
+    if args.output_grid is not None and any(int(value) <= 0 for value in args.output_grid):
+        raise ValueError("output-grid dimensions must be positive")
     if not args.manifest.is_file():
         raise FileNotFoundError(f"manifest does not exist: {args.manifest}")
     if not args.checkpoint.is_file():
         raise FileNotFoundError(f"VGGT-Omega checkpoint does not exist: {args.checkpoint}")
-    if not torch.cuda.is_available():
-        raise RuntimeError("VGGT-Omega cache generation requires CUDA")
+    device = torch.device(args.device)
+    if device.type == "cuda" and not torch.cuda.is_available():
+        raise RuntimeError("requested CUDA VGGT-Omega cache device is unavailable")
 
     upstream_commit = _require_pinned_upstream(args.repo)
     records = load_manifest(args.manifest)
@@ -453,6 +646,13 @@ def main() -> int:
         "cache_dtype": args.cache_dtype,
         "dense_cache_scope": "all_views" if args.all_view_dense else "current_left_only",
         "current_left_view_index": CURRENT_LEFT_VIEW_INDEX,
+        "inference_device": str(device),
+        "cpu_upstream_autocast_compat": bool(device.type == "cpu"),
+        "output_grid_hw": (
+            [int(args.output_grid[0]), int(args.output_grid[1])]
+            if args.output_grid is not None
+            else None
+        ),
         "pose_scale_stage": "not_applied; downstream pose_scale.py owns metric scaling",
         "depth_alignment_stage": "not_applied; downstream align_vggt.py owns FFS alignment",
     }
@@ -461,7 +661,7 @@ def main() -> int:
         upstream_commit=upstream_commit,
         checkpoint_sha256=checkpoint_sha256,
         torch_version=torch.__version__,
-        cuda_version=torch.version.cuda,
+        cuda_version=torch.version.cuda if device.type == "cuda" else None,
         config_sha256=canonical_json_sha256(config),
     )
     canonical_receipt_path = args.output / "run_receipt.json"
@@ -522,7 +722,7 @@ def main() -> int:
     started = time.perf_counter()
     try:
         if prepared:
-            model = _load_official_model(args.checkpoint, args.repo)
+            model = _load_official_model(args.checkpoint, args.repo, device=device)
             adapter = VGGTOmegaAdapter(
                 model,
                 input_mode=args.input_mode,
@@ -531,62 +731,70 @@ def main() -> int:
                 context_pairs=CONTEXT_PAIRS,
             )
             cache_dtype = torch.float16 if args.cache_dtype == "float16" else torch.float32
-            for write_index, (window, cache_path, source, selection_index) in enumerate(
-                prepared, start=1
-            ):
-                paths = window.ordered_image_paths(args.manifest)
-                calibrated_k = window.calibrated_intrinsics_ordered()
-                output = adapter(
-                    paths,
-                    intrinsics_calibrated_original=calibrated_k,
-                )
-                tensors = cache_tensors_from_output(
-                    output,
-                    window,
-                    cache_dtype=cache_dtype,
-                    all_view_dense=args.all_view_dense,
-                )
-                metadata = {
-                    "source": source,
-                    "checkpoint": {
-                        "path": str(args.checkpoint.resolve()),
-                        "size_bytes": args.checkpoint.stat().st_size,
-                        "sha256": checkpoint_sha256,
-                    },
-                    "config": config,
-                    "adapter": dict(output.metadata),
-                    "preprocessing": [item.as_dict() for item in output.preprocessing],
-                    "cache_tensor_semantics": {
-                        "dense_grid": "VGGT model-input grid; use recorded transforms",
-                        "depth": "positive camera-z in VGGT arbitrary scale; not metric yet",
-                        "depth_conf": "unbounded upstream score 1 + exp(logit); not probability",
-                        "extrinsics": "OpenCV camera-from-world [R|t], arbitrary translation scale",
-                        "intrinsics_pred": "diagnostic only; calibrated K remains geometry owner",
-                        "current_left_view_index": CURRENT_LEFT_VIEW_INDEX,
-                    },
-                }
-                save_cache_record(
-                    cache_path,
-                    tensors=tensors,
-                    metadata=metadata,
-                    identity=identity,
-                )
-                index_rows.append(
-                    {
-                        "selection_index": selection_index,
-                        "target_manifest_index": window.target_manifest_index,
-                        "sequence_id": window.target.sequence_id,
-                        "frame_id": window.target.frame_id,
-                        "timestamp": window.target.timestamp,
-                        "cache_path": str(cache_path.resolve()),
-                        "status": "written",
+            with _inference_context(device):
+                for write_index, (window, cache_path, source, selection_index) in enumerate(
+                    prepared, start=1
+                ):
+                    paths = window.ordered_image_paths(args.manifest)
+                    calibrated_k = window.calibrated_intrinsics_ordered()
+                    output = adapter(
+                        paths,
+                        intrinsics_calibrated_original=calibrated_k,
+                    )
+                    if args.output_grid is not None:
+                        output = _resample_output_grid(
+                            output,
+                            (int(args.output_grid[0]), int(args.output_grid[1])),
+                        )
+                    tensors = cache_tensors_from_output(
+                        output,
+                        window,
+                        cache_dtype=cache_dtype,
+                        all_view_dense=args.all_view_dense,
+                    )
+                    metadata = {
+                        "source": source,
+                        "checkpoint": {
+                            "path": str(args.checkpoint.resolve()),
+                            "size_bytes": args.checkpoint.stat().st_size,
+                            "sha256": checkpoint_sha256,
+                        },
+                        "config": config,
+                        "adapter": dict(output.metadata),
+                        "preprocessing": [item.as_dict() for item in output.preprocessing],
+                        "cache_tensor_semantics": {
+                            "dense_grid": "VGGT model-input grid; use recorded transforms",
+                            "depth": "positive camera-z in VGGT arbitrary scale; not metric yet",
+                            "depth_conf": "unbounded upstream score 1 + exp(logit); not probability",
+                            "extrinsics": "OpenCV camera-from-world [R|t], arbitrary translation scale",
+                            "intrinsics_pred": "diagnostic only; calibrated K remains geometry owner",
+                            "current_left_view_index": CURRENT_LEFT_VIEW_INDEX,
+                        },
+                        "inference_device": str(device),
+                        "cpu_upstream_autocast_compat": bool(device.type == "cpu"),
                     }
-                )
-                print(f"[{write_index}/{len(prepared)}] {cache_path}")
-                del output, tensors
+                    save_cache_record(
+                        cache_path,
+                        tensors=tensors,
+                        metadata=metadata,
+                        identity=identity,
+                    )
+                    index_rows.append(
+                        {
+                            "selection_index": selection_index,
+                            "target_manifest_index": window.target_manifest_index,
+                            "sequence_id": window.target.sequence_id,
+                            "frame_id": window.target.frame_id,
+                            "timestamp": window.target.timestamp,
+                            "cache_path": str(cache_path.resolve()),
+                            "status": "written",
+                        }
+                    )
+                    print(f"[{write_index}/{len(prepared)}] {cache_path}")
+                    del output, tensors
     finally:
         del adapter, model
-        if torch.cuda.is_available():
+        if device.type == "cuda" and torch.cuda.is_available():
             torch.cuda.empty_cache()
 
     index_rows.sort(key=lambda row: int(row["selection_index"]))

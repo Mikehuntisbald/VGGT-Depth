@@ -400,6 +400,30 @@ def _expected_vggt_targets(
     return targets
 
 
+def _expected_vggt_output_grid(
+    rows: Sequence[Mapping[str, Any]], *, scale: int = 2
+) -> tuple[int, int] | None:
+    """Return the Spring x2 dense grid expected by downstream geometry."""
+
+    if scale <= 0 or not rows:
+        return None
+    shapes: set[tuple[int, int]] = set()
+    for row in rows:
+        value = row.get("image_shape_hw")
+        if not isinstance(value, (list, tuple)) or len(value) != 2:
+            return None
+        try:
+            height, width = int(value[0]), int(value[1])
+        except (TypeError, ValueError):
+            return None
+        if height <= 0 or width <= 0 or height % scale or width % scale:
+            return None
+        shapes.add((height // scale, width // scale))
+    if len(shapes) != 1:
+        return None
+    return next(iter(shapes))
+
+
 def _cache_row_target(
     row: Mapping[str, Any], *, row_index: int
 ) -> tuple[int, str, int, float, int, Path]:
@@ -434,6 +458,7 @@ def _strict_vggt_cache_matches(
     manifest_path: Path,
     *,
     expected_targets: Sequence[tuple[int, str, int, float]] | None = None,
+    expected_output_grid: tuple[int, int] | None = None,
 ) -> bool:
     """Check complete raw VGGT endpoint coverage, not only manifest SHA."""
 
@@ -454,6 +479,11 @@ def _strict_vggt_cache_matches(
             return False
         if expected_targets is None:
             expected_targets = _expected_vggt_targets(_read_manifest(manifest_path))
+        if expected_output_grid is not None:
+            config = receipt.get("config")
+            recorded_grid = config.get("output_grid_hw") if isinstance(config, Mapping) else None
+            if recorded_grid != [int(expected_output_grid[0]), int(expected_output_grid[1])]:
+                return False
         expected_count = len(expected_targets)
         if expected_count <= 0:
             return False
@@ -979,11 +1009,17 @@ def _cache_commands(
             # source-manifest hash, so a partial/crashed cache cannot slip
             # through to training.
             try:
-                expected_raw_targets = _expected_vggt_targets(_read_manifest(manifest))
+                manifest_rows_for_vggt = _read_manifest(manifest)
+                expected_raw_targets = _expected_vggt_targets(manifest_rows_for_vggt)
+                expected_output_grid = _expected_vggt_output_grid(manifest_rows_for_vggt)
             except (OSError, SpringRunnerError, ValueError):
                 expected_raw_targets = []
+                expected_output_grid = None
             if not _strict_vggt_cache_matches(
-                raw_root, manifest, expected_targets=expected_raw_targets
+                raw_root,
+                manifest,
+                expected_targets=expected_raw_targets,
+                expected_output_grid=expected_output_grid,
             ):
                 command = [
                     str(args.python_executable),
@@ -1003,7 +1039,17 @@ def _cache_commands(
                     "balanced",
                     "--image-resolution",
                     "512",
+                    "--device",
+                    cache_device,
                 ]
+                if expected_output_grid is not None:
+                    command.extend(
+                        [
+                            "--output-grid",
+                            str(expected_output_grid[0]),
+                            str(expected_output_grid[1]),
+                        ]
+                    )
                 if args.overwrite:
                     command.append("--overwrite")
                 commands.append(
@@ -1336,6 +1382,10 @@ def _arm_eval_command(
         # auditing cache/checkpoint lineage and reporting LIMITED status.
         if args.limit is not None:
             command.append("--allow-non-holdout-smoke")
+        # Spring's native detail/match/rigid metrics are an explicit side
+        # channel.  Keep the canonical pseudo-GT report intact while making
+        # every bounded Spring temporal arm carry the requested native fields.
+        command.append("--spring-native-metrics")
     if args.limit is not None:
         command.extend(["--limit", str(args.limit)])
     return command
@@ -1553,11 +1603,17 @@ def _preflight(
         for key, manifest_key in (("train_vggt", "manifest_train"), ("val_vggt", "manifest_val")):
             manifest = paths[manifest_key]
             try:
-                expected_targets = _expected_vggt_targets(_read_manifest(manifest))
+                manifest_rows_for_vggt = _read_manifest(manifest)
+                expected_targets = _expected_vggt_targets(manifest_rows_for_vggt)
+                expected_output_grid = _expected_vggt_output_grid(manifest_rows_for_vggt)
             except (OSError, SpringRunnerError, ValueError):
                 expected_targets = []
+                expected_output_grid = None
             if not _strict_vggt_cache_matches(
-                paths[key], manifest, expected_targets=expected_targets
+                paths[key],
+                manifest,
+                expected_targets=expected_targets,
+                expected_output_grid=expected_output_grid,
             ):
                 vggt_build_required = True
     image_inputs_required = observation_build_required or vggt_build_required or any(
@@ -1740,11 +1796,17 @@ def _arm_blockers(
             )
         elif label == "raw VGGT":
             try:
-                expected_targets = _expected_vggt_targets(_read_manifest(manifest))
+                manifest_rows_for_vggt = _read_manifest(manifest)
+                expected_targets = _expected_vggt_targets(manifest_rows_for_vggt)
+                expected_output_grid = _expected_vggt_output_grid(manifest_rows_for_vggt)
             except (OSError, SpringRunnerError, ValueError):
                 expected_targets = []
+                expected_output_grid = None
             matches = _strict_vggt_cache_matches(
-                root, manifest, expected_targets=expected_targets
+                root,
+                manifest,
+                expected_targets=expected_targets,
+                expected_output_grid=expected_output_grid,
             )
         elif label in {"vggt_pose_vggt_depth", "gt_pose_vggt_depth"}:
             try:

@@ -10,9 +10,11 @@ from __future__ import annotations
 
 import math
 from collections.abc import Mapping, Sequence
+from pathlib import Path
 from typing import Any
 
 import numpy as np
+from PIL import Image
 
 
 def _array(value: Any, *, dtype: Any = np.float64) -> np.ndarray:
@@ -363,4 +365,247 @@ __all__ = [
     "disparity_metrics",
     "temporal_residual_metrics",
     "topk_diagnostics",
+    "SPRING_NATIVE_FIELDS",
+    "SpringNativeMapError",
+    "aggregate_spring_rows",
+    "spring_disparity_row",
+    "spring_map_bundle",
 ]
+
+
+# ---------------------------------------------------------------------------
+# Explicit native-Spring side-channel helpers.
+# ---------------------------------------------------------------------------
+
+SPRING_NATIVE_FIELDS = (
+    "overall_epe",
+    "overall_1px",
+    "high_detail_epe",
+    "high_detail_1px",
+    "low_detail_epe",
+    "matched_epe",
+    "unmatched_completion_1px",
+    "unmatched_completion_2px",
+    "rigid_temporal_residual_error",
+    "non_rigid_temporal_residual_error",
+    "boundary_epe",
+    "ffs_trusted_measurement_error",
+    "negative_rate",
+    "zero_rate",
+    "invalid_rate",
+)
+
+
+class SpringNativeMapError(ValueError):
+    """Raised when a required Spring auxiliary map is absent or malformed."""
+
+
+def _spring_resolve_path(value: str | Path, *, base: Path | None = None) -> Path:
+    path = Path(value).expanduser()
+    if not path.is_absolute() and base is not None:
+        path = base / path
+    return path.resolve()
+
+
+def _spring_record_value(record: Mapping[str, Any], name: str) -> Any:
+    if name in record:
+        return record[name]
+    source = record.get("source")
+    if isinstance(source, Mapping) and name in source:
+        return source[name]
+    manifest_record = record.get("manifest_record")
+    if isinstance(manifest_record, Mapping) and name in manifest_record:
+        return manifest_record[name]
+    return None
+
+
+def _spring_map_path(
+    record: Mapping[str, Any],
+    name: str,
+    *,
+    manifest_path: str | Path | None = None,
+) -> Path:
+    gt_value = _spring_record_value(record, "gt_disparity_path")
+    if not isinstance(gt_value, str) or not gt_value.strip():
+        raise SpringNativeMapError("Spring manifest record has no gt_disparity_path")
+    base = (
+        None
+        if manifest_path is None
+        else Path(manifest_path).expanduser().resolve().parent
+    )
+    gt_path = _spring_resolve_path(gt_value, base=base)
+    sequence_root = gt_path.parent.parent
+    try:
+        frame_id = int(_spring_record_value(record, "frame_id"))
+    except (TypeError, ValueError) as exc:
+        raise SpringNativeMapError("Spring manifest record has invalid frame_id") from exc
+    return sequence_root / "maps" / name / f"{name}_{frame_id:04d}.png"
+
+
+def _spring_block_reduce_2x(mask: np.ndarray) -> np.ndarray:
+    height, width = mask.shape
+    if height % 2 or width % 2:
+        raise SpringNativeMapError(
+            f"4K Spring map shape must be even, got {(height, width)}"
+        )
+    return mask.reshape(height // 2, 2, width // 2, 2).mean(axis=(1, 3)) >= 0.5
+
+
+def _spring_resize_nearest(mask: np.ndarray, target_hw: tuple[int, int]) -> np.ndarray:
+    if tuple(mask.shape) == tuple(target_hw):
+        return mask.astype(bool, copy=False)
+    height, width = target_hw
+    image = Image.fromarray(mask.astype(np.uint8, copy=False) * 255, mode="L")
+    resized = image.resize((width, height), Image.Resampling.NEAREST)
+    return np.asarray(resized, dtype=np.uint8) > 0
+
+
+def _spring_read_mask(
+    path: Path,
+    *,
+    target_hw: tuple[int, int],
+    crop_hr_xywh: tuple[int, int, int, int] | None,
+    kind: str,
+) -> np.ndarray:
+    if not path.is_file():
+        raise SpringNativeMapError(f"required Spring map is missing: {path}")
+    with Image.open(path) as image:
+        array = np.asarray(image).copy()
+    if kind == "match":
+        if array.ndim != 3 or array.shape[-1] < 2:
+            raise SpringNativeMapError(
+                f"Spring match map must have at least two channels: {path}"
+            )
+        array = (array[..., 0] > 0) | (array[..., 1] > 0)
+    else:
+        if array.ndim == 3:
+            array = array[..., 0]
+        array = array > 0
+    if array.ndim != 2:
+        raise SpringNativeMapError(f"Spring map is not 2-D: {path}")
+    # Detail/match maps are already image-resolution.  Rigid maps are 4K and
+    # follow the official 2x2 majority reduction before any crop.
+    if (
+        kind == "rigid"
+        and array.shape[0] >= 2 * target_hw[0]
+        and array.shape[1] >= 2 * target_hw[1]
+    ):
+        array = _spring_block_reduce_2x(array)
+    if crop_hr_xywh is not None and tuple(array.shape) != tuple(target_hw):
+        x, y, width, height = crop_hr_xywh
+        if y < 0 or x < 0 or y + height > array.shape[0] or x + width > array.shape[1]:
+            raise SpringNativeMapError(
+                f"Spring map crop {(x, y, width, height)} exceeds map shape {array.shape}: {path}"
+            )
+        array = array[y : y + height, x : x + width]
+    if tuple(array.shape) != tuple(target_hw):
+        array = _spring_resize_nearest(array, target_hw)
+    return array.astype(bool, copy=False)
+
+
+def spring_map_bundle(
+    record: Mapping[str, Any],
+    *,
+    target_hw: tuple[int, int],
+    manifest_path: str | Path | None = None,
+    crop_hr_xywh: tuple[int, int, int, int] | None = None,
+    require_rigid: bool = False,
+) -> dict[str, Any]:
+    """Load native Spring detail/match/(optional) rigid maps on target grid."""
+
+    detail_name = "detailmap_disp1_left"
+    match_name = "matchmap_disp1_left"
+    detail_path = _spring_map_path(record, detail_name, manifest_path=manifest_path)
+    match_path = _spring_map_path(record, match_name, manifest_path=manifest_path)
+    detail = _spring_read_mask(
+        detail_path,
+        target_hw=target_hw,
+        crop_hr_xywh=crop_hr_xywh,
+        kind="detail",
+    )
+    matched = _spring_read_mask(
+        match_path,
+        target_hw=target_hw,
+        crop_hr_xywh=crop_hr_xywh,
+        kind="match",
+    )
+    rigid_name = "rigidmap_BW_left"
+    rigid_path = _spring_map_path(record, rigid_name, manifest_path=manifest_path)
+    if rigid_path.is_file():
+        rigid = _spring_read_mask(
+            rigid_path,
+            target_hw=target_hw,
+            crop_hr_xywh=crop_hr_xywh,
+            kind="rigid",
+        )
+    elif require_rigid:
+        raise SpringNativeMapError(f"required Spring rigid map is missing: {rigid_path}")
+    else:
+        rigid = None
+    return {
+        "detail": detail,
+        "matched": matched,
+        "rigid": rigid,
+        "paths": {
+            "detail": str(detail_path),
+            "match": str(match_path),
+            "rigid": str(rigid_path),
+        },
+    }
+
+
+def spring_disparity_row(
+    prediction: Any,
+    ground_truth: Any,
+    *,
+    detail_mask: Any,
+    match_mask: Any,
+    ffs_trusted_mask: Any,
+    ffs_prediction: Any,
+    boundary_epe: float | None = None,
+) -> dict[str, float | int]:
+    """Compute one native Spring row using the shared metric contract."""
+
+    result = disparity_metrics(
+        prediction,
+        ground_truth,
+        detail_mask=detail_mask,
+        match_mask=match_mask,
+        ffs_trusted_mask=ffs_trusted_mask,
+        ffs_prediction=ffs_prediction,
+    )
+    if boundary_epe is not None and math.isfinite(float(boundary_epe)):
+        result["boundary_epe"] = float(boundary_epe)
+    return result
+
+
+def aggregate_spring_rows(rows: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
+    """Reduce native rows without inventing values."""
+
+    if not rows:
+        raise ValueError("cannot aggregate an empty Spring metric row sequence")
+    result: dict[str, Any] = {
+        "frames": len(rows),
+        "aggregation": "frame_mean_except_output_health_rates_pixel_weighted",
+    }
+    for name in SPRING_NATIVE_FIELDS:
+        values = []
+        for row in rows:
+            value = row.get(name)
+            if isinstance(value, (int, float)) and not isinstance(value, bool):
+                value = float(value)
+                if math.isfinite(value):
+                    values.append(value)
+        result[name] = None if not values else float(np.mean(values))
+    pixels = sum(int(row.get("image_pixel_count", 0) or 0) for row in rows)
+    if pixels:
+        for name in ("negative_rate", "zero_rate", "invalid_rate"):
+            result[name] = sum(
+                float(row.get(name, 0.0) or 0.0)
+                * int(row.get("image_pixel_count", 0) or 0)
+                for row in rows
+                if isinstance(row.get(name), (int, float))
+            ) / pixels
+    for name in ("valid_count", "unmatched_count", "ffs_trusted_count"):
+        result[name] = int(sum(int(row.get(name, 0) or 0) for row in rows))
+    return result

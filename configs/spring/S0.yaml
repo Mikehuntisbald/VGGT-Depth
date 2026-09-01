@@ -1,0 +1,12 @@
+experiment: spring_S0_lr_ffs_bilinear
+seed: 42
+arm: S0
+description: LR FFS disparity bilinear-upsampled to the Spring HR grid
+data:
+  scale: 2
+  spring_split: train
+  spring_baseline_m: 0.065
+  prediction: ffs_bilinear
+metrics:
+  gt_resolution: full
+  disparity_unit: full_hd_pixels
