@@ -1,0 +1,13 @@
+experiment: spring_corrected_S5_t3_topk_vggt_depth_vggt_pose
+seed: 42
+arm: S5
+defaults_from: configs/ablations/temporal_x2_v2_strict_bilinear_vggt_pose_depth.yaml
+
+train:
+  stage: temporal
+  steps: 15000
+  micro_batch_size: 1
+  grad_accumulation: 1
+  effective_batch_size: 1
+  num_workers: 0
+  persistent_workers: false

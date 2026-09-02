@@ -1,0 +1,13 @@
+experiment: spring_corrected_S6_full_epipolar
+seed: 42
+arm: S6
+defaults_from: configs/ablations/epipolar_x2_v2_strict_bilinear.yaml
+
+train:
+  stage: epipolar
+  steps_epipolar: 5000
+  micro_batch_size: 1
+  grad_accumulation: 1
+  effective_batch_size: 1
+  num_workers: 0
+  persistent_workers: false

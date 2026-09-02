@@ -1,0 +1,16 @@
+experiment: spring_corrected_S2_t3_single_age_control
+seed: 42
+arm: S2
+defaults_from: configs/ablations/temporal_x2_v2_strict_bilinear_gt_no_depth.yaml
+
+# The current V2 contract requires two memory ages.  This row is the
+# deterministic history control; the runner/evaluator records the retained
+# candidate ages and a later K=1 mask control is kept as an internal diagnostic.
+train:
+  stage: temporal
+  steps: 15000
+  micro_batch_size: 1
+  grad_accumulation: 1
+  effective_batch_size: 1
+  num_workers: 0
+  persistent_workers: false

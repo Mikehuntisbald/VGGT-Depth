@@ -1,0 +1,19 @@
+experiment: spring_corrected_S1_t1_spatial_tsr
+seed: 42
+arm: S1
+defaults_from: configs/ablations/v2_strict_bilinear.yaml
+
+data:
+  temporal_pose_source: gt
+
+model:
+  use_vggt_depth: true
+
+train:
+  stage: spatial
+  steps_spatial: 5000
+  micro_batch_size: 1
+  grad_accumulation: 1
+  effective_batch_size: 1
+  num_workers: 0
+  persistent_workers: false

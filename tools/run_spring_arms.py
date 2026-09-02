@@ -719,6 +719,24 @@ def build_parser() -> argparse.ArgumentParser:
         help="directory containing extracted Spring data (spring/train/<sequence>)",
     )
     parser.add_argument("--output-root", type=Path, default=project_root / "runs" / "spring_seed42")
+    parser.add_argument(
+        "--arm-config-dir",
+        type=Path,
+        default=project_root / "configs" / "spring",
+        help=(
+            "directory containing S0.yaml..S6.yaml; the default preserves the "
+            "historical Spring screening lineage"
+        ),
+    )
+    parser.add_argument(
+        "--spatial-base-config",
+        type=Path,
+        default=project_root / "configs" / "mvp_x2_v2.yaml",
+        help=(
+            "Stage-A initializer config for S3--S5; use a separate path for "
+            "corrected lineages"
+        ),
+    )
     parser.add_argument("--cache-root", type=Path)
     parser.add_argument("--manifest", type=Path, help="prebuilt all-record manifest")
     parser.add_argument("--train-manifest", type=Path)
@@ -1190,7 +1208,16 @@ def _spatial_v2_base_command(
         str(args.python_executable),
         str(paths["project_root"] / "train.py"),
         "--config",
-        str(paths["project_root"] / "configs" / "mvp_x2_v2.yaml"),
+        str(
+            _resolve_path(
+                getattr(
+                    args,
+                    "spatial_base_config",
+                    paths["project_root"] / "configs" / "mvp_x2_v2.yaml",
+                ),
+                base=paths["project_root"],
+            )
+        ),
         "--manifest",
         str(paths["manifest_train"]),
         "--observation-cache-root",
@@ -1214,6 +1241,24 @@ def _derived_root(paths: Mapping[str, Path], split: str, kind: str | None) -> Pa
     return paths[f"{prefix}_{'gt_geom' if kind == 'gt_no_depth' else 'gt_pose_depth' if kind == 'gt_pose_vggt_depth' else 'vggt_geom'}"]
 
 
+def _arm_config_path(
+    args: argparse.Namespace, paths: Mapping[str, Path], spec: ArmSpec
+) -> Path:
+    """Resolve an arm config from the selected config directory.
+
+    ``spec.config`` retains the historical ``configs/spring/S?.yaml`` name so
+    old receipts remain readable.  New runs can point ``--arm-config-dir`` at
+    an independent directory without changing the arm graph or old artifacts.
+    """
+
+    configured_dir = getattr(
+        args, "arm_config_dir", paths["project_root"] / "configs" / "spring"
+    )
+    return _resolve_path(configured_dir, base=paths["project_root"]) / Path(
+        spec.config
+    ).name
+
+
 def _arm_train_command(
     args: argparse.Namespace,
     paths: Mapping[str, Path],
@@ -1235,7 +1280,7 @@ def _arm_train_command(
         str(args.python_executable),
         str(train_entrypoint),
         "--config",
-        str(project_root / spec.config),
+        str(_arm_config_path(args, paths, spec)),
         "--manifest",
         str(paths["manifest_train"]),
         "--observation-cache-root",
@@ -1325,7 +1370,7 @@ def _arm_eval_command(
             str(args.python_executable),
             str(project_root / "tools" / "eval_spring_epipolar.py"),
             "--config",
-            str(project_root / spec.config),
+            str(_arm_config_path(args, paths, spec)),
             "--checkpoint",
             str(checkpoint),
             "--manifest",
@@ -1353,7 +1398,7 @@ def _arm_eval_command(
         str(args.python_executable),
         str(project_root / "eval.py"),
         "--config",
-        str(project_root / spec.config),
+        str(_arm_config_path(args, paths, spec)),
         "--checkpoint",
         str(checkpoint),
         "--manifest",
@@ -2188,7 +2233,7 @@ def run(args: argparse.Namespace) -> int:
         row: dict[str, Any] = {
             "arm": name,
             "status": "PLANNED",
-            "config": str(project_root / spec.config),
+            "config": str(_arm_config_path(args, paths, spec)),
             "stage": spec.stage,
             "pose_source": spec.pose_source,
             "use_vggt_depth": spec.use_vggt_depth,

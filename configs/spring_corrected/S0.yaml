@@ -1,0 +1,4 @@
+experiment: spring_corrected_S0_lr_ffs_bilinear
+seed: 42
+arm: S0
+defaults_from: configs/spring/S0.yaml
