@@ -766,6 +766,15 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--skip-manifest-build", action="store_true", help="require supplied/pre-existing manifests")
     parser.add_argument("--overwrite", action="store_true", help="allow cache producers to replace matching records")
     parser.add_argument("--no-resume", action="store_true", help="ignore prior arm completion state")
+    parser.add_argument(
+        "--allow-unbounded-spring-screening",
+        action="store_true",
+        help=(
+            "explicitly allow the non-canonical Spring Stage-C adapter to use "
+            "the complete supplied manifest; without this flag S6 requires "
+            "--limit"
+        ),
+    )
     parser.add_argument("--dry-run", action="store_true", help="write the full plan without launching subprocesses")
     parser.add_argument(
         "--status",
@@ -1844,10 +1853,15 @@ def _arm_blockers(
             blockers.append(
                 f"missing Spring Stage-C rectification audit: {audit_path}"
             )
-    if name == "S6" and args.limit is None:
+    if (
+        name == "S6"
+        and args.limit is None
+        and not bool(getattr(args, "allow_unbounded_spring_screening", False))
+    ):
         blockers.append(
             "S6 Spring Stage-C screening requires an explicit --limit; "
-            "unbounded evaluation is reserved for canonical Stage-C"
+            "use --allow-unbounded-spring-screening only with an explicit "
+            "sequence-disjoint Spring manifest"
         )
     if name == "S6" and not prerequisites.get("spring_stage_c", {}).get(
         "available", False
