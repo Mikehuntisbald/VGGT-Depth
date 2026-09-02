@@ -469,9 +469,22 @@ def _strict_vggt_cache_matches(
     try:
         receipt = _read_json(receipt_path)
         expected_sha = _sha256(manifest_path)
-        if receipt.get("manifest_sha256") != expected_sha:
+        # Older GT-only geometry receipts stored the manifest binding only
+        # under ``inputs``.  Accept that representation while requiring the
+        # exact same SHA; newly produced receipts also expose the canonical
+        # top-level fields.
+        receipt_manifest_sha = receipt.get("manifest_sha256")
+        if receipt_manifest_sha is None:
+            inputs = receipt.get("inputs")
+            if isinstance(inputs, Mapping):
+                receipt_manifest_sha = inputs.get("manifest_sha256")
+        if receipt_manifest_sha != expected_sha:
             return False
         receipt_manifest = receipt.get("manifest")
+        if receipt_manifest is None:
+            inputs = receipt.get("inputs")
+            if isinstance(inputs, Mapping):
+                receipt_manifest = inputs.get("manifest")
         if (
             isinstance(receipt_manifest, str)
             and Path(receipt_manifest).expanduser().resolve() != manifest_path.resolve()
@@ -545,9 +558,21 @@ def _strict_derived_cache_matches(
     try:
         receipt = _read_json(receipt_path)
         expected_sha = _sha256(manifest_path)
-        if receipt.get("manifest_sha256") != expected_sha:
+        # GT-only geometry receipts produced before the top-level binding was
+        # added kept these fields under ``inputs``.  Accept that legacy form
+        # while still requiring an exact manifest SHA/path match.
+        receipt_manifest_sha = receipt.get("manifest_sha256")
+        if receipt_manifest_sha is None:
+            inputs = receipt.get("inputs")
+            if isinstance(inputs, Mapping):
+                receipt_manifest_sha = inputs.get("manifest_sha256")
+        if receipt_manifest_sha != expected_sha:
             return False
         receipt_manifest = receipt.get("manifest")
+        if receipt_manifest is None:
+            inputs = receipt.get("inputs")
+            if isinstance(inputs, Mapping):
+                receipt_manifest = inputs.get("manifest")
         if (
             isinstance(receipt_manifest, str)
             and Path(receipt_manifest).expanduser().resolve() != manifest_path.resolve()
@@ -735,6 +760,15 @@ def build_parser() -> argparse.ArgumentParser:
         help=(
             "Stage-A initializer config for S3--S5; use a separate path for "
             "corrected lineages"
+        ),
+    )
+    parser.add_argument(
+        "--reuse-s1-spatial-initializer",
+        action="store_true",
+        help=(
+            "for a corrected matched matrix, initialize S3--S5 from the "
+            "public S1 Stage-A checkpoint instead of training a duplicate "
+            "hidden spatial base"
         ),
     )
     parser.add_argument("--cache-root", type=Path)
@@ -1268,6 +1302,35 @@ def _arm_config_path(
     ).name
 
 
+def _initializer_name(args: argparse.Namespace, spec: ArmSpec) -> str | None:
+    """Return the effective initializer name for this run."""
+
+    if bool(getattr(args, "reuse_s1_spatial_initializer", False)) and spec.name in {
+        "S3",
+        "S4",
+        "S5",
+    }:
+        return "S1"
+    return spec.init_arm
+
+
+def _spatial_checkpoint_for_eval(
+    args: argparse.Namespace,
+    output_root: Path,
+    name: str,
+    base_checkpoint: Path,
+) -> Path | None:
+    """Return the Stage-A checkpoint paired with an arm's evaluator."""
+
+    if name == "S6":
+        return output_root / "arms" / "S5" / "train" / "final.pt"
+    if name in {"S2", "S3", "S4", "S5"}:
+        if name == "S2" or bool(getattr(args, "reuse_s1_spatial_initializer", False)):
+            return output_root / "arms" / "S1" / "train" / "final.pt"
+        return base_checkpoint
+    return None
+
+
 def _arm_train_command(
     args: argparse.Namespace,
     paths: Mapping[str, Path],
@@ -1438,8 +1501,13 @@ def _arm_eval_command(
             command.append("--allow-non-holdout-smoke")
         # Keep native Spring maps/GT metrics in an explicit side-channel.  The
         # default evaluator contract remains unchanged when this flag is
-        # omitted; bounded S1--S5 runs opt in so the composer can consume the
-        # exact detail/match/temporal/top-K fields.
+        # omitted; corrected S1--S5 runs opt in so the composer can consume
+        # the exact detail/match/temporal/top-K fields.
+        command.append("--spring-native-metrics")
+    elif spec.name == "S1":
+        # S1 is spatial, but it still needs the native Spring detail/match/
+        # boundary fields for the seven-arm contract.  The generic evaluator
+        # keeps this opt-in so non-Spring callers remain unchanged.
         command.append("--spring-native-metrics")
     if args.limit is not None:
         command.extend(["--limit", str(args.limit)])
@@ -1835,14 +1903,15 @@ def _arm_blockers(
             if "Stage-C rectification audit" in reason and name != "S6":
                 continue
             blockers.append(str(reason))
-    if spec.init_arm:
-        init = completed.get(spec.init_arm)
+    initializer_name = _initializer_name(args, spec)
+    if initializer_name:
+        init = completed.get(initializer_name)
         if not init or init.get("status") != "COMPLETE":
-            blockers.append(f"initializer {spec.init_arm} did not complete")
+            blockers.append(f"initializer {initializer_name} did not complete")
         else:
             checkpoint = init.get("train", {}).get("checkpoint")
             if not checkpoint or not Path(str(checkpoint)).is_file():
-                blockers.append(f"initializer {spec.init_arm} checkpoint is missing")
+                blockers.append(f"initializer {initializer_name} checkpoint is missing")
     if name == "S6" and args.rectification_audit is None:
         blockers.append(
             "S6 requires --rectification-audit; Spring Stage-C is fail-closed"
@@ -2140,7 +2209,9 @@ def run(args: argparse.Namespace) -> int:
     # initialized from S1 because the top-K/history modules change the state
     # dict.  Materialize (or explicitly plan) this hidden prerequisite before
     # evaluating the public arms.
-    need_v2_base = any(name in selected_arms for name in ("S3", "S4", "S5", "S6"))
+    need_v2_base = any(name in selected_arms for name in ("S3", "S4", "S5", "S6")) and not bool(
+        getattr(args, "reuse_s1_spatial_initializer", False)
+    )
     base_output = output_root / "spatial_v2_base" / "train"
     base_checkpoint = base_output / "final.pt"
     if need_v2_base:
@@ -2149,7 +2220,16 @@ def run(args: argparse.Namespace) -> int:
             "arm": "spatial_v2_base",
             "status": "PLANNED",
             "stage": "spatial",
-            "config": str(project_root / "configs" / "mvp_x2_v2.yaml"),
+            "config": str(
+                _resolve_path(
+                    getattr(
+                        args,
+                        "spatial_base_config",
+                        project_root / "configs" / "mvp_x2_v2.yaml",
+                    ),
+                    base=project_root,
+                )
+            ),
             "train_output": str(base_output),
             "commands": [],
         }
@@ -2299,25 +2379,20 @@ def run(args: argparse.Namespace) -> int:
         if args.dry_run:
             if spec.stage != "baseline":
                 init_path = None
-                if spec.init_arm:
+                initializer_name = _initializer_name(args, spec)
+                if initializer_name:
                     init_path = (
                         base_checkpoint
-                        if spec.init_arm == "spatial_v2_base"
-                        else output_root / "arms" / spec.init_arm / "train" / "final.pt"
+                        if initializer_name == "spatial_v2_base"
+                        else output_root / "arms" / initializer_name / "train" / "final.pt"
                     )
                 train_command = _arm_train_command(args, paths, spec, train_output=train_output, init_checkpoint=init_path)
                 row["commands"].append(_run_command(train_command, cwd=project_root, log_path=output_root / "logs" / f"{name}_train.log", dry_run=True))
                 checkpoint_path = train_output / "final.pt"
             else:
                 checkpoint_path = None
-            spatial_path = (
-                output_root / "arms" / "S5" / "train" / "final.pt"
-                if name == "S6"
-                else base_checkpoint
-                if name in {"S3", "S4", "S5"}
-                else output_root / "arms" / "S1" / "train" / "final.pt"
-                if name == "S2"
-                else None
+            spatial_path = _spatial_checkpoint_for_eval(
+                args, output_root, name, base_checkpoint
             )
             eval_command = _arm_eval_command(args, paths, spec, checkpoint=checkpoint_path, eval_output=eval_output, spatial_checkpoint=spatial_path)
             row["commands"].append(_run_command(eval_command, cwd=project_root, log_path=output_root / "logs" / f"{name}_eval.log", dry_run=True))
@@ -2374,8 +2449,9 @@ def run(args: argparse.Namespace) -> int:
             continue
 
         init_checkpoint: Path | None = None
-        if spec.init_arm:
-            init_row = completed.get(spec.init_arm)
+        initializer_name = _initializer_name(args, spec)
+        if initializer_name:
+            init_row = completed.get(initializer_name)
             if init_row:
                 candidate = init_row.get("train", {}).get("checkpoint")
                 if candidate:
@@ -2383,8 +2459,8 @@ def run(args: argparse.Namespace) -> int:
             if init_checkpoint is None:
                 init_checkpoint = (
                     base_checkpoint
-                    if spec.init_arm == "spatial_v2_base"
-                    else output_root / "arms" / spec.init_arm / "train" / "final.pt"
+                    if initializer_name == "spatial_v2_base"
+                    else output_root / "arms" / initializer_name / "train" / "final.pt"
                 )
         train_command = _arm_train_command(args, paths, spec, train_output=train_output, init_checkpoint=init_checkpoint)
         train_record = _run_command(train_command, cwd=project_root, log_path=output_root / "logs" / f"{name}_train.log")
@@ -2400,14 +2476,8 @@ def run(args: argparse.Namespace) -> int:
                 # Dependent arms will be marked blocked by _arm_blockers.
                 continue
             continue
-        spatial_path = (
-            output_root / "arms" / "S5" / "train" / "final.pt"
-            if name == "S6"
-            else base_checkpoint
-            if name in {"S3", "S4", "S5"}
-            else output_root / "arms" / "S1" / "train" / "final.pt"
-            if name == "S2"
-            else None
+        spatial_path = _spatial_checkpoint_for_eval(
+            args, output_root, name, base_checkpoint
         )
         eval_command = _arm_eval_command(args, paths, spec, checkpoint=checkpoint_path, eval_output=eval_output, spatial_checkpoint=spatial_path)
         eval_record = _run_command(eval_command, cwd=project_root, log_path=output_root / "logs" / f"{name}_eval.log")

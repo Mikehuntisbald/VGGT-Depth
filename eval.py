@@ -4358,8 +4358,14 @@ def run(args: argparse.Namespace) -> int:
         method_name: [] for method_name in method_names
     }
     spring_native_topk_rows: list[dict[str, Any]] = []
+    # Native Spring arrays are full-resolution (roughly 8 MiB per disparity
+    # map in float32).  Keeping every endpoint resident makes a formal
+    # 1,350-frame evaluation consume many GiB of host RAM and can evict the
+    # training workers.  A small recency window preserves the useful within-
+    # batch reuse while bounding memory independently of corpus length.
     spring_native_map_cache: dict[tuple[Any, ...], dict[str, Any]] = {}
     spring_native_gt_cache: dict[tuple[Any, ...], np.ndarray] = {}
+    spring_native_cache_limit = 16
     spring_native_map_errors: list[str] = []
     spring_native_map_paths: set[str] = set()
     spring_native_gt_paths: set[str] = set()
@@ -4807,6 +4813,8 @@ def run(args: argparse.Namespace) -> int:
                                 require_rigid=False,
                             )
                             spring_native_map_cache[frame_key] = maps
+                            while len(spring_native_map_cache) > spring_native_cache_limit:
+                                spring_native_map_cache.pop(next(iter(spring_native_map_cache)))
                         if isinstance(maps.get("paths"), Mapping):
                             spring_native_map_paths.update(
                                 str(path)
@@ -4839,6 +4847,8 @@ def run(args: argparse.Namespace) -> int:
                                     f"{native_gt.shape} vs {tuple(target.shape[-2:])}"
                                 )
                             spring_native_gt_cache[gt_key] = native_gt
+                            while len(spring_native_gt_cache) > spring_native_cache_limit:
+                                spring_native_gt_cache.pop(next(iter(spring_native_gt_cache)))
                         spring_item_context[item_index] = (record, maps, native_gt)
                         spring_native_endpoint_ids.add(
                             f"{record.get('sequence_id')}/{record.get('frame_id')}"

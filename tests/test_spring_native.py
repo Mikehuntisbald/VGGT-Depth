@@ -10,7 +10,11 @@ from metrics.spring_arms import (
     spring_disparity_row,
     spring_map_bundle,
 )
-from tools.compose_spring_screening_report import map_arm
+from tools.compose_spring_screening_report import (
+    _protocol_training,
+    _window_count,
+    map_arm,
+)
 from tools.run_spring_arms import _extract_metrics
 
 
@@ -120,3 +124,40 @@ def test_runner_extracts_native_metrics_before_legacy_aliases() -> None:
     assert metrics["overall_epe"] == 2.0
     assert metrics["high_detail_epe"] == 4.0
     assert metrics["age_2_survival_rate"] == 0.75
+
+
+def test_composer_counts_windows_per_sequence() -> None:
+    summary = {
+        "records": 10,
+        "sequence_lengths": {"a": 7, "b": 3},
+    }
+    # Five-pair VGGT context: (7-4) + (3-4 => 0), not 10-4.
+    assert _window_count(summary, 4) == 3
+    assert _window_count(summary, 6) == 1
+
+
+def test_composer_preserves_corrected_per_arm_schedule() -> None:
+    reports = {
+        "S1": {
+            "checkpoint_training_completion": {
+                "configured_steps": 5000,
+                "actual_step": 5000,
+                "canonical_schedule": True,
+            }
+        },
+        "S2": {
+            "checkpoint_training_completion": {
+                "configured_steps": 15000,
+                "actual_step": 1038,
+                "canonical_schedule": False,
+            }
+        },
+    }
+    protocol = _protocol_training(reports, {"S3": 15000})
+    assert protocol["training_steps"] is None
+    assert protocol["configured_training_steps_by_arm"] == {
+        "S1": 5000,
+        "S2": 15000,
+        "S3": 15000,
+    }
+    assert protocol["actual_training_steps_by_arm"] == {"S1": 5000, "S2": 1038}

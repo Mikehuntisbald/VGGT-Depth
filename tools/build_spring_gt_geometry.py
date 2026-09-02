@@ -262,6 +262,12 @@ def main() -> int:
     receipt = {
         "schema_version": 1,
         "component": "vggt-ffs-derived-geometry-batch",
+        # Keep the manifest binding at the receipt root, matching the other
+        # derived-cache producers and the runner's strict receipt contract.
+        # The same fields remain under ``inputs`` for backwards-readable
+        # provenance.
+        "manifest": str(manifest),
+        "manifest_sha256": manifest_sha,
         "config": config,
         "inputs": {
             "manifest": str(manifest),

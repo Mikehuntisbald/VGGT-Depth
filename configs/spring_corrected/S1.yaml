@@ -7,7 +7,9 @@ data:
   temporal_pose_source: gt
 
 model:
-  use_vggt_depth: true
+  # Stage A has no VGGT-derived input; keep the control label explicit so
+  # reports cannot mistake S1 for the S4 depth-prior arm.
+  use_vggt_depth: false
 
 train:
   stage: spatial

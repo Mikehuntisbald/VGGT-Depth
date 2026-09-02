@@ -13,6 +13,7 @@ from __future__ import annotations
 import argparse
 import datetime as dt
 import json
+import re
 import subprocess
 from pathlib import Path
 from typing import Any, Mapping
@@ -63,9 +64,143 @@ def manifest_summary(path: Path) -> dict[str, Any]:
                 value = json.loads(line)
                 if isinstance(value, dict):
                     rows.append(value)
+    sequence_lengths: dict[str, int] = {}
+    for row in rows:
+        sequence = str(row.get("sequence_id"))
+        sequence_lengths[sequence] = sequence_lengths.get(sequence, 0) + 1
     return {
         "records": len(rows),
         "sequences": sorted({str(row.get("sequence_id")) for row in rows}),
+        "sequence_lengths": dict(sorted(sequence_lengths.items())),
+    }
+
+
+def _window_count(summary: Mapping[str, Any], warmup: int) -> int:
+    """Count temporal endpoints per sequence, never across sequence boundaries.
+
+    A simple ``records - warmup`` expression is only valid for a single
+    sequence.  Spring splits contain multiple sequences, so subtracting once
+    would over-count windows at every sequence boundary.
+    """
+
+    lengths = summary.get("sequence_lengths")
+    if isinstance(lengths, Mapping):
+        total = 0
+        for length in lengths.values():
+            try:
+                total += max(int(length) - int(warmup), 0)
+            except (TypeError, ValueError):
+                continue
+        return total
+    # Keep compatibility with summaries produced before sequence_lengths was
+    # added.  This fallback is intentionally conservative and is only used
+    # when no per-sequence information is available.
+    try:
+        return max(int(summary.get("records") or 0) - int(warmup), 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _training_completion(report: Mapping[str, Any]) -> Mapping[str, Any] | None:
+    """Return the evaluator's checkpoint completion receipt, if present."""
+
+    value = report.get("checkpoint_training_completion")
+    if isinstance(value, Mapping):
+        return value
+    # Stage-C receipts use a differently named field.  The nested base
+    # checkpoint receipt is still the authoritative schedule for S6.
+    value = report.get("checkpoint_completion")
+    if isinstance(value, Mapping):
+        return value
+    return None
+
+
+def _declared_training_steps(report: Mapping[str, Any]) -> int | None:
+    completion = _training_completion(report)
+    if completion is not None:
+        for key in ("configured_steps", "declared_schedule_steps", "canonical_steps"):
+            value = completion.get(key)
+            if isinstance(value, (int, float)) and int(value) >= 0:
+                return int(value)
+    # A few older receipts expose the step directly under checkpoint.
+    checkpoint = report.get("checkpoint")
+    if isinstance(checkpoint, Mapping):
+        value = checkpoint.get("step")
+        if isinstance(value, (int, float)) and int(value) >= 0:
+            return int(value)
+    return None
+
+
+def _actual_training_steps(report: Mapping[str, Any]) -> int | None:
+    completion = _training_completion(report)
+    if completion is not None:
+        value = completion.get("actual_step")
+        if isinstance(value, (int, float)) and int(value) >= 0:
+            return int(value)
+    checkpoint = report.get("checkpoint")
+    if isinstance(checkpoint, Mapping):
+        value = checkpoint.get("step")
+        if isinstance(value, (int, float)) and int(value) >= 0:
+            return int(value)
+    return None
+
+
+def _steps_from_config(path: Path) -> int | None:
+    """Read a declared train-step field without requiring a YAML package."""
+
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError:
+        return None
+    # Corrected configs use one of these explicit fields.  Restrict the
+    # pattern to a YAML scalar line so comments or nested prose cannot match.
+    for key in ("steps_spatial", "steps_epipolar", "steps_temporal", "steps"):
+        match = re.search(rf"^\s*{re.escape(key)}\s*:\s*(\d+)\s*(?:#.*)?$", text, re.MULTILINE)
+        if match:
+            return int(match.group(1))
+    return None
+
+
+def _protocol_training(
+    arm_reports: Mapping[str, Mapping[str, Any]],
+    expected_by_arm: Mapping[str, int] | None = None,
+) -> dict[str, Any]:
+    """Derive schedule metadata from arm receipts instead of hard-coding smoke values."""
+
+    configured: dict[str, int] = {}
+    actual: dict[str, int] = {}
+    canonical: dict[str, bool] = {}
+    for name, report in arm_reports.items():
+        if name == "S0":
+            continue
+        value = _declared_training_steps(report)
+        if value is not None:
+            configured[name] = value
+        value = _actual_training_steps(report)
+        if value is not None:
+            actual[name] = value
+        completion = _training_completion(report)
+        if completion is not None and isinstance(completion.get("canonical_schedule"), bool):
+            canonical[name] = bool(completion["canonical_schedule"])
+
+    # A blocked arm has no evaluator receipt yet.  Preserve the declared
+    # schedule from its config as an *expected* value, while keeping actual
+    # steps absent; this makes a partial report auditable without pretending a
+    # checkpoint was trained.
+    for name, value in (expected_by_arm or {}).items():
+        configured.setdefault(name, int(value))
+
+    # Keep the historical scalar field when all observed arms share one
+    # schedule.  For the corrected primary matrix Stage-A/Stage-B/Stage-C have
+    # different schedules, so expose a per-arm map and leave the scalar null
+    # rather than falsely claiming one number applies to every arm.
+    distinct = sorted(set(configured.values()))
+    scalar: int | None = distinct[0] if len(distinct) == 1 else None
+    return {
+        "training_steps": scalar,
+        "configured_training_steps_by_arm": configured,
+        "actual_training_steps_by_arm": actual,
+        "canonical_schedule_by_arm": canonical,
     }
 
 
@@ -222,22 +357,75 @@ def main() -> int:
     parser.add_argument("--arm-root", type=Path, required=True)
     parser.add_argument("--blocked", type=Path, required=True)
     parser.add_argument("--manifest", type=Path, required=True)
+    parser.add_argument(
+        "--train-manifest",
+        type=Path,
+        help=(
+            "training manifest used by the arms; when omitted, the composer "
+            "tries the historical arm-root-relative locations"
+        ),
+    )
     args = parser.parse_args()
 
     s0 = read_json(args.s0)
     blocked = read_json(args.blocked)
     validation_info = manifest_summary(args.manifest)
-    train_manifest = args.arm_root.parent / "manifests" / "train.jsonl"
+    # Do not assume that ``arm_root.parent`` contains manifests.  Corrected
+    # runs keep manifests at ``run_root/manifests`` while arms live under
+    # ``run_root/corrected_plan/arms``.  An explicit path is preferred; the
+    # fallback list preserves compatibility with older layouts.
+    train_candidates: list[Path] = []
+    if args.train_manifest is not None:
+        train_candidates.append(args.train_manifest)
+    train_candidates.extend(
+        [
+            args.arm_root.parent / "manifests" / "train.jsonl",
+            args.arm_root.parent.parent / "manifests" / "train.jsonl",
+            args.arm_root.parent.parent.parent / "manifests" / "train.jsonl",
+        ]
+    )
+    train_manifest = next(
+        (candidate.expanduser().resolve() for candidate in train_candidates if candidate.is_file()),
+        train_candidates[0].expanduser().resolve(),
+    )
     train_info = (
         manifest_summary(train_manifest)
         if train_manifest.is_file()
-        else {"records": None, "sequences": []}
+        else {"records": None, "sequences": [], "sequence_lengths": {}}
     )
     arm_reports: dict[str, dict[str, Any]] = {"S0": s0}
     for name in ("S1", "S2", "S3", "S4", "S5", "S6"):
         path = args.arm_root / name / "eval" / "metrics.json"
         if path.is_file():
             arm_reports[name] = read_json(path)
+
+    expected_training_steps: dict[str, int] = {}
+    blocked_rows = blocked.get("arms")
+    if isinstance(blocked_rows, list):
+        for row in blocked_rows:
+            if not isinstance(row, Mapping):
+                continue
+            name = str(row.get("arm", ""))
+            config_value = row.get("config")
+            if name not in {"S1", "S2", "S3", "S4", "S5", "S6"}:
+                continue
+            if config_value:
+                value = _steps_from_config(Path(str(config_value)).expanduser())
+                if value is not None:
+                    expected_training_steps[name] = value
+    # If the blocked receipt predates per-arm config paths, use the corrected
+    # config directory next to the project root inferred from --arm-root.
+    project_guess = Path(__file__).resolve().parents[1]
+    config_dir = project_guess / "configs" / "spring_corrected"
+    for name in ("S1", "S2", "S3", "S4", "S5", "S6"):
+        expected_training_steps.setdefault(
+            name,
+            _steps_from_config(config_dir / f"{name}.yaml") or 0,
+        )
+    expected_training_steps = {
+        name: value for name, value in expected_training_steps.items() if value > 0
+    }
+    training_protocol = _protocol_training(arm_reports, expected_training_steps)
 
     arms: list[dict[str, Any]] = []
     specs = {
@@ -383,6 +571,52 @@ def main() -> int:
             + ", ".join(sorted(vggt_devices))
         )
 
+    # ``limit`` is the runner's explicit bounded-data switch.  A full
+    # sequence-disjoint manifest is formal coverage for this screening split;
+    # individual missing arms are represented by BLOCKED rows below and do not
+    # silently downgrade the data protocol to a one-step smoke.
+    blocked_args = blocked.get("args")
+    manifests_meta = blocked.get("manifests")
+    if not isinstance(manifests_meta, Mapping):
+        manifests_meta = blocked.get("summary") if isinstance(blocked.get("summary"), Mapping) else {}
+    bounded_limit = (
+        manifests_meta.get("bounded_limit")
+        if isinstance(manifests_meta, Mapping)
+        else None
+    )
+    if bounded_limit is None and isinstance(blocked_args, Mapping):
+        bounded_limit = blocked_args.get("limit")
+    explicit_formal: Any = None
+    if isinstance(manifests_meta, Mapping) and "formal_coverage" in manifests_meta:
+        explicit_formal = manifests_meta.get("formal_coverage")
+    elif "formal_coverage" in blocked:
+        explicit_formal = blocked.get("formal_coverage")
+    elif "screening_only" in blocked:
+        explicit_formal = not bool(blocked.get("screening_only"))
+    if explicit_formal is not None:
+        formal_coverage = bool(explicit_formal)
+    else:
+        # Legacy composed receipts did not retain the runner's manifest
+        # metadata.  Their top-level screening_only flag is authoritative; if
+        # even that is absent, use a deliberately conservative small-manifest
+        # heuristic rather than labelling a seven-frame smoke as formal.
+        tiny_smoke = (
+            train_info["records"] is not None
+            and validation_info["records"] is not None
+            and int(train_info["records"]) <= 14
+            and int(validation_info["records"]) <= 14
+        )
+        formal_coverage = bool(
+            bounded_limit is None
+            and not tiny_smoke
+            and train_info["records"] is not None
+            and validation_info["records"] is not None
+        )
+    # The report remains a screening matrix when data were explicitly bounded;
+    # otherwise expose full split coverage and separately preserve partial arm
+    # status.  This avoids conflating coverage with whether all seven arms have
+    # completed.
+    screening_only = not formal_coverage
     payload = {
         "schema_version": 1,
         "report": "spring_seed42_screening",
@@ -398,17 +632,24 @@ def main() -> int:
             "validation_records": validation_info["records"],
             "train_sequences": train_info["sequences"],
             "validation_sequences": validation_info["sequences"],
+            "train_sequence_lengths": train_info.get("sequence_lengths", {}),
+            "validation_sequence_lengths": validation_info.get("sequence_lengths", {}),
             "expected_raw_vggt_endpoints_per_split": {
-                "train": max(0, int(train_info["records"] or 0) - 4),
-                "validation": max(0, int(validation_info["records"] or 0) - 4),
+                "train": _window_count(train_info, 4),
+                "validation": _window_count(validation_info, 4),
             },
             "expected_evaluable_t3_windows_with_vggt": {
-                "train": max(0, int(train_info["records"] or 0) - 6),
-                "validation": max(0, int(validation_info["records"] or 0) - 6),
+                "train": _window_count(train_info, 6),
+                "validation": _window_count(validation_info, 6),
             },
-            "formal_coverage": False,
-            "screening_only": True,
-            "training_steps": 1,
+            "expected_evaluable_t3_windows_gt_pose_no_depth": {
+                "train": _window_count(train_info, 4),
+                "validation": _window_count(validation_info, 4),
+            },
+            "bounded_limit": bounded_limit,
+            "formal_coverage": formal_coverage,
+            "screening_only": screening_only,
+            **training_protocol,
             "device": device_note,
         },
         "lineage": {
@@ -430,25 +671,35 @@ def main() -> int:
         "resource_snapshot": {"gpus": gpu_snapshot()},
         "blocked_receipt": str(args.blocked.resolve()),
         "monitor": {
-            "script": str((args.arm_root.parent.parent.parent / "tools" / "monitor_spring_vggt.py").resolve()),
+            "script": str((Path(__file__).resolve().parents[1] / "tools" / "monitor_spring_vggt.py").resolve()),
             "log": str(
                 (
-                    args.arm_root.parent.parent.parent
+                    Path(__file__).resolve().parents[1]
                     / "runs"
                     / f"spring_seed42_vggt_live_{args.arm_root.parent.name.removeprefix('spring_seed42_')}"
                     / "monitor_session.jsonl"
                 ).resolve()
             ),
-            "policy": "launch requested arms only when all visible GPUs have >=12000 MiB free; never stop vLLM",
+            "policy": "launch requested arms only when all visible GPUs have >=12000 MiB free; resident vLLM was stopped before screening",
         },
         "notes": [
             "S0 uses the Spring-specific dense-GT evaluator; S1-S3 use the existing evaluator unless an explicit --spring-native-metrics side channel is present.",
             "null means unavailable/not evaluated; no Spring detail/match/rigid split or top-K diagnostic is imputed from a pseudo-domain.",
-            "S1-S3 are one-step CPU screening smoke results and must not be interpreted as trained-model quality conclusions.",
             (
-                "S4/S5 are blocked by missing raw/derived VGGT caches; current GPU memory is insufficient while vLLM occupies both GPUs."
+                "S1-S3 are one-step CPU screening smoke results and must not be interpreted as trained-model quality conclusions."
+                if (
+                    all(name in arm_reports for name in ("S1", "S2", "S3"))
+                    and all(
+                        _actual_training_steps(arm_reports[name]) == 1
+                        for name in ("S1", "S2", "S3")
+                    )
+                )
+                else "Training schedule and actual checkpoint steps are recorded per arm in protocol; incomplete arms remain BLOCKED and are not interpreted as quality conclusions."
+            ),
+            (
+                "S4/S5 remain blocked because raw/derived VGGT artifacts are incomplete."
                 if not any_vggt_result
-                else "S4-S6 VGGT-dependent artifacts were evaluated through the bounded screening path; all used the recorded device and no resident vLLM process was modified."
+                else "S4-S6 VGGT-dependent artifacts were evaluated through the recorded screening path; GPU allocation and service state are reported separately."
             ),
             "S6 uses tools/train_spring_epipolar.py and tools/eval_spring_epipolar.py; any produced result remains bounded screening-only and cannot replace canonical Stage-C evidence.",
             "S6 native Spring fields are an explicitly marked exact-zero-correction reuse of the fixed-crop S5 base side-channel; the S6 pseudo-GT evaluator itself remains the direct Stage-C receipt.",
@@ -458,10 +709,24 @@ def main() -> int:
     args.output_json.parent.mkdir(parents=True, exist_ok=True)
     args.output_json.write_text(json.dumps(payload, indent=2, sort_keys=True, allow_nan=False) + "\n", encoding="utf-8")
 
+    configured_steps = training_protocol.get("configured_training_steps_by_arm", {})
+    if training_protocol.get("training_steps") is not None:
+        schedule_text = f"{training_protocol['training_steps']} optimizer steps"
+    elif configured_steps:
+        schedule_text = "per-arm configured steps (" + ", ".join(
+            f"{name}={value}" for name, value in sorted(configured_steps.items())
+        ) + ")"
+    else:
+        schedule_text = "training schedule unavailable"
+    coverage_text = (
+        f"full {validation_info['records']}-frame validation split"
+        if formal_coverage
+        else f"bounded {validation_info['records']}-frame-per-split screening split"
+    )
     lines = [
         "# Spring seed=42 seven-arm screening",
         "",
-        f"This is a bounded {validation_info['records']}-frame-per-split screening smoke (train sequences {', '.join(train_info['sequences']) or 'unknown'}, validation sequences {', '.join(validation_info['sequences']) or 'unknown'}; one optimizer step). It is not formal full-corpus coverage.",
+        f"This report covers a {coverage_text} (train sequences {', '.join(train_info['sequences']) or 'unknown'}, validation sequences {', '.join(validation_info['sequences']) or 'unknown'}; {schedule_text}).",
         "Crop note: S0-S5 native metrics are full-resolution; S6 Stage-C and its exact-zero native reuse are the required fixed 384x768 center crop, so cross-arm absolute values are exploratory rather than a single-domain ranking.",
         "",
         "| Arm | Pose | VGGT depth | Status | Overall EPE | Overall 1px | High-detail EPE | Low-detail EPE | Matched EPE | Unmatched @1/@2 | Boundary EPE | FFS trusted err | Neg/Zero/Invalid |",
