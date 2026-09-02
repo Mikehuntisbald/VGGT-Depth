@@ -305,6 +305,15 @@ def test_calibrated_pose_quality_is_continuous_and_rejected_pose_is_zero() -> No
         thresholds=thresholds,
         cache_path=Path("rejected.pt"),
     ) == 0.0
+    # GT-pose overrides are exact even when the producer VGGT record was
+    # rejected and consequently has unavailable photometric/depth residuals.
+    assert _continuous_pose_quality_score(
+        {"quality_score_override": "authoritative_gt_pose"},
+        pose_valid=True,
+        derived_contract="calibrated_stereo_v2",
+        thresholds=thresholds,
+        cache_path=Path("gt_override.pt"),
+    ) == 1.0
 
 
 def test_stage_a_v31_forward_is_finite_with_no_temporal_candidates() -> None:

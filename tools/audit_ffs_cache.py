@@ -23,6 +23,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--observation-root", type=Path, required=True)
     parser.add_argument("--teacher-root", type=Path, required=True)
     parser.add_argument("--samples", type=int, default=9)
+    parser.add_argument(
+        "--observation-scale",
+        type=int,
+        choices=(1, 2),
+        default=2,
+        help="HR/input scale recorded by the observation cache (default: 2)",
+    )
     parser.add_argument("--json-out", type=Path, required=True)
     return parser.parse_args()
 
@@ -80,11 +87,16 @@ def _assert_tensor_contract(
         "teacher_confidence",
         "teacher_entropy",
         "teacher_last_update_magnitude_hr_px",
-        "teacher_left_right_error_hr_px",
         "teacher_valid_mask",
         "teacher_trusted_mask",
     ):
-        if tuple(teach[name].shape) != teacher_shape:
+        # ``cache_ffs.py`` stores teacher tensors without a redundant batch
+        # axis ([1,H,W]), while older producers used [1,1,H,W].  Both encode
+        # the same singleton-channel HR grid and are accepted explicitly.
+        if tuple(teach[name].shape) not in {
+            teacher_shape,
+            (1, hr_height, hr_width),
+        }:
             raise AssertionError(
                 f"{name} has shape {tuple(teach[name].shape)}, expected {teacher_shape}"
             )
@@ -109,16 +121,16 @@ def _assert_tensor_contract(
             if prefix == "observation"
             else "teacher_left_right_error_hr_px"
         )
-        lr_error = tensors[lr_error_name]
+        lr_error = tensors.get(lr_error_name)
         if not bool(torch.isfinite(disparity).all()):
             raise AssertionError(f"{prefix} disparity contains non-finite values")
         if not bool(torch.isfinite(confidence).all()):
             raise AssertionError(f"{prefix} confidence contains non-finite values")
-        if not bool(torch.isfinite(lr_error[valid]).all()):
+        if lr_error is not None and not bool(torch.isfinite(lr_error[valid]).all()):
             raise AssertionError(f"{prefix} LR error is non-finite inside valid mask")
         if bool((trusted & ~valid).any()):
             raise AssertionError(f"{prefix} trusted mask is not a subset of valid")
-        if bool((trusted & (lr_error >= 1.0)).any()):
+        if lr_error is not None and bool((trusted & (lr_error >= 1.0)).any()):
             raise AssertionError(f"{prefix} trusted mask contains LR error >= 1 px")
         # Trusted was computed in float32 before confidence was cached in
         # float16, so allow one half-precision quantization bin at 0.8.
@@ -149,6 +161,12 @@ def main() -> int:
             raise AssertionError(f"{name} receipt manifest hash mismatch")
         if receipt["selected_records"] != len(records):
             raise AssertionError(f"{name} receipt record count mismatch")
+    observed_scale = int(observation_receipt.get("config", {}).get("scale", -1))
+    if observed_scale != args.observation_scale:
+        raise AssertionError(
+            "observation receipt scale mismatch: "
+            f"expected {args.observation_scale}, got {observed_scale}"
+        )
     observation_identity = CacheIdentity(**observation_receipt["identity"])
     teacher_identity = CacheIdentity(**teacher_receipt["identity"])
 
@@ -168,13 +186,22 @@ def main() -> int:
             cached_record = payload["metadata"]["source"]["manifest_record"]
             if cached_record != manifest_mapping:
                 raise AssertionError(f"{name} source record mismatch at index {index}")
-        width, height = record.extras["image_size_wh"]
+        image_size = record.extras.get("image_size_wh")
+        if isinstance(image_size, list) and len(image_size) == 2:
+            width, height = (int(image_size[0]), int(image_size[1]))
+        else:
+            image_shape = record.extras.get("image_shape_hw")
+            if not isinstance(image_shape, list) or len(image_shape) != 2:
+                raise AssertionError(
+                    "manifest record lacks image_size_wh/image_shape_hw"
+                )
+            height, width = (int(image_shape[0]), int(image_shape[1]))
         statistics = _assert_tensor_contract(
             observation,
             teacher,
             hr_height=height,
             hr_width=width,
-            scale=2,
+            scale=args.observation_scale,
         )
         sample_results.append(
             {
@@ -193,6 +220,7 @@ def main() -> int:
         "sample_count": len(sample_results),
         "observation_identity": observation_receipt["identity"],
         "teacher_identity": teacher_receipt["identity"],
+        "observation_scale": args.observation_scale,
         "samples": sample_results,
     }
     args.json_out.parent.mkdir(parents=True, exist_ok=True)

@@ -37,6 +37,12 @@ RECTIFIED_PIXEL_CONTRACT = "audited_same_row_rectified_pixels_v1"
 RECTIFIED_EXTRINSICS_CONVENTION = (
     "right-camera-from-left-camera; X_right=T_right_left@X_left"
 )
+# Spring stores an already rectified virtual stereo pair and historically did
+# not serialize the right projection/metadata fields in its manifest.  The
+# native derivation below is deliberately opt-in at the sidecar builder and
+# remains distinguishable from a user-supplied calibration metadata chain.
+SPRING_NATIVE_DERIVATION = "spring_rectified_native_v1"
+SPRING_NATIVE_METADATA_CONTRACT = "spring_rectified_camera_info_v1"
 
 _ROW_FIELDS = {
     "schema_version",
@@ -131,6 +137,56 @@ def _record_sha256(payload: Mapping[str, Any]) -> str:
     return canonical_json_sha256(unsigned)
 
 
+def _spring_native_metadata_payload(record: ManifestRecord) -> dict[str, Any]:
+    """Build deterministic camera-info metadata for Spring's fixed rig.
+
+    The Spring images are stored in a rectified virtual-camera coordinate
+    system.  Its right camera has the same intrinsics and a translation of
+    ``-baseline`` along X.  Keeping this metadata in a separate file lets the
+    normal sidecar loader hash and validate it without mutating the source
+    manifest (and therefore without invalidating raw VGGT cache records).
+    """
+
+    k_left = [[float(value) for value in row] for row in record.K]
+    fx = float(k_left[0][0])
+    baseline = float(record.baseline_m)
+    if not math.isfinite(fx) or fx <= 0.0 or not math.isfinite(baseline) or baseline <= 0.0:
+        raise CacheMismatchError("Spring native calibration requires positive finite fx/baseline")
+    k_right = [row[:] for row in k_left]
+    p_left = [row + [0.0] for row in k_left]
+    p_right = [row[:] for row in p_left]
+    p_right[0][3] = -fx * baseline
+    identity_rotation = [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0]
+    return {
+        "schema_version": 1,
+        "contract": SPRING_NATIVE_METADATA_CONTRACT,
+        "dataset": "Spring",
+        "rectified": True,
+        "left_frame_id": "spring_left",
+        "right_frame_id": "spring_right",
+        "stereo_baseline_m": baseline,
+        "left_rect_camera_info": {
+            "r": identity_rotation,
+            "k": [value for row in k_left for value in row],
+            "p": [value for row in p_left for value in row],
+        },
+        "right_rect_camera_info": {
+            "r": identity_rotation,
+            "k": [value for row in k_right for value in row],
+            "p": [value for row in p_right for value in row],
+        },
+    }
+
+
+def _spring_native_metadata_text(record: ManifestRecord) -> str:
+    return yaml.safe_dump(
+        _spring_native_metadata_payload(record),
+        sort_keys=True,
+        default_flow_style=False,
+        allow_unicode=False,
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class RectifiedCalibrationRecord:
     """One manifest-bound rectified stereo calibration row."""
@@ -174,6 +230,10 @@ class RectifiedCalibrationIndex:
     pixel_audit_path: Path
     pixel_audit_sha256: str
     records: tuple[RectifiedCalibrationRecord, ...]
+    # True only for the explicit Spring-native compatibility path.  Keeping
+    # this bit on the validated index lets training/evaluation receipts state
+    # that no augmented source manifest was used.
+    spring_native: bool = False
 
     def record_for_manifest_index(self, index: int) -> RectifiedCalibrationRecord:
         """Return the calibration at an exact original manifest index."""
@@ -297,17 +357,37 @@ def _rectified_calibration_payload(
     source_manifest_index: int,
     pixel_audit_path: Path,
     pixel_audit_sha256: str,
+    native_metadata_path: Path | None = None,
+    native_metadata_sha256: str | None = None,
 ) -> dict[str, Any]:
     if record.rectified is not True:
         raise CacheMismatchError("rectified stereo calibration requires rectified=true")
     extras = record.extras
-    for name in ("K_right", "P_left", "P_right", "metadata_path", "metadata_sha256"):
-        if name not in extras:
-            raise CacheMismatchError(f"manifest calibration field {name!r} is missing")
+    required_names = ("K_right", "P_left", "P_right", "metadata_path", "metadata_sha256")
+    missing_names = tuple(name for name in required_names if name not in extras)
+    native_spring = bool(
+        missing_names
+        and str(extras.get("dataset", "")).strip().lower() == "spring"
+        and native_metadata_path is not None
+        and native_metadata_sha256 is not None
+    )
+    if missing_names and not native_spring:
+        raise CacheMismatchError(
+            f"manifest calibration field {missing_names[0]!r} is missing"
+        )
     k_left = _plain_matrix(record.K, name="K_left", rows=3, columns=3)
-    k_right = _plain_matrix(extras["K_right"], name="K_right", rows=3, columns=3)
-    p_left = _plain_matrix(extras["P_left"], name="P_left", rows=3, columns=4)
-    p_right = _plain_matrix(extras["P_right"], name="P_right", rows=3, columns=4)
+    if native_spring:
+        # Spring's stored pair is already rectified and has a fixed virtual
+        # rig.  Derive the right projection from the manifest-owned physical
+        # baseline, while keeping the original manifest row/hash untouched.
+        k_right = k_left.copy()
+        p_left = np.concatenate((k_left, np.zeros((3, 1), dtype=np.float64)), axis=1)
+        p_right = p_left.copy()
+        p_right[0, 3] = -float(k_left[0, 0]) * float(record.baseline_m)
+    else:
+        k_right = _plain_matrix(extras["K_right"], name="K_right", rows=3, columns=3)
+        p_left = _plain_matrix(extras["P_left"], name="P_left", rows=3, columns=4)
+        p_right = _plain_matrix(extras["P_right"], name="P_right", rows=3, columns=4)
     if not np.allclose(p_left[:, :3], k_left, atol=1e-9, rtol=0.0):
         raise CacheMismatchError("P_left[:,:3] does not equal K_left")
     if not np.allclose(p_right[:, :3], k_right, atol=1e-9, rtol=0.0):
@@ -325,11 +405,18 @@ def _rectified_calibration_payload(
             "P_right translation is not the required rectified [-baseline,0,0]"
         )
 
-    metadata_path = Path(str(extras["metadata_path"])).expanduser().resolve()
+    metadata_path = (
+        native_metadata_path.expanduser().resolve()
+        if native_spring
+        else Path(str(extras["metadata_path"])).expanduser().resolve()
+    )
     if not metadata_path.is_file():
         raise FileNotFoundError(f"stereo metadata is missing: {metadata_path}")
     metadata_sha256 = sha256_file(metadata_path)
-    if metadata_sha256 != extras["metadata_sha256"]:
+    expected_metadata_sha256 = (
+        native_metadata_sha256 if native_spring else extras["metadata_sha256"]
+    )
+    if metadata_sha256 != expected_metadata_sha256:
         raise CacheMismatchError(
             f"stereo metadata SHA-256 mismatch for {metadata_path}"
         )
@@ -417,7 +504,12 @@ def _rectified_calibration_payload(
         "extrinsics_convention": RECTIFIED_EXTRINSICS_CONVENTION,
         "T_right_rectified_from_left_rectified_m": transform_rectified.tolist(),
         "derivation": {
-            "method": "rectified_projection_factorization_v1",
+            "method": (
+                SPRING_NATIVE_DERIVATION
+                if native_spring
+                else "rectified_projection_factorization_v1"
+            ),
+            **({"dataset": "Spring", "native_spring": True} if native_spring else {}),
             "P_left": p_left.tolist(),
             "P_right": p_right.tolist(),
             "baseline_m": baseline,
@@ -459,8 +551,17 @@ def build_rectified_calibration_sidecar(
     output_path: str | Path,
     *,
     receipt_path: str | Path | None = None,
+    spring_native: bool = False,
+    spring_metadata_root: str | Path | None = None,
 ) -> dict[str, Any]:
-    """Build an immutable per-row calibration sidecar and receipt."""
+    """Build an immutable per-row calibration sidecar and receipt.
+
+    ``spring_native`` is an explicit compatibility path for historical Spring
+    manifests that omit right-camera projection and YAML metadata fields.  It
+    derives those fields from Spring's manifest-owned ``K`` and physical
+    baseline, writes deterministic metadata beside the sidecar, and leaves the
+    source manifest (and any raw VGGT cache bound to it) unchanged.
+    """
 
     manifest = Path(manifest_path).expanduser().resolve()
     audit_path = Path(pixel_audit_path).expanduser().resolve()
@@ -488,6 +589,41 @@ def build_rectified_calibration_sidecar(
     records = list(iter_manifest(manifest))
     if audit_manifest.get("record_count") != len(records):
         raise CacheMismatchError("pixel audit manifest record count mismatch")
+
+    native_metadata_by_identity: dict[tuple[str, int], tuple[Path, str]] = {}
+    if spring_native:
+        metadata_root = (
+            output.parent / f"{output.stem}.spring_metadata"
+            if spring_metadata_root is None
+            else Path(spring_metadata_root).expanduser().resolve()
+        )
+        metadata_root.mkdir(parents=True, exist_ok=True)
+        for record in records:
+            if str(record.extras.get("dataset", "")).strip().lower() != "spring":
+                raise CacheMismatchError(
+                    "spring_native calibration requires dataset=Spring records"
+                )
+            present = [name for name in ("K_right", "P_left", "P_right", "metadata_path", "metadata_sha256") if name in record.extras]
+            if present:
+                raise CacheMismatchError(
+                    "spring_native calibration requires historical Spring rows "
+                    "without explicit right-camera metadata fields"
+                )
+            key = canonical_json_sha256(
+                {
+                    "K": [list(row) for row in record.K],
+                    "baseline_m": float(record.baseline_m),
+                }
+            )
+            metadata_path = metadata_root / f"{key}.yaml"
+            _atomic_immutable_text(
+                metadata_path,
+                _spring_native_metadata_text(record),
+            )
+            native_metadata_by_identity[(record.sequence_id, record.frame_id)] = (
+                metadata_path,
+                sha256_file(metadata_path),
+            )
     rows = [
         _rectified_calibration_payload(
             record,
@@ -496,6 +632,16 @@ def build_rectified_calibration_sidecar(
             source_manifest_index=index,
             pixel_audit_path=audit_path,
             pixel_audit_sha256=audit_sha256,
+            native_metadata_path=(
+                native_metadata_by_identity[(record.sequence_id, record.frame_id)][0]
+                if spring_native
+                else None
+            ),
+            native_metadata_sha256=(
+                native_metadata_by_identity[(record.sequence_id, record.frame_id)][1]
+                if spring_native
+                else None
+            ),
         )
         for index, record in enumerate(records)
     ]
@@ -537,6 +683,21 @@ def build_rectified_calibration_sidecar(
             "unique_calibrations": len(unique_calibrations),
         },
         "extrinsics_convention": RECTIFIED_EXTRINSICS_CONVENTION,
+        "derivation": (
+            {
+                "method": SPRING_NATIVE_DERIVATION,
+                "metadata_root": str(
+                    (
+                        output.parent / f"{output.stem}.spring_metadata"
+                        if spring_metadata_root is None
+                        else Path(spring_metadata_root).expanduser().resolve()
+                    )
+                ),
+                "source_manifest_unchanged": True,
+            }
+            if spring_native
+            else {"method": "manifest_explicit_projection_factorization_v1"}
+        ),
     }
     receipt_text = json.dumps(
         receipt_payload, indent=2, sort_keys=True, allow_nan=False
@@ -583,10 +744,16 @@ def _parse_sidecar_record(payload: Mapping[str, Any]) -> RectifiedCalibrationRec
         name="T_right_rectified_from_left_rectified_m",
     )
     derivation = payload.get("derivation")
-    if not isinstance(derivation, Mapping) or derivation.get("method") != (
-        "rectified_projection_factorization_v1"
-    ):
+    if not isinstance(derivation, Mapping) or derivation.get("method") not in {
+        "rectified_projection_factorization_v1",
+        SPRING_NATIVE_DERIVATION,
+    }:
         raise CacheMismatchError("calibration sidecar derivation is malformed")
+    if derivation.get("method") == SPRING_NATIVE_DERIVATION and (
+        derivation.get("dataset") != "Spring"
+        or derivation.get("native_spring") is not True
+    ):
+        raise CacheMismatchError("Spring native calibration derivation is malformed")
     baseline = derivation.get("baseline_m")
     if isinstance(baseline, bool) or not isinstance(baseline, (int, float)) or not math.isfinite(baseline) or baseline <= 0:
         raise CacheMismatchError("calibration sidecar baseline is malformed")
@@ -677,6 +844,16 @@ def load_rectified_calibration_sidecar(
     if not audit_path.is_file() or sha256_file(audit_path) != audit_sha256:
         raise CacheMismatchError("calibration pixel audit is missing or changed")
 
+    receipt_derivation = receipt_payload.get("derivation")
+    spring_native_receipt = bool(
+        isinstance(receipt_derivation, Mapping)
+        and receipt_derivation.get("method") == SPRING_NATIVE_DERIVATION
+    )
+    if spring_native_receipt and (
+        receipt_derivation.get("source_manifest_unchanged") is not True
+    ):
+        raise CacheMismatchError("Spring native calibration receipt marker is malformed")
+
     manifest_records = list(iter_manifest(manifest_path))
     rows: list[Mapping[str, Any]] = []
     for line_number, text in enumerate(sidecar.read_text(encoding="utf-8").splitlines(), start=1):
@@ -714,16 +891,36 @@ def load_rectified_calibration_sidecar(
         if record.source_record_sha256 != canonical_json_sha256(manifest_record.to_dict()):
             raise CacheMismatchError(f"calibration row source hash mismatch at index {index}")
         metadata_path = Path(record.metadata_path).expanduser().resolve()
-        manifest_metadata_path = Path(
-            str(manifest_record.extras.get("metadata_path", ""))
-        ).expanduser().resolve()
-        manifest_metadata_sha256 = manifest_record.extras.get("metadata_sha256")
-        if metadata_path != manifest_metadata_path or (
-            record.metadata_sha256 != manifest_metadata_sha256
-        ):
+        derivation = payload.get("derivation")
+        native_spring = (
+            isinstance(derivation, Mapping)
+            and derivation.get("method") == SPRING_NATIVE_DERIVATION
+        )
+        if native_spring != spring_native_receipt:
             raise CacheMismatchError(
-                f"calibration row metadata binding mismatch at index {index}"
+                f"calibration row {index} native/explicit derivation disagrees with receipt"
             )
+        if native_spring:
+            # Native Spring metadata is intentionally external to the legacy
+            # manifest row.  The sidecar row hash, receipt hash and live
+            # metadata SHA still bind it immutably; require the explicit
+            # dataset marker so this escape hatch cannot be used for a generic
+            # or partially calibrated manifest.
+            if str(manifest_record.extras.get("dataset", "")).strip().lower() != "spring":
+                raise CacheMismatchError(
+                    f"Spring native calibration row is bound to a non-Spring manifest at index {index}"
+                )
+        else:
+            manifest_metadata_path = Path(
+                str(manifest_record.extras.get("metadata_path", ""))
+            ).expanduser().resolve()
+            manifest_metadata_sha256 = manifest_record.extras.get("metadata_sha256")
+            if metadata_path != manifest_metadata_path or (
+                record.metadata_sha256 != manifest_metadata_sha256
+            ):
+                raise CacheMismatchError(
+                    f"calibration row metadata binding mismatch at index {index}"
+                )
         if not metadata_path.is_file():
             raise CacheMismatchError(
                 f"calibration metadata is missing at index {index}: {metadata_path}"
@@ -757,6 +954,7 @@ def load_rectified_calibration_sidecar(
         pixel_audit_path=audit_path,
         pixel_audit_sha256=audit_sha256,
         records=tuple(parsed),
+        spring_native=spring_native_receipt,
     )
 
 
@@ -778,6 +976,8 @@ __all__ = [
     "RECTIFIED_CALIBRATION_SIDECAR_SCHEMA_VERSION",
     "RECTIFIED_EXTRINSICS_CONVENTION",
     "RECTIFIED_PIXEL_CONTRACT",
+    "SPRING_NATIVE_DERIVATION",
+    "SPRING_NATIVE_METADATA_CONTRACT",
     "RectifiedCalibrationIndex",
     "RectifiedCalibrationRecord",
     "build_rectified_calibration_sidecar",

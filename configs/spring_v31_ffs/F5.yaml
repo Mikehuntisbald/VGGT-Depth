@@ -1,0 +1,7 @@
+experiment: spring_v31_ffs_F5_v31_depth_gt_pose
+seed: 42
+arm: F5
+defaults_from: configs/spring_v31_ffs/F4.yaml
+
+model:
+  use_vggt_depth: true

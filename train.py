@@ -3801,6 +3801,7 @@ def run(args: argparse.Namespace) -> int:
             "receipt_sha256": calibration_index.receipt_sha256,
             "source_manifest_sha256": calibration_index.source_manifest_sha256,
             "pixel_audit_sha256": calibration_index.pixel_audit_sha256,
+            "spring_native": bool(calibration_index.spring_native),
         }
     )
     OmegaConf.update(

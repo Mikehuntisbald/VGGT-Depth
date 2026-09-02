@@ -36,6 +36,8 @@ from .spring import (
 from .stereo_calibration import (
     RectifiedCalibrationIndex,
     RectifiedCalibrationRecord,
+    SPRING_NATIVE_DERIVATION,
+    SPRING_NATIVE_METADATA_CONTRACT,
     load_rectified_calibration_sidecar,
 )
 from .collate import collate_temporal_training_samples, collate_training_samples
@@ -62,6 +64,8 @@ __all__ = [
     "ManifestValidationError",
     "RectifiedCalibrationIndex",
     "RectifiedCalibrationRecord",
+    "SPRING_NATIVE_DERIVATION",
+    "SPRING_NATIVE_METADATA_CONTRACT",
     "FFSTrainingSample",
     "TemporalTrainingSample",
     "build_causal_windows",

@@ -112,6 +112,14 @@ def temporal_conditioning_transforms(
                 identity,
             )
             relative = current_h @ torch.linalg.inv(_homogeneous(history))
+            # Matrix inversion in FP32 can leave a few-epsilon residue in the
+            # homogeneous bottom row (especially for large world
+            # translations).  The mathematical camera transform is rigid;
+            # canonicalize that row before the strict conditioner validation
+            # rather than making otherwise valid GT/VGGT poses fail
+            # nondeterministically at ~1e-6.
+            relative = relative.clone()
+            relative[:, 3] = relative.new_tensor((0.0, 0.0, 0.0, 1.0))
             outputs.append(
                 torch.where(
                     slot_valid.reshape(batch_size, 1, 1),

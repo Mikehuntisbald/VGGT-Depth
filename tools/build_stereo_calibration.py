@@ -26,6 +26,19 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--pixel-audit", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--receipt", type=Path)
+    parser.add_argument(
+        "--spring-native",
+        action="store_true",
+        help=(
+            "derive Spring's fixed rectified virtual-camera calibration from "
+            "K/baseline without rewriting the source manifest"
+        ),
+    )
+    parser.add_argument(
+        "--spring-metadata-root",
+        type=Path,
+        help="optional directory for synthetic Spring camera-info metadata",
+    )
     return parser.parse_args()
 
 
@@ -36,6 +49,8 @@ def main() -> int:
         args.pixel_audit,
         args.output,
         receipt_path=args.receipt,
+        spring_native=args.spring_native,
+        spring_metadata_root=args.spring_metadata_root,
     )
     print(
         json.dumps(

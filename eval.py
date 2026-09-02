@@ -45,6 +45,7 @@ from data.collate import (  # noqa: E402
     collate_training_samples,
 )
 from data.endpoint_selection import (  # noqa: E402
+    ENDPOINT_SELECTION_KIND,
     EndpointSelection,
     load_endpoint_index,
     resolve_endpoint_dataset_indices,
@@ -76,6 +77,7 @@ from evaluation import (  # noqa: E402
 from losses import sample_hr_at_lr_centers  # noqa: E402
 from models.ffs_omega_tsr import ModelOutput, count_trainable_parameters  # noqa: E402
 from metrics.disparity import MetricResult  # noqa: E402
+from metrics.boundary import disparity_boundary_mask  # noqa: E402
 from metrics.pointcloud import export_colored_point_cloud_ply  # noqa: E402
 from metrics.temporal import (  # noqa: E402
     temporal_disparity_error,
@@ -155,6 +157,11 @@ EVALUATION_DEFAULTS: dict[str, Any] = {
 
 FORMAL_STAGE_A_TRAINING_STEPS = 5_000
 FORMAL_STAGE_B_TRAINING_STEPS = 15_000
+# The Spring v3.1+FFS common-domain protocol deliberately fixes the declared
+# endpoint population.  Keep this value in the evaluator (rather than relying
+# on an arbitrary ``--limit``) so a complete endpoint-list run is not
+# mislabeled as a limited smoke evaluation.
+SPRING_COMMON_ENDPOINT_COUNT = 1_302
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -1622,12 +1629,16 @@ def _spring_temporal_split_metrics(
         result[f"{name}_count"] = count
         if count == 0:
             result[name] = None
+            result[f"{name}_numerator"] = None
             continue
         selected = error[domain].float()
         if not bool(torch.isfinite(selected).all().item()):
             result[name] = None
+            result[f"{name}_numerator"] = None
             continue
-        result[name] = float(selected.mean().item())
+        numerator = float(selected.sum(dtype=torch.float64).item())
+        result[name] = numerator / count
+        result[f"{name}_numerator"] = numerator
     result["temporal_residual_valid_count"] = int(usable.sum().item())
     return result
 
@@ -1862,9 +1873,10 @@ def _spring_json_safe(value: Any) -> Any:
 def _aggregate_spring_temporal_rows(
     rows: Sequence[Mapping[str, Any]],
 ) -> dict[str, Any]:
-    """Aggregate rigid/non-rigid residuals by their explicit pixel counts."""
+    """Aggregate rigid/non-rigid residuals by global pixel terms."""
 
     result: dict[str, Any] = {}
+    fallback_used = False
     for name in (
         "rigid_temporal_residual_error",
         "non_rigid_temporal_residual_error",
@@ -1874,13 +1886,27 @@ def _aggregate_spring_temporal_rows(
         for row in rows:
             value = row.get(name)
             count = row.get(f"{name}_count", 0)
-            if not isinstance(value, (int, float)) or not math.isfinite(float(value)):
-                continue
             if not isinstance(count, int) or count <= 0:
                 continue
-            weighted_sum += float(value) * count
+            numerator = row.get(f"{name}_numerator")
+            if (
+                isinstance(numerator, (int, float))
+                and math.isfinite(float(numerator))
+            ):
+                weighted_sum += float(numerator)
+            elif (
+                isinstance(value, (int, float))
+                and math.isfinite(float(value))
+            ):
+                # Legacy native rows did not retain a numerator.  Infer it
+                # from the scalar/count pair and expose the fallback below.
+                weighted_sum += float(value) * count
+                fallback_used = True
+            else:
+                continue
             count_sum += count
         result[name] = weighted_sum / count_sum if count_sum else None
+        result[f"{name}_numerator"] = weighted_sum if count_sum else None
         result[f"{name}_count"] = count_sum
     result["temporal_residual_records"] = len(rows)
     result["temporal_residual_valid_count"] = int(
@@ -1891,6 +1917,7 @@ def _aggregate_spring_temporal_rows(
         if any(row.get("temporal_residual_status") == "AVAILABLE" for row in rows)
         else "UNAVAILABLE"
     )
+    result["aggregation_fallback_used"] = fallback_used
     return result
 
 
@@ -3597,11 +3624,60 @@ def _validate_formal_temporal_coverage(
     if (
         selection.get("selected_windows") != derived_count
         or counts.get("selected") != derived_count
-        or inputs.get("vggt_available_windows") != derived_count
     ):
+        raise ValueError("derived receipt does not cover every formal endpoint")
+
+    # A Spring GT-pose override is a complete derived view whose depth tensors
+    # are copied from a canonical VGGT-derived cache.  Its own receipt binds
+    # the source receipt/hash rather than duplicating the raw VGGT fields.
+    # Follow that explicit lineage instead of requiring unavailable VGGT
+    # fields on the override itself.  Direct VGGT-derived receipts retain the
+    # original path below.
+    coverage_inputs: Mapping[str, Any] = inputs
+    source_receipt_path: Path | None = None
+    source_receipt_sha256: str | None = None
+    source_receipt_ref = inputs.get("source_derived_receipt")
+    if source_receipt_ref is not None:
+        if not isinstance(source_receipt_ref, str):
+            raise ValueError("derived source receipt path is malformed")
+        source_receipt_path = Path(source_receipt_ref).expanduser().resolve()
+        if not source_receipt_path.is_file():
+            raise ValueError("derived source receipt is missing")
+        source_receipt_sha256 = sha256_file(source_receipt_path)
+        if source_receipt_sha256 != inputs.get("source_derived_receipt_sha256"):
+            raise ValueError("derived/source receipt SHA-256 mismatch")
+        try:
+            source_receipt = json.loads(
+                source_receipt_path.read_text(encoding="utf-8")
+            )
+        except (OSError, json.JSONDecodeError) as exc:
+            raise ValueError("cannot read source derived receipt") from exc
+        if not isinstance(source_receipt, dict):
+            raise ValueError("source derived receipt is not a mapping")
+        source_selection = source_receipt.get("selection")
+        source_counts = source_receipt.get("counts")
+        source_inputs = source_receipt.get("inputs")
+        if not all(
+            isinstance(value, dict)
+            for value in (source_selection, source_counts, source_inputs)
+        ):
+            raise ValueError("source derived receipt coverage fields are missing")
+        if (
+            source_selection.get("start_window") != 0
+            or source_selection.get("limit") is not None
+            or source_selection.get("selected_windows") != derived_count
+            or source_counts.get("selected") != derived_count
+            or source_inputs.get("vggt_available_windows") != derived_count
+        ):
+            raise ValueError("source derived receipt does not cover every formal VGGT endpoint")
+        if source_receipt.get("manifest_sha256") != receipt.get("manifest_sha256"):
+            raise ValueError("derived/source receipt manifest SHA-256 differs")
+        coverage_inputs = source_inputs
+
+    if coverage_inputs.get("vggt_available_windows") != derived_count:
         raise ValueError("derived receipt does not cover every formal VGGT endpoint")
-    raw_manifest_path_value = inputs.get("vggt_cache_manifest")
-    raw_manifest_sha256 = inputs.get("vggt_cache_manifest_sha256")
+    raw_manifest_path_value = coverage_inputs.get("vggt_cache_manifest")
+    raw_manifest_sha256 = coverage_inputs.get("vggt_cache_manifest_sha256")
     if not isinstance(raw_manifest_path_value, str) or not isinstance(
         raw_manifest_sha256, str
     ):
@@ -3635,6 +3711,14 @@ def _validate_formal_temporal_coverage(
         ),
         "derived_cache_manifest_sha256": sha256_file(
             dataset.derived_cache_root / "cache_manifest.jsonl"
+        ),
+        **(
+            {
+                "source_derived_run_receipt_path": str(source_receipt_path),
+                "source_derived_run_receipt_sha256": source_receipt_sha256,
+            }
+            if source_receipt_path is not None
+            else {}
         ),
         "raw_vggt_cache_manifest_path": str(raw_manifest_path),
         "raw_vggt_cache_manifest_sha256": raw_manifest_sha256,
@@ -3705,6 +3789,81 @@ def checkpoint_training_completion(
     }
 
 
+def common_domain_selection_status(
+    endpoint_selection: EndpointSelection | None,
+    *,
+    start_index: int,
+    sample_count: int,
+    expected_endpoint_count: int | None = SPRING_COMMON_ENDPOINT_COUNT,
+) -> dict[str, Any]:
+    """Classify whether an endpoint-list run covers its declared domain.
+
+    ``full_selection`` historically meant *the entire evaluator dataset* and
+    therefore remained false whenever a manifest-bound endpoint list was
+    supplied.  Spring's common-domain protocol intentionally evaluates a
+    declared subset (the 1,302 endpoint file), so that old predicate would
+    incorrectly downgrade a complete common-domain report to ``LIMITED``.
+    This helper keeps the original meaning while exposing an independent,
+    fail-closed common-domain predicate.
+
+    Completion requires the canonical Spring endpoint-list kind, the expected
+    cardinality (when supplied), and evaluation of every declared entry from
+    offset zero.  A partial ``--limit`` or ``--start`` is never promoted.
+    """
+
+    if isinstance(start_index, bool) or not isinstance(start_index, int):
+        raise ValueError("start_index must be an integer")
+    if isinstance(sample_count, bool) or not isinstance(sample_count, int):
+        raise ValueError("sample_count must be an integer")
+    if start_index < 0 or sample_count < 0:
+        raise ValueError("start_index and sample_count must be non-negative")
+    expected: int | None
+    if expected_endpoint_count is None:
+        expected = None
+    else:
+        if (
+            isinstance(expected_endpoint_count, bool)
+            or not isinstance(expected_endpoint_count, int)
+            or expected_endpoint_count <= 0
+        ):
+            raise ValueError("expected_endpoint_count must be positive or None")
+        expected = int(expected_endpoint_count)
+    declared_count = None if endpoint_selection is None else endpoint_selection.count
+    kind_matches = bool(
+        endpoint_selection is not None
+        and endpoint_selection.kind == ENDPOINT_SELECTION_KIND
+    )
+    cardinality_matches = bool(
+        endpoint_selection is not None
+        and (expected is None or endpoint_selection.count == expected)
+    )
+    complete = bool(
+        endpoint_selection is not None
+        and kind_matches
+        and cardinality_matches
+        and start_index == 0
+        and sample_count == endpoint_selection.count
+    )
+    return {
+        "common_domain_selection": complete,
+        # Explicit alias used by report/audit consumers; retain both names so
+        # callers do not have to infer whether a selection was complete.
+        "common_domain_complete": complete,
+        "common_domain_endpoint_count": declared_count,
+        "common_domain_expected_endpoint_count": expected,
+        "common_domain_kind": (
+            None if endpoint_selection is None else endpoint_selection.kind
+        ),
+        "common_domain_kind_matches": kind_matches,
+        "common_domain_cardinality_matches": cardinality_matches,
+        "coverage_scope": (
+            "common_domain"
+            if complete
+            else "limited_subset"
+        ),
+    }
+
+
 def evaluation_eligibility_status(
     *,
     stage: str,
@@ -3713,8 +3872,18 @@ def evaluation_eligibility_status(
     formal_holdout: bool | None,
     checkpoint_completion: dict[str, Any],
     spatial_checkpoint_completion: dict[str, Any] | None,
+    common_domain_selection: bool | None = None,
+    common_domain_endpoint_count: int | None = None,
+    common_domain_expected_endpoint_count: int | None = None,
 ) -> dict[str, Any]:
-    """Separate corpus coverage from final-checkpoint acceptance eligibility."""
+    """Separate corpus coverage from final-checkpoint acceptance eligibility.
+
+    ``full_selection`` keeps its legacy meaning (the complete evaluator
+    corpus).  When ``common_domain_selection`` is supplied, a complete
+    declared common endpoint population is accepted as coverage as well.
+    Optional fields are omitted when the new argument is not supplied to keep
+    the historical helper schema stable for downstream callers/tests.
+    """
 
     if stage not in {"spatial", "temporal"}:
         raise ValueError("stage must be spatial or temporal")
@@ -3725,8 +3894,15 @@ def evaluation_eligibility_status(
         or spatial_checkpoint_completion.get("stage") != "spatial"
     ):
         raise ValueError("temporal evaluation requires Stage-A completion metadata")
+    common_complete = bool(common_domain_selection is True)
+    coverage_selection = bool(full_selection or common_complete)
+    common_domain_coverage_eligible = bool(
+        common_complete
+        and not allow_non_holdout_smoke
+        and (stage == "spatial" or formal_holdout is True)
+    )
     coverage_eligible = bool(
-        full_selection
+        coverage_selection
         and not allow_non_holdout_smoke
         and (stage == "spatial" or formal_holdout is True)
     )
@@ -3749,12 +3925,41 @@ def evaluation_eligibility_status(
         status = "INTERMEDIATE_CHECKPOINT_EVALUATION_COMPLETE"
     else:
         status = "LIMITED_EVALUATION_COMPLETE"
-    return {
+    result: dict[str, Any] = {
         "coverage_eligible": coverage_eligible,
         "final_training_checkpoint": final_training_checkpoint,
         "final_acceptance_eligible": final_acceptance_eligible,
         "status": status,
     }
+    if common_domain_selection is not None:
+        result.update(
+            {
+                "common_domain_selection": common_complete,
+                "common_domain_complete": common_complete,
+                "common_domain_coverage_eligible": (
+                    common_domain_coverage_eligible
+                ),
+                "common_domain_endpoint_count": common_domain_endpoint_count,
+                "common_domain_expected_endpoint_count": (
+                    common_domain_expected_endpoint_count
+                ),
+                "coverage_selection": (
+                    "full_validation"
+                    if full_selection
+                    else "common_domain"
+                    if common_complete
+                    else "limited_subset"
+                ),
+                "coverage_scope": (
+                    "full_validation"
+                    if full_selection
+                    else "common_domain"
+                    if common_complete
+                    else "limited_subset"
+                ),
+            }
+        )
+    return result
 
 
 def _materialize_checkpoint_cache_identities(
@@ -4236,6 +4441,7 @@ def run(args: argparse.Namespace) -> int:
             "receipt_sha256": calibration_index.receipt_sha256,
             "source_manifest_sha256": calibration_index.source_manifest_sha256,
             "pixel_audit_sha256": calibration_index.pixel_audit_sha256,
+            "spring_native": bool(calibration_index.spring_native),
         }
     )
     OmegaConf.update(
@@ -4990,11 +5196,19 @@ def run(args: argparse.Namespace) -> int:
                             .float()
                             .cpu()
                             .numpy(),
-                            boundary_epe=(
-                                sample_metrics["boundary_epe_px"].value
-                                if sample_metrics["boundary_epe_px"].valid
-                                else None
-                            ),
+                            # Native Spring boundary EPE must use a boundary
+                            # mask derived from the native Spring GT, not the
+                            # trusted FFS pseudo-GT used by the canonical
+                            # engineering metrics.  Keeping the two domains
+                            # separate is required for an auditable side
+                            # channel.
+                            boundary_mask=disparity_boundary_mask(
+                                torch.from_numpy(native_gt).float(),
+                                gradient_threshold_px=float(
+                                    config.eval.boundary_gradient_threshold_px
+                                ),
+                                radius_px=int(config.eval.boundary_radius_px),
+                            ).numpy(),
                         )
                         native["image_pixel_count"] = int(target[item_index].numel())
                         native["record_id"] = (
@@ -5503,6 +5717,12 @@ def run(args: argparse.Namespace) -> int:
         and start_index == 0
         and sample_count == len(dataset)
     )
+    common_selection_status = common_domain_selection_status(
+        endpoint_selection,
+        start_index=start_index,
+        sample_count=sample_count,
+        expected_endpoint_count=SPRING_COMMON_ENDPOINT_COUNT,
+    )
     endpoint_selection_report = (
         None
         if endpoint_selection is None
@@ -5515,6 +5735,17 @@ def run(args: argparse.Namespace) -> int:
             ),
         )
     )
+    if endpoint_selection_report is not None:
+        endpoint_selection_report = {
+            **endpoint_selection_report,
+            "common_domain_complete": bool(
+                common_selection_status["common_domain_complete"]
+            ),
+            "common_domain_expected_endpoint_count": (
+                common_selection_status["common_domain_expected_endpoint_count"]
+            ),
+            "coverage_scope": common_selection_status["coverage_scope"],
+        }
     checkpoint_completion = checkpoint_training_completion(
         checkpoint_metadata,
         stage=stage,
@@ -5538,6 +5769,15 @@ def run(args: argparse.Namespace) -> int:
         ),
         checkpoint_completion=checkpoint_completion,
         spatial_checkpoint_completion=spatial_checkpoint_completion,
+        common_domain_selection=common_selection_status[
+            "common_domain_selection"
+        ],
+        common_domain_endpoint_count=common_selection_status[
+            "common_domain_endpoint_count"
+        ],
+        common_domain_expected_endpoint_count=common_selection_status[
+            "common_domain_expected_endpoint_count"
+        ],
     )
     coverage_eligible = bool(eligibility["coverage_eligible"])
     final_training_checkpoint = bool(
@@ -5696,7 +5936,14 @@ def run(args: argparse.Namespace) -> int:
                 "fields": list(SPRING_NATIVE_FIELDS),
                 "maps": "detailmap_disp1_left + matchmap_disp1_left + rigidmap_BW_left",
                 "rigid_map_direction": "backward current-endpoint left camera",
-                "aggregation": "frame_mean_except_output_health_rates_pixel_weighted",
+                "boundary_domain": (
+                    "native Spring GT disparity boundary mask; gradient threshold "
+                    "and radius follow resolved eval config"
+                ),
+                "boundary_pseudo_gt_override": False,
+                "aggregation": (
+                    "global_numerator_count_pixel_weighted_with_legacy_frame_mean_fallback"
+                ),
                 "topk_v2_age2_denominator": "pixels with at least one retained valid candidate (no pre-truncation tap)",
                 "topk_fractional_phase_buckets": "weighted mean candidate phase magnitude: <0.25, 0.25-0.5, >=0.5 target-grid pixels",
                 "topk_camera_motion_buckets": "exploratory tertiles over evaluated GT-pose motion scores; score=translation_m+rotation_rad",
@@ -5802,6 +6049,37 @@ def run(args: argparse.Namespace) -> int:
         "schema_version": 1,
         "stage": stage_label,
         "status": evaluation_status,
+        # Top-level aliases make the terminal status auditable without
+        # requiring consumers to know the historical ``claims`` nesting.
+        "coverage_eligible": coverage_eligible,
+        "final_training_checkpoint": final_training_checkpoint,
+        "final_acceptance_eligible": final_acceptance_eligible,
+        # ``full_validation_selection`` below retains the historical meaning
+        # (the complete evaluator corpus).  These explicit fields expose the
+        # independent Spring common-domain coverage decision.
+        "coverage_selection": eligibility.get(
+            "coverage_selection",
+            "full_validation" if full_selection else "limited_subset",
+        ),
+        "coverage_scope": eligibility.get(
+            "coverage_scope",
+            "full_validation" if full_selection else "limited_subset",
+        ),
+        "common_domain_selection": bool(
+            eligibility.get("common_domain_selection", False)
+        ),
+        "common_domain_complete": bool(
+            eligibility.get("common_domain_complete", False)
+        ),
+        "common_domain_coverage_eligible": bool(
+            eligibility.get("common_domain_coverage_eligible", False)
+        ),
+        "common_domain_endpoint_count": eligibility.get(
+            "common_domain_endpoint_count"
+        ),
+        "common_domain_expected_endpoint_count": eligibility.get(
+            "common_domain_expected_endpoint_count"
+        ),
         "evaluator": {
             **evaluator_provenance,
         },
@@ -5856,7 +6134,8 @@ def run(args: argparse.Namespace) -> int:
             ),
             "coverage_eligible": coverage_eligible,
             "coverage_eligible_definition": (
-                "Complete selected validation corpus and, for Stage B, "
+                "Complete selected validation corpus or complete declared "
+                "Spring common-domain endpoint population and, for Stage B, "
                 "video-disjoint formal holdout lineage. This does not imply "
                 "that the training checkpoint is final."
             ),
@@ -5874,6 +6153,23 @@ def run(args: argparse.Namespace) -> int:
                 "coverage_eligible for intermediate full-holdout evaluations."
             ),
             "full_validation_selection": full_selection,
+            "common_domain_selection": bool(
+                eligibility.get("common_domain_selection", False)
+            ),
+            "common_domain_complete": bool(
+                eligibility.get("common_domain_complete", False)
+            ),
+            "common_domain_coverage_eligible": bool(
+                eligibility.get("common_domain_coverage_eligible", False)
+            ),
+            "coverage_selection": eligibility.get(
+                "coverage_selection",
+                "full_validation" if full_selection else "limited_subset",
+            ),
+            "coverage_scope": eligibility.get(
+                "coverage_scope",
+                "full_validation" if full_selection else "limited_subset",
+            ),
         },
         "postprocess_contract": {
             "raw_rows": list(base_method_names),
@@ -5928,6 +6224,28 @@ def run(args: argparse.Namespace) -> int:
         "device": str(device),
         "crop_mode": str(config.eval.crop_mode),
         "hr_crop": None if full_resolution else list(crop_size or ()),
+        # Keep the requested origin at the top level as well as in the
+        # resolved config.  The Spring common-domain runner always supplies
+        # this explicitly (576,348), so downstream F0/F1/model reports can
+        # be compared without reconstructing CLI state from a log.
+        "fixed_crop_origin_hr_xy": (
+            None
+            if full_resolution or fixed_origin is None
+            else list(fixed_origin)
+        ),
+        "crop_contract": {
+            "evaluation_crop_mode": str(config.eval.crop_mode),
+            "size_hr_hw": None if full_resolution else list(crop_size or ()),
+            "requested_origin_hr_xy": (
+                None
+                if full_resolution or fixed_origin is None
+                else list(fixed_origin)
+            ),
+            "spatial_scale": int(config.data.scale),
+            "all_metric_inputs_same_crop": bool(
+                full_resolution or fixed_origin is not None
+            ),
+        },
         "parameter_count": parameter_count,
         "checkpoint": checkpoint_metadata,
         "checkpoint_training_completion": checkpoint_completion,

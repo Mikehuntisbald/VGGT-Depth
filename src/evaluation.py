@@ -683,6 +683,11 @@ def validate_checkpoint_lineage(
         for split_specific_key in (
             "source_derived_receipt_sha256",
             "source_derived_manifest_sha256",
+            # This marker records how a GT-pose override should interpret
+            # producer residuals.  It is a cache-format/provenance field, not
+            # a geometry-policy knob; older intermediate checkpoints may
+            # predate it while remaining otherwise lineage-compatible.
+            "quality_score_override",
         ):
             result.pop(split_specific_key, None)
         calibration = result.get("rectified_stereo_calibration")

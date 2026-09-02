@@ -30,6 +30,11 @@ if str(SRC_ROOT) not in sys.path:
     sys.path.insert(0, str(SRC_ROOT))
 
 from data.cache_dataset import CacheIdentity, sha256_file  # noqa: E402
+from data.stereo_calibration import (  # noqa: E402
+    RECTIFIED_CALIBRATION_COMPONENT,
+    RECTIFIED_CALIBRATION_CONTRACT,
+    load_rectified_calibration_sidecar,
+)
 from data.epipolar_training_dataset import (  # noqa: E402
     EpipolarTrainingDataset,
     collate_epipolar_training_samples,
@@ -66,6 +71,7 @@ from train import (  # noqa: E402
     build_model,
     build_topk_temporal_transport,
     build_temporal_transport,
+    calibration_conditioning_v3_from_config,
     learning_rate_multiplier,
     load_receipt_identity,
     physical_output_v2_from_config,
@@ -416,6 +422,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--observation-cache-root", type=Path)
     parser.add_argument("--teacher-cache-root", type=Path)
     parser.add_argument("--derived-cache-root", type=Path)
+    parser.add_argument(
+        "--calibration-sidecar",
+        type=Path,
+        help="manifest-bound rectified stereo sidecar for calibrated v3/v3.1 Stage C",
+    )
     parser.add_argument("--rectification-audit", type=Path)
     parser.add_argument(
         "--d025-training-audit",
@@ -2197,6 +2208,16 @@ def _build_temporal_dataset(
         expected_component="ffs-teacher",
         manifest_path=manifest,
     )
+    calibration_index = None
+    calibration_contract = calibration_conditioning_v3_from_config(config)
+    if calibration_contract.enabled:
+        sidecar_path = _required_path(
+            config, "data.calibration_sidecar_path", directory=False
+        )
+        calibration_index = load_rectified_calibration_sidecar(
+            sidecar_path,
+            expected_manifest_path=manifest,
+        )
     crop_height, crop_width = (int(value) for value in config.data.hr_crop)
     temporal = CachedTemporalTrainingDataset(
         manifest,
@@ -2205,6 +2226,8 @@ def _build_temporal_dataset(
         derived,
         observation_identity=observation_identity,
         teacher_identity=teacher_identity,
+        rectified_calibration_index=calibration_index,
+        derived_contract=str(config.data.derived_contract),
         crop_size_hr_hw=(crop_height, crop_width),
         crop_mode=str(config.data.crop_mode),
         spatial_scale=2,
@@ -2460,6 +2483,7 @@ def run(args: argparse.Namespace) -> int:
         "data.observation_cache_root": args.observation_cache_root,
         "data.teacher_cache_root": args.teacher_cache_root,
         "data.derived_geometry_cache_root": args.derived_cache_root,
+        "data.calibration_sidecar_path": args.calibration_sidecar,
         "data.epipolar_rectification_audit_path": args.rectification_audit,
         "train.epipolar_output_dir": args.output,
         "train.initialization_checkpoint": args.init_from,
@@ -2495,6 +2519,28 @@ def run(args: argparse.Namespace) -> int:
     )
     seed_everything(int(config.seed), deterministic=True, warn_only=False)
     dataset, observation_identity, teacher_identity = _build_temporal_dataset(config)
+    calibration_index = dataset.temporal_dataset.spatial_dataset.rectified_calibration_index
+    calibration_sidecar_lineage = (
+        None
+        if calibration_index is None
+        else {
+            "component": RECTIFIED_CALIBRATION_COMPONENT,
+            "contract_version": RECTIFIED_CALIBRATION_CONTRACT,
+            "sidecar_path": str(calibration_index.sidecar_path),
+            "sidecar_sha256": calibration_index.sidecar_sha256,
+            "receipt_path": str(calibration_index.receipt_path),
+            "receipt_sha256": calibration_index.receipt_sha256,
+            "source_manifest_sha256": calibration_index.source_manifest_sha256,
+            "pixel_audit_sha256": calibration_index.pixel_audit_sha256,
+            "spring_native": bool(calibration_index.spring_native),
+        }
+    )
+    OmegaConf.update(
+        config,
+        "data.calibration_sidecar_lineage",
+        calibration_sidecar_lineage,
+        merge=False,
+    )
     rectification_audit_path = _required_path(
         config, "data.epipolar_rectification_audit_path", directory=False
     )

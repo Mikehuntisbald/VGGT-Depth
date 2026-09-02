@@ -1,0 +1,26 @@
+experiment: spring_v31_ffs_F2_v31_t1
+seed: 42
+arm: F2
+defaults_from: configs/ablations/v3_1_a3_rays_stereo_pose.yaml
+
+# F2 is the v3.1 spatial/T1 checkpoint used as the initialization owner for
+# the GT-pose and VGGT-pose temporal arms.  No temporal history or VGGT depth
+# prior is consumed in Stage A.
+data:
+  temporal_pose_source: gt
+
+model:
+  use_history: false
+  use_vggt_pose: false
+  use_vggt_depth: false
+
+train:
+  stage: spatial
+  steps_spatial: 5000
+  micro_batch_size: 2
+  grad_accumulation: 4
+  effective_batch_size: 8
+  num_workers: 4
+  persistent_workers: true
+  checkpoint_interval: 500
+  log_interval: 10

@@ -1,0 +1,28 @@
+experiment: spring_v31_ffs_F3_v2_k2_gt_pose
+seed: 42
+arm: F3
+defaults_from: configs/ablations/temporal_x2_v2_strict_bilinear_gt_no_depth.yaml
+
+# This is intentionally an independent v2/K=2 lineage.  It must not warm
+# start from the v3.1 F2 checkpoint because the calibration/candidate state
+# dicts are not compatible.
+temporal_history_v2:
+  top_k: 2
+
+data:
+  temporal_pose_source: gt
+
+model:
+  use_vggt_pose: false
+  use_vggt_depth: false
+
+train:
+  stage: temporal
+  steps: 15000
+  micro_batch_size: 2
+  grad_accumulation: 4
+  effective_batch_size: 8
+  num_workers: 4
+  persistent_workers: true
+  checkpoint_interval: 500
+  log_interval: 10

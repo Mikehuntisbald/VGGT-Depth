@@ -1,0 +1,29 @@
+experiment: spring_v31_ffs_F4_v31_t3_gt_pose
+seed: 42
+arm: F4
+defaults_from: configs/temporal_x2_v3_1.yaml
+
+data:
+  temporal_pose_source: gt
+
+calibration_conditioning_v3:
+  enabled: true
+  use_rays: true
+  use_stereo_pose: true
+  use_temporal_pose: true
+
+model:
+  use_history: true
+  use_vggt_pose: false
+  use_vggt_depth: false
+
+train:
+  stage: temporal
+  steps: 15000
+  micro_batch_size: 2
+  grad_accumulation: 4
+  effective_batch_size: 8
+  num_workers: 4
+  persistent_workers: true
+  checkpoint_interval: 500
+  log_interval: 10

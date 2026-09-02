@@ -35,6 +35,11 @@ if str(SRC_ROOT) not in sys.path:
     sys.path.insert(0, str(SRC_ROOT))
 
 from data.cache_dataset import sha256_file  # noqa: E402
+from data.stereo_calibration import (  # noqa: E402
+    RECTIFIED_CALIBRATION_COMPONENT,
+    RECTIFIED_CALIBRATION_CONTRACT,
+    load_rectified_calibration_sidecar,
+)
 from data.endpoint_selection import (  # noqa: E402
     EndpointSelection,
     load_endpoint_index,
@@ -1537,6 +1542,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--observation-cache-root", type=Path, required=True)
     parser.add_argument("--teacher-cache-root", type=Path, required=True)
     parser.add_argument("--derived-cache-root", type=Path, required=True)
+    parser.add_argument(
+        "--calibration-sidecar",
+        type=Path,
+        help="manifest-bound rectified stereo sidecar for calibrated v3/v3.1 Stage C",
+    )
     parser.add_argument("--rectification-audit", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--device", default="auto")
@@ -2629,6 +2639,7 @@ def run(args: argparse.Namespace) -> int:
         ("data.observation_cache_root", args.observation_cache_root),
         ("data.teacher_cache_root", args.teacher_cache_root),
         ("data.derived_geometry_cache_root", args.derived_cache_root),
+        ("data.calibration_sidecar_path", args.calibration_sidecar),
         ("data.epipolar_rectification_audit_path", args.rectification_audit),
     ):
         OmegaConf.update(config, name, str(value.expanduser().resolve()), merge=False)
@@ -2659,6 +2670,20 @@ def run(args: argparse.Namespace) -> int:
         expected_component="ffs-teacher",
         manifest_path=manifest,
     )
+    calibration_index = None
+    calibration_enabled = bool(
+        config.get("calibration_conditioning_v3", {}).get("enabled", False)
+    )
+    if calibration_enabled:
+        sidecar_path = config.data.calibration_sidecar_path
+        if sidecar_path is None or not str(sidecar_path).strip():
+            raise ValueError(
+                "calibration v3 Stage-C evaluation requires --calibration-sidecar"
+            )
+        calibration_index = load_rectified_calibration_sidecar(
+            Path(str(sidecar_path)).expanduser().resolve(),
+            expected_manifest_path=manifest,
+        )
     crop_height, crop_width = (int(value) for value in config.data.hr_crop)
     temporal_dataset = CachedTemporalTrainingDataset(
         manifest,
@@ -2667,6 +2692,8 @@ def run(args: argparse.Namespace) -> int:
         derived_root,
         observation_identity=observation_identity,
         teacher_identity=teacher_identity,
+        rectified_calibration_index=calibration_index,
+        derived_contract=str(config.data.derived_contract),
         crop_size_hr_hw=(crop_height, crop_width),
         crop_mode="fixed",
         spatial_scale=2,
@@ -2701,6 +2728,23 @@ def run(args: argparse.Namespace) -> int:
         raise ValueError("evaluation selects no endpoint windows")
     selected = Subset(dataset, endpoint_dataset_indices[:selected_count])
 
+    if calibration_index is not None:
+        OmegaConf.update(
+            config,
+            "data.calibration_sidecar_lineage",
+            {
+                "component": RECTIFIED_CALIBRATION_COMPONENT,
+                "contract_version": RECTIFIED_CALIBRATION_CONTRACT,
+                "sidecar_path": str(calibration_index.sidecar_path),
+                "sidecar_sha256": calibration_index.sidecar_sha256,
+                "receipt_path": str(calibration_index.receipt_path),
+                "receipt_sha256": calibration_index.receipt_sha256,
+                "source_manifest_sha256": calibration_index.source_manifest_sha256,
+                "pixel_audit_sha256": calibration_index.pixel_audit_sha256,
+                "spring_native": bool(calibration_index.spring_native),
+            },
+            merge=False,
+        )
     evaluation_config = _resolved_dict(config)
     refiner, stage_c_metadata = load_stage_c_checkpoint(
         args.checkpoint,

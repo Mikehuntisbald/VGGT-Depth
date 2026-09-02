@@ -55,6 +55,30 @@ def test_temporal_conditioning_composition_stays_fp32_inside_bf16_autocast() -> 
     )
 
 
+def test_temporal_conditioning_canonicalizes_inverse_homogeneous_row() -> None:
+    # A numerically valid FP32 rigid window can accumulate a ~2e-6 residue in
+    # the last row after inversion.  The public contract requires the exact
+    # homogeneous row before the calibration conditioner sees it.
+    generator = torch.Generator().manual_seed(30)
+    poses = torch.zeros(1, 10, 3, 4)
+    for pair in range(5):
+        matrix = torch.randn(3, 3, generator=generator)
+        rotation, _ = torch.linalg.qr(matrix)
+        if torch.linalg.det(rotation) < 0:
+            rotation[:, 0] *= -1
+        translation = torch.randn(3, generator=generator) * 100.0
+        poses[0, 2 * pair, :, :3] = rotation
+        poses[0, 2 * pair, :, 3] = translation
+        poses[0, 2 * pair + 1, :, :3] = rotation
+        poses[0, 2 * pair + 1, :, 3] = translation + torch.tensor([0.1, 0.0, 0.0])
+    transforms, valid = temporal_conditioning_transforms(
+        poses, torch.tensor([True]), student_time_index=2
+    )
+    assert valid.tolist() == [[True, True]]
+    expected = torch.tensor([0.0, 0.0, 0.0, 1.0]).expand(2, -1)
+    torch.testing.assert_close(transforms[0, :, 3], expected, atol=0.0, rtol=0.0)
+
+
 def test_temporal_conditioning_rejects_future_index() -> None:
     with pytest.raises(ValueError, match="0, 1, or 2"):
         temporal_conditioning_transforms(

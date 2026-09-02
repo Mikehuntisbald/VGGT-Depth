@@ -1,0 +1,12 @@
+experiment: spring_v31_ffs_F1_half_bilinear
+seed: 42
+arm: F1
+protocol: spring_v31_ffs_common_domain_v1
+stage: frozen_baseline
+backbone: Fast-FoundationStereo
+resolution_mode: half_resolution
+cache_role: observation
+cache_scale: 2
+checkpoint_label: 20-30-48
+max_disp: 192
+description: Half-resolution Fast-FoundationStereo observation bilinearly lifted to HR.

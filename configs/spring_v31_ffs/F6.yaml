@@ -1,0 +1,11 @@
+experiment: spring_v31_ffs_F6_v31_depth_vggt_pose
+seed: 42
+arm: F6
+defaults_from: configs/spring_v31_ffs/F5.yaml
+
+data:
+  temporal_pose_source: vggt
+
+model:
+  use_vggt_pose: true
+  use_vggt_depth: true

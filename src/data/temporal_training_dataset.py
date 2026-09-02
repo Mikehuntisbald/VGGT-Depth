@@ -502,6 +502,16 @@ def _continuous_pose_quality_score(
         return 0.0
     if derived_contract != "calibrated_stereo_v2":
         return 1.0
+    # A Spring GT-pose override replaces the temporal warp with the exact
+    # calibrated ground-truth pose.  Its temporal-pose quality is therefore
+    # authoritative and does not depend on the VGGT photometric/depth
+    # residual diagnostics copied from the producer cache.  Rejected VGGT
+    # records legitimately carry ``None`` for those residuals; treating them
+    # as malformed here would make a valid GT-pose arm unloadable.  The
+    # explicit marker is written by ``override_spring_pose_calibrated.py`` so
+    # this exception cannot be inferred from a free-form pose_source string.
+    if quality.get("quality_score_override") == "authoritative_gt_pose":
+        return 1.0
     if not isinstance(thresholds, Mapping):
         raise CacheMismatchError(
             f"calibrated pose-quality thresholds missing for {cache_path}"

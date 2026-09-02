@@ -1514,6 +1514,58 @@ def test_checkpoint_completion_rejects_missing_or_boolean_steps() -> None:
         )
 
 
+def test_common_domain_selection_requires_complete_canonical_endpoint_list() -> None:
+    selection = SimpleNamespace(kind="spring_common_endpoint_index", count=1302)
+    complete = eval_cli.common_domain_selection_status(
+        selection,
+        start_index=0,
+        sample_count=1302,
+    )
+    assert complete["common_domain_complete"] is True
+    assert complete["coverage_scope"] == "common_domain"
+
+    partial = eval_cli.common_domain_selection_status(
+        selection,
+        start_index=0,
+        sample_count=64,
+    )
+    assert partial["common_domain_complete"] is False
+    assert partial["coverage_scope"] == "limited_subset"
+
+    wrong_cardinality = eval_cli.common_domain_selection_status(
+        SimpleNamespace(kind="spring_common_endpoint_index", count=64),
+        start_index=0,
+        sample_count=64,
+    )
+    assert wrong_cardinality["common_domain_cardinality_matches"] is False
+    assert wrong_cardinality["common_domain_complete"] is False
+
+
+def test_common_domain_eligibility_is_separate_from_legacy_full_selection() -> None:
+    completion = {
+        "stage": "temporal",
+        "final_training_checkpoint": False,
+    }
+    spatial_completion = {
+        "stage": "spatial",
+        "final_training_checkpoint": True,
+    }
+    result = eval_cli.evaluation_eligibility_status(
+        stage="temporal",
+        full_selection=False,
+        allow_non_holdout_smoke=False,
+        formal_holdout=True,
+        checkpoint_completion=completion,
+        spatial_checkpoint_completion=spatial_completion,
+        common_domain_selection=True,
+        common_domain_endpoint_count=1302,
+        common_domain_expected_endpoint_count=1302,
+    )
+    assert result["coverage_eligible"] is True
+    assert result["common_domain_coverage_eligible"] is True
+    assert result["coverage_scope"] == "common_domain"
+
+
 def _raw_vggt_receipt(tmp_path: Path) -> tuple[Path, str]:
     root = tmp_path / "vggt"
     root.mkdir()

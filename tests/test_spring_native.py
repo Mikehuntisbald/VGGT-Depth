@@ -86,6 +86,47 @@ def test_aggregate_spring_rows_pixel_weights_output_health_rates() -> None:
     assert aggregate["invalid_rate"] == 0.75
 
 
+def test_aggregate_spring_rows_uses_metric_numerators_and_counts() -> None:
+    rows = [
+        {
+            "overall_epe": 1.0,
+            "overall_epe_numerator": 1.0,
+            "overall_epe_count": 1,
+            "image_pixel_count": 1,
+        },
+        {
+            "overall_epe": 3.0,
+            "overall_epe_numerator": 9.0,
+            "overall_epe_count": 3,
+            "image_pixel_count": 3,
+        },
+    ]
+    aggregate = aggregate_spring_rows(rows)
+    assert aggregate["overall_epe"] == 2.5
+    assert aggregate["overall_epe_numerator"] == 10.0
+    assert aggregate["overall_epe_count"] == 4
+    assert aggregate["aggregation_fallback_used"]
+
+
+def test_native_boundary_uses_spring_gt_and_not_legacy_pseudo_override() -> None:
+    gt = np.asarray([[1.0, 1.0, 4.0, 4.0]])
+    prediction = np.asarray([[1.0, 1.0, 3.0, 4.0]])
+    mask = np.ones_like(gt, dtype=bool)
+    row = spring_disparity_row(
+        prediction,
+        gt,
+        detail_mask=mask,
+        match_mask=mask,
+        ffs_trusted_mask=mask,
+        ffs_prediction=prediction,
+        boundary_epe=999.0,
+    )
+    assert row["boundary_source"] == "spring_gt_disparity_boundary_mask"
+    assert row["boundary_override_ignored"] is True
+    assert row["boundary_epe"] != 999.0
+    assert row["boundary_epe_count"] > 0
+
+
 def test_composer_prefers_complete_native_side_channel_and_keeps_buckets() -> None:
     report = {
         "spring_native_metrics": {

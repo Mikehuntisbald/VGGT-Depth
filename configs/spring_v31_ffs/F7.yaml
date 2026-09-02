@@ -1,0 +1,8 @@
+experiment: spring_v31_ffs_F7_stage_c_optional
+seed: 42
+arm: F7
+protocol: spring_v31_ffs_common_domain_v1
+stage: optional_stage_c
+base_arm: F6
+status: OPTIONAL_NOT_IN_BASELINE_QUEUE
+description: Optional Stage-C refiner; requires a separate v3.1-compatible Spring adapter.

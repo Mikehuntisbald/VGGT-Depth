@@ -45,6 +45,15 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--checkpoint-label", required=True)
     parser.add_argument("--role", choices=["observation", "teacher"], required=True)
     parser.add_argument("--scale", type=int)
+    parser.add_argument(
+        "--allow-full-resolution-observation",
+        action="store_true",
+        help=(
+            "Allow the observation checkpoint to run at scale=1 for an explicit "
+            "full-resolution baseline. This creates a separate cache identity; "
+            "the normal observation contract remains scale=2."
+        ),
+    )
     parser.add_argument("--iterations", type=int)
     parser.add_argument(
         "--max-disp",
@@ -234,8 +243,18 @@ def main() -> int:
     scale = args.scale if args.scale is not None else (2 if args.role == "observation" else 1)
     iterations = args.iterations if args.iterations is not None else (4 if args.role == "observation" else 8)
     max_disp = args.max_disp if args.max_disp is not None else (192 if args.role == "observation" else 416)
-    if scale != (2 if args.role == "observation" else 1):
-        raise ValueError("MVP observation scale must be 2 and teacher scale must be 1")
+    expected_scale = 2 if args.role == "observation" else 1
+    full_resolution_observation = bool(
+        args.role == "observation"
+        and args.allow_full_resolution_observation
+        and scale == 1
+    )
+    if scale != expected_scale and not full_resolution_observation:
+        raise ValueError(
+            "MVP observation scale must be 2 and teacher scale must be 1; "
+            "pass --allow-full-resolution-observation only for an explicit "
+            "scale=1 observation baseline"
+        )
     if max_disp <= 0 or max_disp % 16:
         raise ValueError("max_disp must be positive and divisible by 16")
     expected_label = EXPECTED_CHECKPOINT_LABEL[args.role]
@@ -265,6 +284,11 @@ def main() -> int:
     config = {
         "role": args.role,
         "scale": scale,
+        "resolution_mode": (
+            "full_resolution_observation"
+            if full_resolution_observation
+            else "mvp"
+        ),
         "iterations": iterations,
         "max_disp": max_disp,
         "volume_backend": args.volume_backend,

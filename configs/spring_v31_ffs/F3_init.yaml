@@ -1,0 +1,24 @@
+experiment: spring_v31_ffs_F3_v2_k2_spatial_init
+seed: 42
+arm: F3_init
+defaults_from: configs/ablations/v2_strict_bilinear.yaml
+
+data:
+  sequence_length: 1
+  temporal_pose_source: gt
+
+model:
+  use_history: false
+  use_vggt_pose: false
+  use_vggt_depth: false
+
+train:
+  stage: spatial
+  steps_spatial: 5000
+  micro_batch_size: 2
+  grad_accumulation: 4
+  effective_batch_size: 8
+  num_workers: 4
+  persistent_workers: true
+  checkpoint_interval: 500
+  log_interval: 10

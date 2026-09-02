@@ -1,0 +1,3455 @@
+{
+  "arms": [
+    {
+      "arm": "F0",
+      "candidate_files": [
+        {
+          "checkpoint_step": null,
+          "common_domain_complete": null,
+          "coverage_eligible": null,
+          "crop_mode": null,
+          "crop_origin_hr_xy": null,
+          "endpoint_count": null,
+          "exact_common_dir": false,
+          "final_acceptance_eligible": null,
+          "final_evaluation": false,
+          "final_training_checkpoint": null,
+          "fixed384": false,
+          "hr_crop": null,
+          "mtime": 1788377306.969989,
+          "origin_matches_protocol": false,
+          "path": "/home/CNF2026527811/Documents/VGGT-Depth/runs/spring_v31_ffs/arms/F0/eval/metrics.json",
+          "records_evaluated": 1302,
+          "status": "SCREENING_ONLY"
+        },
+        {
+          "checkpoint_step": null,
+          "common_domain_complete": true,
+          "coverage_eligible": true,
+          "crop_mode": "fixed",
+          "crop_origin_hr_xy": [
+            576,
+            348
+          ],
+          "endpoint_count": 1302,
+          "exact_common_dir": true,
+          "final_acceptance_eligible": null,
+          "final_evaluation": false,
+          "final_training_checkpoint": null,
+          "fixed384": true,
+          "hr_crop": [
+            384,
+            768
+          ],
+          "mtime": 1788386185.5741777,
+          "origin_matches_protocol": true,
+          "path": "/home/CNF2026527811/Documents/VGGT-Depth/runs/spring_v31_ffs/arms/F0/eval_common_fixed384/metrics.json",
+          "records_evaluated": 1302,
+          "status": "SCREENING_ONLY"
+        },
+        {
+          "checkpoint_step": null,
+          "common_domain_complete": null,
+          "coverage_eligible": null,
+          "crop_mode": "fixed",
+          "crop_origin_hr_xy": [
+            576,
+            348
+          ],
+          "endpoint_count": null,
+          "exact_common_dir": false,
+          "final_acceptance_eligible": null,
+          "final_evaluation": false,
+          "final_training_checkpoint": null,
+          "fixed384": true,
+          "hr_crop": [
+            384,
+            768
+          ],
+          "mtime": 1788381950.7897406,
+          "origin_matches_protocol": true,
+          "path": "/home/CNF2026527811/Documents/VGGT-Depth/runs/spring_v31_ffs/arms/F0/eval_fixed384x768/metrics.json",
+          "records_evaluated": 1302,
+          "status": "SCREENING_ONLY"
+        }
+      ],
+      "checkpoint": {
+        "git_hash": null,
+        "parameter_count": null,
+        "path": null,
+        "sha256": null,
+        "step": null,
+        "training_completion": null
+      },
+      "crop": {
+        "fixed384": true,
+        "mode": "fixed",
+        "origin_hr_xy": [
+          576,
+          348
+        ],
+        "origin_matches_protocol": true,
+        "size_hr_hw": [
+          384,
+          768
+        ]
+      },
+      "declared_config_status": null,
+      "eligibility": {
+        "common_domain_complete": true,
+        "common_domain_coverage_eligible": true,
+        "common_domain_endpoint_count": 1302,
+        "coverage_eligible": true,
+        "cross_arm_common_domain_eligible": true,
+        "final_acceptance_eligible": null,
+        "final_training_checkpoint": null,
+        "formal_holdout": null,
+        "is_canary": false,
+        "is_canonical_fixed384": true,
+        "is_limited_evaluation": false,
+        "is_missing": false,
+        "is_optional": false,
+        "records_evaluated": 1302,
+        "status": "SCREENING_ONLY"
+      },
+      "endpoint_count": 1302,
+      "flags": {
+        "cross_arm_common_domain_eligible": true,
+        "is_canary": false,
+        "is_canonical_fixed384": true,
+        "is_final_checkpoint": null,
+        "is_final_evaluation": false,
+        "is_formal_holdout": null,
+        "is_limited_evaluation": false,
+        "is_missing": false,
+        "is_optional": false
+      },
+      "lineage": {
+        "calibration_conditioning": null,
+        "checkpoint_lineage": {},
+        "config": {
+          "declared": {
+            "arm": "F0",
+            "backbone": "Fast-FoundationStereo",
+            "cache_role": "observation",
+            "cache_scale": 1,
+            "checkpoint_label": "20-30-48",
+            "description": "Full-resolution Fast-FoundationStereo observation, no TSR.",
+            "experiment": "spring_v31_ffs_F0_full_resolution_ffs",
+            "max_disp": 416,
+            "protocol": "spring_v31_ffs_common_domain_v1",
+            "resolution_mode": "full_resolution",
+            "stage": "frozen_baseline"
+          },
+          "path": "/home/CNF2026527811/Documents/VGGT-Depth/configs/spring_v31_ffs/F0.yaml",
+          "sha256": "35cf2a3940018baccb5035f24c19c021778dd85cffe69a0d52bf4c206bb1248c"
+        },
+        "consistency": {
+          "all_available_checks_pass": true,
+          "crop_origin_matches_protocol": true,
+          "crop_size_matches_protocol": true,
+          "endpoint_id_matches_protocol": true,
+          "manifest_matches_protocol": true,
+          "observation_checkpoint_matches_protocol": true
+        },
+        "derived_contract": null,
+        "derived_geometry_cache": null,
+        "endpoint_selection": {
+          "available_endpoint_count": 1350,
+          "endpoint_count": 1302,
+          "endpoint_id_hash_algorithm": "sha256(canonical_json([manifest_index,sequence_id,frame_id,timestamp]))",
+          "endpoint_id_sha256": "aa6ba30295b8d5ab0e1b4326a14fae61f9c8ec42641801cd8442097bc3ab5b57",
+          "entries_sha256": "aa6ba30295b8d5ab0e1b4326a14fae61f9c8ec42641801cd8442097bc3ab5b57",
+          "evaluated_endpoint_count": 1302,
+          "evaluated_endpoint_id_sha256": "aa6ba30295b8d5ab0e1b4326a14fae61f9c8ec42641801cd8442097bc3ab5b57",
+          "file_sha256": "9fa81b1ca652fdd1f33634f83213c28e826db91562125430aedb0beef4f5c838",
+          "first_manifest_index": 6,
+          "kind": "spring_common_endpoint_index",
+          "last_manifest_index": 1349,
+          "manifest_path": "/home/CNF2026527811/Documents/VGGT-Depth/runs/spring_seed42_primary/manifests/validation.jsonl",
+          "manifest_sha256": "6c016bdb4aa7f4a2be07c713cf9ae90b8dccdeab31c76c71d9d0e96b1a8bc45e",
+          "path": "/home/CNF2026527811/Documents/VGGT-Depth/runs/spring_v31_ffs/manifests/common_endpoints.json",
+          "schema_version": 1
+        },
+        "holdout": {},
+        "manifest": {
+          "exists": true,
+          "path": "/home/CNF2026527811/Documents/VGGT-Depth/runs/spring_seed42_primary/manifests/validation.jsonl",
+          "sha256": "6c016bdb4aa7f4a2be07c713cf9ae90b8dccdeab31c76c71d9d0e96b1a8bc45e"
+        },
+        "observation_cache_identity": {
+          "checkpoint_sha256": "98b5a9acf39fbfa795025de8cea95ce123daa40f6b6234d719167751024cf692",
+          "component": "ffs-observation",
+          "config_sha256": "08b7c63687deac7a882d3c952b0485fcecddeb101ec1fc4b8fff7580fe6cc129",
+          "cuda_version": "13.0",
+          "torch_version": "2.10.0+cu130",
+          "upstream_commit": "a290ba04c1b3ad1ec41a33974a157b2917b624d4"
+        },
+        "pose_source": "none",
+        "raw_vggt_cache": null,
+        "stage": "frozen_baseline",
+        "teacher_cache_identity": null,
+        "temporal_candidate_fusion": null,
+        "temporal_history": null,
+        "use_vggt_depth": false,
+        "use_vggt_pose": false
+      },
+      "metric_receipts": {
+        "boundary_epe": {
+          "count": 42329899,
+          "numerator": 97458816.9470787,
+          "source_key": "boundary_epe",
+          "valid": true,
+          "value": 2.3023635597873433
+        },
+        "ffs_trusted_measurement_error": {
+          "count": 213295280,
+          "numerator": 34252932.04974365,
+          "source_key": "ffs_trusted_measurement_error",
+          "valid": true,
+          "value": 0.160589264093156
+        },
+        "high_detail_1px": {
+          "count": 4659725,
+          "numerator": 2469107.0,
+          "source_key": "high_detail_1px",
+          "valid": true,
+          "value": 0.5298825574470597
+        },
+        "high_detail_epe": {
+          "count": 4659725,
+          "numerator": 35496309.10028458,
+          "source_key": "high_detail_epe",
+          "valid": true,
+          "value": 7.617683253901158
+        },
+        "invalid_rate": {
+          "count": 383975424,
+          "numerator": 0.0,
+          "source_key": "invalid_rate",
+          "valid": true,
+          "value": 0.0
+        },
+        "low_detail_epe": {
+          "count": 375971514,
+          "numerator": 151663408.45537716,
+          "source_key": "low_detail_epe",
+          "valid": true,
+          "value": 0.4033906900068423
+        },
+        "matched_epe": {
+          "count": 20790129,
+          "numerator": 55509562.11930281,
+          "source_key": "matched_epe",
+          "valid": true,
+          "value": 2.669996040876072
+        },
+        "negative_rate": {
+          "count": 383975424,
+          "numerator": 10953.0,
+          "source_key": "negative_rate",
+          "valid": true,
+          "value": 2.852526311683948e-05
+        },
+        "non_rigid_temporal_residual_error": {
+          "count": null,
+          "numerator": null,
+          "source_key": null,
+          "valid": false,
+          "value": null
+        },
+        "overall_1px": {
+          "count": 380631239,
+          "numerator": 22368721.0,
+          "source_key": "overall_1px",
+          "valid": true,
+          "value": 0.05876743343181036
+        },
+        "overall_epe": {
+          "count": 380631239,
+          "numerator": 187159717.55566174,
+          "source_key": "overall_epe",
+          "valid": true,
+          "value": 0.49170876790714946
+        },
+        "rigid_temporal_residual_error": {
+          "count": null,
+          "numerator": null,
+          "source_key": null,
+          "valid": false,
+          "value": null
+        },
+        "unmatched_completion_1px": {
+          "count": 359841110,
+          "numerator": 342717627.0,
+          "source_key": "unmatched_completion_1px",
+          "valid": true,
+          "value": 0.9524137667316556
+        },
+        "unmatched_completion_2px": {
+          "count": 359841110,
+          "numerator": 353772849.0,
+          "source_key": "unmatched_completion_2px",
+          "valid": true,
+          "value": 0.9831362764526821
+        },
+        "zero_rate": {
+          "count": 383975424,
+          "numerator": 0.0,
+          "source_key": "zero_rate",
+          "valid": true,
+          "value": 0.0
+        }
+      },
+      "metric_source": "metrics",
+      "metric_sources": {
+        "boundary_epe": "boundary_epe",
+        "ffs_trusted_measurement_error": "ffs_trusted_measurement_error",
+        "high_detail_1px": "high_detail_1px",
+        "high_detail_epe": "high_detail_epe",
+        "invalid_rate": "invalid_rate",
+        "low_detail_epe": "low_detail_epe",
+        "matched_epe": "matched_epe",
+        "negative_rate": "negative_rate",
+        "non_rigid_temporal_residual_error": null,
+        "overall_1px": "overall_1px",
+        "overall_epe": "overall_epe",
+        "rigid_temporal_residual_error": null,
+        "unmatched_completion_1px": "unmatched_completion_1px",
+        "unmatched_completion_2px": "unmatched_completion_2px",
+        "zero_rate": "zero_rate"
+      },
+      "metrics": {
+        "boundary_epe": 2.3023635597873433,
+        "boundary_epe_count": 42329899,
+        "boundary_epe_numerator": 97458816.9470787,
+        "ffs_trusted_measurement_error": 0.160589264093156,
+        "ffs_trusted_measurement_error_count": 213295280,
+        "ffs_trusted_measurement_error_numerator": 34252932.04974365,
+        "high_detail_1px": 0.5298825574470597,
+        "high_detail_1px_count": 4659725,
+        "high_detail_1px_numerator": 2469107.0,
+        "high_detail_epe": 7.617683253901158,
+        "high_detail_epe_count": 4659725,
+        "high_detail_epe_numerator": 35496309.10028458,
+        "invalid_rate": 0.0,
+        "invalid_rate_count": 383975424,
+        "invalid_rate_numerator": 0.0,
+        "low_detail_epe": 0.4033906900068423,
+        "low_detail_epe_count": 375971514,
+        "low_detail_epe_numerator": 151663408.45537716,
+        "matched_epe": 2.669996040876072,
+        "matched_epe_count": 20790129,
+        "matched_epe_numerator": 55509562.11930281,
+        "negative_rate": 2.852526311683948e-05,
+        "negative_rate_count": 383975424,
+        "negative_rate_numerator": 10953.0,
+        "non_rigid_temporal_residual_error": null,
+        "non_rigid_temporal_residual_error_count": null,
+        "non_rigid_temporal_residual_error_numerator": null,
+        "overall_1px": 0.05876743343181036,
+        "overall_1px_count": 380631239,
+        "overall_1px_numerator": 22368721.0,
+        "overall_epe": 0.49170876790714946,
+        "overall_epe_count": 380631239,
+        "overall_epe_numerator": 187159717.55566174,
+        "rigid_temporal_residual_error": null,
+        "rigid_temporal_residual_error_count": null,
+        "rigid_temporal_residual_error_numerator": null,
+        "unmatched_completion_1px": 0.9524137667316556,
+        "unmatched_completion_1px_count": 359841110,
+        "unmatched_completion_1px_numerator": 342717627.0,
+        "unmatched_completion_2px": 0.9831362764526821,
+        "unmatched_completion_2px_count": 359841110,
+        "unmatched_completion_2px_numerator": 353772849.0,
+        "zero_rate": 0.0,
+        "zero_rate_count": 383975424,
+        "zero_rate_numerator": 0.0
+      },
+      "primary_method": null,
+      "purpose": "Full-resolution FFS",
+      "raw_status": "SCREENING_ONLY",
+      "records_evaluated": 1302,
+      "selected_metrics_path": "/home/CNF2026527811/Documents/VGGT-Depth/runs/spring_v31_ffs/arms/F0/eval_common_fixed384/metrics.json",
+      "selection_class": "canonical_fixed384_full",
+      "selection_errors": [],
+      "status": "SCREENING_ONLY",
+      "topk_diagnostics": {},
+      "topk_sources": {}
+    },
+    {
+      "arm": "F1",
+      "candidate_files": [
+        {
+          "checkpoint_step": null,
+          "common_domain_complete": null,
+          "coverage_eligible": null,
+          "crop_mode": null,
+          "crop_origin_hr_xy": null,
+          "endpoint_count": null,
+          "exact_common_dir": false,
+          "final_acceptance_eligible": null,
+          "final_evaluation": false,
+          "final_training_checkpoint": null,
+          "fixed384": false,
+          "hr_crop": null,
+          "mtime": 1788377029.1000843,
+          "origin_matches_protocol": false,
+          "path": "/home/CNF2026527811/Documents/VGGT-Depth/runs/spring_v31_ffs/arms/F1/eval/metrics.json",
+          "records_evaluated": 1302,
+          "status": "SCREENING_ONLY"
+        },
+        {
+          "checkpoint_step": null,
+          "common_domain_complete": true,
+          "coverage_eligible": true,
+          "crop_mode": "fixed",
+          "crop_origin_hr_xy": [
+            576,
+            348
+          ],
+          "endpoint_count": 1302,
+          "exact_common_dir": true,
+          "final_acceptance_eligible": null,
+          "final_evaluation": false,
+          "final_training_checkpoint": null,
+          "fixed384": true,
+          "hr_crop": [
+            384,
+            768
+          ],
+          "mtime": 1788386182.6680965,
+          "origin_matches_protocol": true,
+          "path": "/home/CNF2026527811/Documents/VGGT-Depth/runs/spring_v31_ffs/arms/F1/eval_common_fixed384/metrics.json",
+          "records_evaluated": 1302,
+          "status": "SCREENING_ONLY"
+        },
+        {
+          "checkpoint_step": null,
+          "common_domain_complete": null,
+          "coverage_eligible": null,
+          "crop_mode": "fixed",
+          "crop_origin_hr_xy": [
+            576,
+            348
+          ],
+          "endpoint_count": null,
+          "exact_common_dir": false,
+          "final_acceptance_eligible": null,
+          "final_evaluation": false,
+          "final_training_checkpoint": null,
+          "fixed384": true,
+          "hr_crop": [
+            384,
+            768
+          ],
+          "mtime": 1788381927.924563,
+          "origin_matches_protocol": true,
+          "path": "/home/CNF2026527811/Documents/VGGT-Depth/runs/spring_v31_ffs/arms/F1/eval_fixed384x768/metrics.json",
+          "records_evaluated": 1302,
+          "status": "SCREENING_ONLY"
+        }
+      ],
+      "checkpoint": {
+        "git_hash": null,
+        "parameter_count": null,
+        "path": null,
+        "sha256": null,
+        "step": null,
+        "training_completion": null
+      },
+      "crop": {
+        "fixed384": true,
+        "mode": "fixed",
+        "origin_hr_xy": [
+          576,
+          348
+        ],
+        "origin_matches_protocol": true,
+        "size_hr_hw": [
+          384,
+          768
+        ]
+      },
+      "declared_config_status": null,
+      "eligibility": {
+        "common_domain_complete": true,
+        "common_domain_coverage_eligible": true,
+        "common_domain_endpoint_count": 1302,
+        "coverage_eligible": true,
+        "cross_arm_common_domain_eligible": true,
+        "final_acceptance_eligible": null,
+        "final_training_checkpoint": null,
+        "formal_holdout": null,
+        "is_canary": false,
+        "is_canonical_fixed384": true,
+        "is_limited_evaluation": false,
+        "is_missing": false,
+        "is_optional": false,
+        "records_evaluated": 1302,
+        "status": "SCREENING_ONLY"
+      },
+      "endpoint_count": 1302,
+      "flags": {
+        "cross_arm_common_domain_eligible": true,
+        "is_canary": false,
+        "is_canonical_fixed384": true,
+        "is_final_checkpoint": null,
+        "is_final_evaluation": false,
+        "is_formal_holdout": null,
+        "is_limited_evaluation": false,
+        "is_missing": false,
+        "is_optional": false
+      },
+      "lineage": {
+        "calibration_conditioning": null,
+        "checkpoint_lineage": {},
+        "config": {
+          "declared": {
+            "arm": "F1",
+            "backbone": "Fast-FoundationStereo",
+            "cache_role": "observation",
+            "cache_scale": 2,
+            "checkpoint_label": "20-30-48",
+            "description": "Half-resolution Fast-FoundationStereo observation bilinearly lifted to HR.",
+            "experiment": "spring_v31_ffs_F1_half_bilinear",
+            "max_disp": 192,
+            "protocol": "spring_v31_ffs_common_domain_v1",
+            "resolution_mode": "half_resolution",
+            "stage": "frozen_baseline"
+          },
+          "path": "/home/CNF2026527811/Documents/VGGT-Depth/configs/spring_v31_ffs/F1.yaml",
+          "sha256": "3bc88b3c4d816b524a200593b4b3eb9a408c029b0ed13ecc6e33553cc8ff130a"
+        },
+        "consistency": {
+          "all_available_checks_pass": true,
+          "crop_origin_matches_protocol": true,
+          "crop_size_matches_protocol": true,
+          "endpoint_id_matches_protocol": true,
+          "manifest_matches_protocol": true,
+          "observation_checkpoint_matches_protocol": true
+        },
+        "derived_contract": null,
+        "derived_geometry_cache": null,
+        "endpoint_selection": {
+          "available_endpoint_count": 1350,
+          "endpoint_count": 1302,
+          "endpoint_id_hash_algorithm": "sha256(canonical_json([manifest_index,sequence_id,frame_id,timestamp]))",
+          "endpoint_id_sha256": "aa6ba30295b8d5ab0e1b4326a14fae61f9c8ec42641801cd8442097bc3ab5b57",
+          "entries_sha256": "aa6ba30295b8d5ab0e1b4326a14fae61f9c8ec42641801cd8442097bc3ab5b57",
+          "evaluated_endpoint_count": 1302,
+          "evaluated_endpoint_id_sha256": "aa6ba30295b8d5ab0e1b4326a14fae61f9c8ec42641801cd8442097bc3ab5b57",
+          "file_sha256": "9fa81b1ca652fdd1f33634f83213c28e826db91562125430aedb0beef4f5c838",
+          "first_manifest_index": 6,
+          "kind": "spring_common_endpoint_index",
+          "last_manifest_index": 1349,
+          "manifest_path": "/home/CNF2026527811/Documents/VGGT-Depth/runs/spring_seed42_primary/manifests/validation.jsonl",
+          "manifest_sha256": "6c016bdb4aa7f4a2be07c713cf9ae90b8dccdeab31c76c71d9d0e96b1a8bc45e",
+          "path": "/home/CNF2026527811/Documents/VGGT-Depth/runs/spring_v31_ffs/manifests/common_endpoints.json",
+          "schema_version": 1
+        },
+        "holdout": {},
+        "manifest": {
+          "exists": true,
+          "path": "/home/CNF2026527811/Documents/VGGT-Depth/runs/spring_seed42_primary/manifests/validation.jsonl",
+          "sha256": "6c016bdb4aa7f4a2be07c713cf9ae90b8dccdeab31c76c71d9d0e96b1a8bc45e"
+        },
+        "observation_cache_identity": {
+          "checkpoint_sha256": "98b5a9acf39fbfa795025de8cea95ce123daa40f6b6234d719167751024cf692",
+          "component": "ffs-observation",
+          "config_sha256": "191a0e2ef6d9e4f12ff0e15351178e9feb39767db10c0c98f960e9723d06db48",
+          "cuda_version": "13.0",
+          "torch_version": "2.10.0+cu130",
+          "upstream_commit": "a290ba04c1b3ad1ec41a33974a157b2917b624d4"
+        },
+        "pose_source": "none",
+        "raw_vggt_cache": null,
+        "stage": "frozen_baseline",
+        "teacher_cache_identity": null,
+        "temporal_candidate_fusion": null,
+        "temporal_history": null,
+        "use_vggt_depth": false,
+        "use_vggt_pose": false
+      },
+      "metric_receipts": {
+        "boundary_epe": {
+          "count": 42329899,
+          "numerator": 124862050.16489196,
+          "source_key": "boundary_epe",
+          "valid": true,
+          "value": 2.9497365482703364
+        },
+        "ffs_trusted_measurement_error": {
+          "count": 175827319,
+          "numerator": 34431918.85358243,
+          "source_key": "ffs_trusted_measurement_error",
+          "valid": true,
+          "value": 0.19582803769863788
+        },
+        "high_detail_1px": {
+          "count": 4659725,
+          "numerator": 2818407.0,
+          "source_key": "high_detail_1px",
+          "valid": true,
+          "value": 0.6048440626861027
+        },
+        "high_detail_epe": {
+          "count": 4659725,
+          "numerator": 35731479.3730849,
+          "source_key": "high_detail_epe",
+          "valid": true,
+          "value": 7.668151955981287
+        },
+        "invalid_rate": {
+          "count": 383975424,
+          "numerator": 0.0,
+          "source_key": "invalid_rate",
+          "valid": true,
+          "value": 0.0
+        },
+        "low_detail_epe": {
+          "count": 375971514,
+          "numerator": 192446133.20039365,
+          "source_key": "low_detail_epe",
+          "valid": true,
+          "value": 0.5118636014546402
+        },
+        "matched_epe": {
+          "count": 20790129,
+          "numerator": 63260540.37643115,
+          "source_key": "matched_epe",
+          "valid": true,
+          "value": 3.0428161545525354
+        },
+        "negative_rate": {
+          "count": 383975424,
+          "numerator": 10470.0,
+          "source_key": "negative_rate",
+          "valid": true,
+          "value": 2.726737011168715e-05
+        },
+        "non_rigid_temporal_residual_error": {
+          "count": null,
+          "numerator": null,
+          "source_key": null,
+          "valid": false,
+          "value": null
+        },
+        "overall_1px": {
+          "count": 380631239,
+          "numerator": 26550986.0,
+          "source_key": "overall_1px",
+          "valid": true,
+          "value": 0.0697551416687583
+        },
+        "overall_epe": {
+          "count": 380631239,
+          "numerator": 228177612.57347855,
+          "source_key": "overall_epe",
+          "valid": true,
+          "value": 0.5994715861287427
+        },
+        "rigid_temporal_residual_error": {
+          "count": null,
+          "numerator": null,
+          "source_key": null,
+          "valid": false,
+          "value": null
+        },
+        "unmatched_completion_1px": {
+          "count": 359841110,
+          "numerator": 339350163.0,
+          "source_key": "unmatched_completion_1px",
+          "valid": true,
+          "value": 0.9430555697207581
+        },
+        "unmatched_completion_2px": {
+          "count": 359841110,
+          "numerator": 353141590.0,
+          "source_key": "unmatched_completion_2px",
+          "valid": true,
+          "value": 0.9813820049632461
+        },
+        "zero_rate": {
+          "count": 383975424,
+          "numerator": 0.0,
+          "source_key": "zero_rate",
+          "valid": true,
+          "value": 0.0
+        }
+      },
+      "metric_source": "metrics",
+      "metric_sources": {
+        "boundary_epe": "boundary_epe",
+        "ffs_trusted_measurement_error": "ffs_trusted_measurement_error",
+        "high_detail_1px": "high_detail_1px",
+        "high_detail_epe": "high_detail_epe",
+        "invalid_rate": "invalid_rate",
+        "low_detail_epe": "low_detail_epe",
+        "matched_epe": "matched_epe",
+        "negative_rate": "negative_rate",
+        "non_rigid_temporal_residual_error": null,
+        "overall_1px": "overall_1px",
+        "overall_epe": "overall_epe",
+        "rigid_temporal_residual_error": null,
+        "unmatched_completion_1px": "unmatched_completion_1px",
+        "unmatched_completion_2px": "unmatched_completion_2px",
+        "zero_rate": "zero_rate"
+      },
+      "metrics": {
+        "boundary_epe": 2.9497365482703364,
+        "boundary_epe_count": 42329899,
+        "boundary_epe_numerator": 124862050.16489196,
+        "ffs_trusted_measurement_error": 0.19582803769863788,
+        "ffs_trusted_measurement_error_count": 175827319,
+        "ffs_trusted_measurement_error_numerator": 34431918.85358243,
+        "high_detail_1px": 0.6048440626861027,
+        "high_detail_1px_count": 4659725,
+        "high_detail_1px_numerator": 2818407.0,
+        "high_detail_epe": 7.668151955981287,
+        "high_detail_epe_count": 4659725,
+        "high_detail_epe_numerator": 35731479.3730849,
+        "invalid_rate": 0.0,
+        "invalid_rate_count": 383975424,
+        "invalid_rate_numerator": 0.0,
+        "low_detail_epe": 0.5118636014546402,
+        "low_detail_epe_count": 375971514,
+        "low_detail_epe_numerator": 192446133.20039365,
+        "matched_epe": 3.0428161545525354,
+        "matched_epe_count": 20790129,
+        "matched_epe_numerator": 63260540.37643115,
+        "negative_rate": 2.726737011168715e-05,
+        "negative_rate_count": 383975424,
+        "negative_rate_numerator": 10470.0,
+        "non_rigid_temporal_residual_error": null,
+        "non_rigid_temporal_residual_error_count": null,
+        "non_rigid_temporal_residual_error_numerator": null,
+        "overall_1px": 0.0697551416687583,
+        "overall_1px_count": 380631239,
+        "overall_1px_numerator": 26550986.0,
+        "overall_epe": 0.5994715861287427,
+        "overall_epe_count": 380631239,
+        "overall_epe_numerator": 228177612.57347855,
+        "rigid_temporal_residual_error": null,
+        "rigid_temporal_residual_error_count": null,
+        "rigid_temporal_residual_error_numerator": null,
+        "unmatched_completion_1px": 0.9430555697207581,
+        "unmatched_completion_1px_count": 359841110,
+        "unmatched_completion_1px_numerator": 339350163.0,
+        "unmatched_completion_2px": 0.9813820049632461,
+        "unmatched_completion_2px_count": 359841110,
+        "unmatched_completion_2px_numerator": 353141590.0,
+        "zero_rate": 0.0,
+        "zero_rate_count": 383975424,
+        "zero_rate_numerator": 0.0
+      },
+      "primary_method": null,
+      "purpose": "Half-resolution FFS + bilinear",
+      "raw_status": "SCREENING_ONLY",
+      "records_evaluated": 1302,
+      "selected_metrics_path": "/home/CNF2026527811/Documents/VGGT-Depth/runs/spring_v31_ffs/arms/F1/eval_common_fixed384/metrics.json",
+      "selection_class": "canonical_fixed384_full",
+      "selection_errors": [],
+      "status": "SCREENING_ONLY",
+      "topk_diagnostics": {},
+      "topk_sources": {}
+    },
+    {
+      "arm": "F2",
+      "candidate_files": [
+        {
+          "checkpoint_step": 5000,
+          "common_domain_complete": null,
+          "coverage_eligible": false,
+          "crop_mode": "full",
+          "crop_origin_hr_xy": null,
+          "endpoint_count": 1302,
+          "exact_common_dir": false,
+          "final_acceptance_eligible": false,
+          "final_evaluation": false,
+          "final_training_checkpoint": true,
+          "fixed384": false,
+          "hr_crop": null,
+          "mtime": 1788377945.069359,
+          "origin_matches_protocol": false,
+          "path": "/home/CNF2026527811/Documents/VGGT-Depth/runs/spring_v31_ffs/arms/F2/eval/metrics.json",
+          "records_evaluated": 1302,
+          "status": "LIMITED_EVALUATION_COMPLETE"
+        },
+        {
+          "checkpoint_step": 5000,
+          "common_domain_complete": true,
+          "coverage_eligible": true,
+          "crop_mode": "fixed",
+          "crop_origin_hr_xy": [
+            576,
+            348
+          ],
+          "endpoint_count": 1302,
+          "exact_common_dir": true,
+          "final_acceptance_eligible": true,
+          "final_evaluation": true,
+          "final_training_checkpoint": true,
+          "fixed384": true,
+          "hr_crop": [
+            384,
+            768
+          ],
+          "mtime": 1788385247.750004,
+          "origin_matches_protocol": true,
+          "path": "/home/CNF2026527811/Documents/VGGT-Depth/runs/spring_v31_ffs/arms/F2/eval_common_fixed384/metrics.json",
+          "records_evaluated": 1302,
+          "status": "FINAL_CHECKPOINT_EVALUATION_COMPLETE"
+        }
+      ],
+      "checkpoint": {
+        "git_hash": "c330270a51a22ec6a7fb11b2d5415acc13f5c649",
+        "parameter_count": 1778244,
+        "path": "/home/CNF2026527811/Documents/VGGT-Depth/runs/spring_v31_ffs/arms/F2/train/final.pt",
+        "sha256": "691c0d1e254e6f391b493b12119d47c82fa9e6a78bce16a3064fccf9a342cdb3",
+        "step": 5000,
+        "training_completion": {
+          "actual_step": 5000,
+          "canonical_schedule": true,
+          "canonical_steps": 5000,
+          "configured_steps": 5000,
+          "declared_schedule_steps": 5000,
+          "execution_complete": true,
+          "final_training_checkpoint": true,
+          "stage": "spatial"
+        }
+      },
+      "crop": {
+        "fixed384": true,
+        "mode": "fixed",
+        "origin_hr_xy": [
+          576,
+          348
+        ],
+        "origin_matches_protocol": true,
+        "size_hr_hw": [
+          384,
+          768
+        ]
+      },
+      "declared_config_status": null,
+      "eligibility": {
+        "common_domain_complete": true,
+        "common_domain_coverage_eligible": true,
+        "common_domain_endpoint_count": 1302,
+        "coverage_eligible": true,
+        "cross_arm_common_domain_eligible": true,
+        "final_acceptance_eligible": true,
+        "final_training_checkpoint": true,
+        "formal_holdout": null,
+        "is_canary": false,
+        "is_canonical_fixed384": true,
+        "is_limited_evaluation": false,
+        "is_missing": false,
+        "is_optional": false,
+        "records_evaluated": 1302,
+        "status": "FINAL_CHECKPOINT_EVALUATION_COMPLETE"
+      },
+      "endpoint_count": 1302,
+      "flags": {
+        "cross_arm_common_domain_eligible": true,
+        "is_canary": false,
+        "is_canonical_fixed384": true,
+        "is_final_checkpoint": true,
+        "is_final_evaluation": true,
+        "is_formal_holdout": null,
+        "is_limited_evaluation": false,
+        "is_missing": false,
+        "is_optional": false
+      },
+      "lineage": {
+        "calibration_conditioning": {
+          "enabled": true,
+          "pixel_center_contract": "align_corners_false_half_pixel_v3_1",
+          "protocol_version": "dense_rays_factorized_pose_v3",
+          "use_rays": true,
+          "use_stereo_pose": true,
+          "use_temporal_pose": false
+        },
+        "checkpoint_lineage": {
+          "source_sequence_length": 1,
+          "stage": "spatial"
+        },
+        "config": {
+          "declared": {
+            "arm": "F2",
+            "defaults_from": "configs/ablations/v3_1_a3_rays_stereo_pose.yaml",
+            "experiment": "spring_v31_ffs_F2_v31_t1",
+            "stage": "spatial",
+            "temporal_pose_source": "gt",
+            "use_history": false,
+            "use_vggt_depth": false,
+            "use_vggt_pose": false
+          },
+          "path": "/home/CNF2026527811/Documents/VGGT-Depth/configs/spring_v31_ffs/F2.yaml",
+          "sha256": "59852a64299f842b6d4ea31fd22e1e2337e812066a7a1c303e604c6212b60d41"
+        },
+        "consistency": {
+          "all_available_checks_pass": true,
+          "crop_origin_matches_protocol": true,
+          "crop_size_matches_protocol": true,
+          "endpoint_id_matches_protocol": true,
+          "manifest_matches_protocol": true,
+          "observation_checkpoint_matches_protocol": true
+        },
+        "derived_contract": "calibrated_stereo_v2",
+        "derived_geometry_cache": null,
+        "endpoint_selection": {
+          "available_endpoint_count": 1350,
+          "common_domain_complete": true,
+          "common_domain_expected_endpoint_count": 1302,
+          "coverage_scope": "common_domain",
+          "endpoint_count": 1302,
+          "endpoint_id_hash_algorithm": "sha256(canonical_json([manifest_index,sequence_id,frame_id,timestamp]))",
+          "endpoint_id_sha256": "aa6ba30295b8d5ab0e1b4326a14fae61f9c8ec42641801cd8442097bc3ab5b57",
+          "entries_sha256": "aa6ba30295b8d5ab0e1b4326a14fae61f9c8ec42641801cd8442097bc3ab5b57",
+          "evaluated_endpoint_count": 1302,
+          "evaluated_endpoint_id_sha256": "aa6ba30295b8d5ab0e1b4326a14fae61f9c8ec42641801cd8442097bc3ab5b57",
+          "file_sha256": "9fa81b1ca652fdd1f33634f83213c28e826db91562125430aedb0beef4f5c838",
+          "first_manifest_index": 6,
+          "kind": "spring_common_endpoint_index",
+          "last_manifest_index": 1349,
+          "manifest_path": "/home/CNF2026527811/Documents/VGGT-Depth/runs/spring_seed42_primary/manifests/validation.jsonl",
+          "manifest_sha256": "6c016bdb4aa7f4a2be07c713cf9ae90b8dccdeab31c76c71d9d0e96b1a8bc45e",
+          "path": "/home/CNF2026527811/Documents/VGGT-Depth/runs/spring_v31_ffs/manifests/common_endpoints.json",
+          "schema_version": 1
+        },
+        "holdout": {},
+        "manifest": {
+          "exists": true,
+          "path": "/home/CNF2026527811/Documents/VGGT-Depth/runs/spring_seed42_primary/manifests/validation.jsonl",
+          "sha256": "6c016bdb4aa7f4a2be07c713cf9ae90b8dccdeab31c76c71d9d0e96b1a8bc45e"
+        },
+        "observation_cache_identity": {
+          "checkpoint_sha256": "98b5a9acf39fbfa795025de8cea95ce123daa40f6b6234d719167751024cf692",
+          "component": "ffs-observation",
+          "config_sha256": "191a0e2ef6d9e4f12ff0e15351178e9feb39767db10c0c98f960e9723d06db48",
+          "cuda_version": "13.0",
+          "torch_version": "2.10.0+cu130",
+          "upstream_commit": "a290ba04c1b3ad1ec41a33974a157b2917b624d4"
+        },
+        "pose_source": "gt",
+        "raw_vggt_cache": null,
+        "stage": "spatial",
+        "teacher_cache_identity": {
+          "checkpoint_sha256": "3127a97e557036a275d99b4e0510a0cd752b4804ec2a8d576642ccf13d7eacd4",
+          "component": "ffs-teacher",
+          "config_sha256": "a3dc273e765109509f3eca8f8036c590318e36f067fd38344f6aaa891a203160",
+          "cuda_version": "13.0",
+          "torch_version": "2.10.0+cu130",
+          "upstream_commit": "Spring_GT:cam_data+disp1_left"
+        },
+        "temporal_candidate_fusion": {
+          "enabled": true,
+          "per_age_quota": 2,
+          "phase_redundancy_penalty": 0.25,
+          "phase_redundancy_sigma_grid_px": 0.125,
+          "protocol_version": "current_conditioned_age_phase_diverse_v3_1",
+          "surface_depth_gap_m": 0.05,
+          "surface_relative_depth_gap": 0.05
+        },
+        "temporal_history": {
+          "age_temperature_frames": 3.0,
+          "candidate_feature_channels": 32,
+          "collision_depth_gap_m": 0.05,
+          "collision_relative_depth_gap": 0.05,
+          "depth_temperature_m": 0.25,
+          "enabled": true,
+          "memory_frames": 2,
+          "protocol_version": "topk_z_aware_hidden_warp_v2",
+          "source_collision_penalty": 0.5,
+          "splat_footprint": "bilinear",
+          "top_k": 4
+        },
+        "use_vggt_depth": false,
+        "use_vggt_pose": false
+      },
+      "metric_receipts": {
+        "boundary_epe": {
+          "count": 42329899,
+          "numerator": 116173813.24563074,
+          "source_key": "boundary_epe",
+          "valid": true,
+          "value": 2.744485954139195
+        },
+        "ffs_trusted_measurement_error": {
+          "count": 175827319,
+          "numerator": 34430602.64787625,
+          "source_key": "ffs_trusted_measurement_error",
+          "valid": true,
+          "value": 0.19582055191250597
+        },
+        "high_detail_1px": {
+          "count": 4659725,
+          "numerator": 2751220.0,
+          "source_key": "high_detail_1px",
+          "valid": true,
+          "value": 0.5904254006405958
+        },
+        "high_detail_epe": {
+          "count": 4659725,
+          "numerator": 34438312.59427058,
+          "source_key": "high_detail_epe",
+          "valid": true,
+          "value": 7.390631978125443
+        },
+        "invalid_rate": {
+          "count": 383975424,
+          "numerator": 0.0,
+          "source_key": "invalid_rate",
+          "valid": true,
+          "value": 0.0
+        },
+        "low_detail_epe": {
+          "count": 375971514,
+          "numerator": 188715101.15094098,
+          "source_key": "low_detail_epe",
+          "valid": true,
+          "value": 0.5019398920497498
+        },
+        "matched_epe": {
+          "count": 20790129,
+          "numerator": 60385964.207305215,
+          "source_key": "matched_epe",
+          "valid": true,
+          "value": 2.9045497604803323
+        },
+        "negative_rate": {
+          "count": 383975424,
+          "numerator": 0.0,
+          "source_key": "negative_rate",
+          "valid": true,
+          "value": 0.0
+        },
+        "non_rigid_temporal_residual_error": {
+          "count": 0,
+          "numerator": null,
+          "source_key": "non_rigid_temporal_residual_error",
+          "valid": false,
+          "value": null
+        },
+        "overall_1px": {
+          "count": 380631239,
+          "numerator": 27646325.0,
+          "source_key": "overall_1px",
+          "valid": true,
+          "value": 0.07263283243023572
+        },
+        "overall_epe": {
+          "count": 380631239,
+          "numerator": 223153413.7452115,
+          "source_key": "overall_epe",
+          "valid": true,
+          "value": 0.5862719369316177
+        },
+        "rigid_temporal_residual_error": {
+          "count": 0,
+          "numerator": null,
+          "source_key": "rigid_temporal_residual_error",
+          "valid": false,
+          "value": null
+        },
+        "unmatched_completion_1px": {
+          "count": 359841110,
+          "numerator": 338387328.0,
+          "source_key": "unmatched_completion_1px",
+          "valid": true,
+          "value": 0.94037984709418
+        },
+        "unmatched_completion_2px": {
+          "count": 359841110,
+          "numerator": 351743143.0,
+          "source_key": "unmatched_completion_2px",
+          "valid": true,
+          "value": 0.97749571470586
+        },
+        "zero_rate": {
+          "count": 383975424,
+          "numerator": 4137567.0,
+          "source_key": "zero_rate",
+          "valid": true,
+          "value": 0.010775603701136872
+        }
+      },
+      "metric_source": "spring_native_metrics.methods.T1",
+      "metric_sources": {
+        "boundary_epe": "boundary_epe",
+        "ffs_trusted_measurement_error": "ffs_trusted_measurement_error",
+        "high_detail_1px": "high_detail_1px",
+        "high_detail_epe": "high_detail_epe",
+        "invalid_rate": "invalid_rate",
+        "low_detail_epe": "low_detail_epe",
+        "matched_epe": "matched_epe",
+        "negative_rate": "negative_rate",
+        "non_rigid_temporal_residual_error": "non_rigid_temporal_residual_error",
+        "overall_1px": "overall_1px",
+        "overall_epe": "overall_epe",
+        "rigid_temporal_residual_error": "rigid_temporal_residual_error",
+        "unmatched_completion_1px": "unmatched_completion_1px",
+        "unmatched_completion_2px": "unmatched_completion_2px",
+        "zero_rate": "zero_rate"
+      },
+      "metrics": {
+        "boundary_epe": 2.744485954139195,
+        "boundary_epe_count": 42329899,
+        "boundary_epe_numerator": 116173813.24563074,
+        "ffs_trusted_measurement_error": 0.19582055191250597,
+        "ffs_trusted_measurement_error_count": 175827319,
+        "ffs_trusted_measurement_error_numerator": 34430602.64787625,
+        "high_detail_1px": 0.5904254006405958,
+        "high_detail_1px_count": 4659725,
+        "high_detail_1px_numerator": 2751220.0,
+        "high_detail_epe": 7.390631978125443,
+        "high_detail_epe_count": 4659725,
+        "high_detail_epe_numerator": 34438312.59427058,
+        "invalid_rate": 0.0,
+        "invalid_rate_count": 383975424,
+        "invalid_rate_numerator": 0.0,
+        "low_detail_epe": 0.5019398920497498,
+        "low_detail_epe_count": 375971514,
+        "low_detail_epe_numerator": 188715101.15094098,
+        "matched_epe": 2.9045497604803323,
+        "matched_epe_count": 20790129,
+        "matched_epe_numerator": 60385964.207305215,
+        "negative_rate": 0.0,
+        "negative_rate_count": 383975424,
+        "negative_rate_numerator": 0.0,
+        "non_rigid_temporal_residual_error": null,
+        "non_rigid_temporal_residual_error_count": 0,
+        "non_rigid_temporal_residual_error_numerator": null,
+        "overall_1px": 0.07263283243023572,
+        "overall_1px_count": 380631239,
+        "overall_1px_numerator": 27646325.0,
+        "overall_epe": 0.5862719369316177,
+        "overall_epe_count": 380631239,
+        "overall_epe_numerator": 223153413.7452115,
+        "rigid_temporal_residual_error": null,
+        "rigid_temporal_residual_error_count": 0,
+        "rigid_temporal_residual_error_numerator": null,
+        "unmatched_completion_1px": 0.94037984709418,
+        "unmatched_completion_1px_count": 359841110,
+        "unmatched_completion_1px_numerator": 338387328.0,
+        "unmatched_completion_2px": 0.97749571470586,
+        "unmatched_completion_2px_count": 359841110,
+        "unmatched_completion_2px_numerator": 351743143.0,
+        "zero_rate": 0.010775603701136872,
+        "zero_rate_count": 383975424,
+        "zero_rate_numerator": 4137567.0
+      },
+      "primary_method": "T1",
+      "purpose": "Half-resolution FFS + v3.1 T1",
+      "raw_status": "FINAL_CHECKPOINT_EVALUATION_COMPLETE",
+      "records_evaluated": 1302,
+      "selected_metrics_path": "/home/CNF2026527811/Documents/VGGT-Depth/runs/spring_v31_ffs/arms/F2/eval_common_fixed384/metrics.json",
+      "selection_class": "canonical_fixed384_full",
+      "selection_errors": [],
+      "status": "FINAL_CHECKPOINT_EVALUATION_COMPLETE",
+      "topk_diagnostics": {},
+      "topk_sources": {}
+    },
+    {
+      "arm": "F3",
+      "candidate_files": [
+        {
+          "checkpoint_step": 2000,
+          "common_domain_complete": null,
+          "coverage_eligible": false,
+          "crop_mode": "full",
+          "crop_origin_hr_xy": null,
+          "endpoint_count": 1302,
+          "exact_common_dir": false,
+          "final_acceptance_eligible": false,
+          "final_evaluation": false,
+          "final_training_checkpoint": false,
+          "fixed384": false,
+          "hr_crop": null,
+          "mtime": 1788381259.8544953,
+          "origin_matches_protocol": false,
+          "path": "/home/CNF2026527811/Documents/VGGT-Depth/runs/spring_v31_ffs/arms/F3/eval_step2000_64/metrics.json",
+          "records_evaluated": 64,
+          "status": "NON_HOLDOUT_SMOKE_COMPLETE"
+        },
+        {
+          "checkpoint_step": 2000,
+          "common_domain_complete": false,
+          "coverage_eligible": false,
+          "crop_mode": "fixed",
+          "crop_origin_hr_xy": [
+            576,
+            348
+          ],
+          "endpoint_count": 1302,
+          "exact_common_dir": false,
+          "final_acceptance_eligible": false,
+          "final_evaluation": false,
+          "final_training_checkpoint": false,
+          "fixed384": true,
+          "hr_crop": [
+            384,
+            768
+          ],
+          "mtime": 1788385413.1241934,
+          "origin_matches_protocol": true,
+          "path": "/home/CNF2026527811/Documents/VGGT-Depth/runs/spring_v31_ffs/arms/F3/eval_step2000_64_fixed384/metrics.json",
+          "records_evaluated": 64,
+          "status": "LIMITED_EVALUATION_COMPLETE"
+        }
+      ],
+      "checkpoint": {
+        "git_hash": "c330270a51a22ec6a7fb11b2d5415acc13f5c649",
+        "parameter_count": 1733260,
+        "path": "/home/CNF2026527811/Documents/VGGT-Depth/runs/spring_v31_ffs/arms/F3/train/latest.pt",
+        "sha256": "ab202ec53ccc9e1e6ca520768b6738b7b702985528b5118c4f73d8427514abf2",
+        "step": 2000,
+        "training_completion": {
+          "actual_step": 2000,
+          "canonical_schedule": true,
+          "canonical_steps": 15000,
+          "configured_steps": 15000,
+          "declared_schedule_steps": 15000,
+          "execution_complete": false,
+          "final_training_checkpoint": false,
+          "stage": "temporal"
+        }
+      },
+      "crop": {
+        "fixed384": true,
+        "mode": "fixed",
+        "origin_hr_xy": [
+          576,
+          348
+        ],
+        "origin_matches_protocol": true,
+        "size_hr_hw": [
+          384,
+          768
+        ]
+      },
+      "declared_config_status": null,
+      "eligibility": {
+        "common_domain_complete": false,
+        "common_domain_coverage_eligible": false,
+        "common_domain_endpoint_count": 1302,
+        "coverage_eligible": false,
+        "cross_arm_common_domain_eligible": false,
+        "final_acceptance_eligible": false,
+        "final_training_checkpoint": false,
+        "formal_holdout": true,
+        "is_canary": true,
+        "is_canonical_fixed384": true,
+        "is_limited_evaluation": true,
+        "is_missing": false,
+        "is_optional": false,
+        "records_evaluated": 64,
+        "status": "LIMITED_EVALUATION_COMPLETE"
+      },
+      "endpoint_count": 1302,
+      "flags": {
+        "cross_arm_common_domain_eligible": false,
+        "is_canary": true,
+        "is_canonical_fixed384": true,
+        "is_final_checkpoint": false,
+        "is_final_evaluation": false,
+        "is_formal_holdout": true,
+        "is_limited_evaluation": true,
+        "is_missing": false,
+        "is_optional": false
+      },
+      "lineage": {
+        "calibration_conditioning": {
+          "enabled": false,
+          "protocol_version": "disabled",
+          "use_rays": false,
+          "use_stereo_pose": false,
+          "use_temporal_pose": false
+        },
+        "checkpoint_lineage": {
+          "source_sequence_length": 3,
+          "stage": "temporal",
+          "stage_a_initialization_path": "/home/CNF2026527811/Documents/VGGT-Depth/runs/spring_v31_ffs/arms/F3_init/train/final.pt",
+          "stage_a_initialization_sha256": "a5e19e246167991d45d4f1b665f745fb7c085029226cc3c0d933c8ae7a5bafce",
+          "temporal_pose_source": "gt"
+        },
+        "config": {
+          "declared": {
+            "arm": "F3",
+            "defaults_from": "configs/ablations/temporal_x2_v2_strict_bilinear_gt_no_depth.yaml",
+            "experiment": "spring_v31_ffs_F3_v2_k2_gt_pose",
+            "stage": "temporal",
+            "temporal_pose_source": "gt",
+            "use_vggt_depth": false,
+            "use_vggt_pose": false
+          },
+          "path": "/home/CNF2026527811/Documents/VGGT-Depth/configs/spring_v31_ffs/F3.yaml",
+          "sha256": "fb0df8512e7e4d2d658d8558755f347e358f09c087fec1acbfc487589cae3a5f"
+        },
+        "consistency": {
+          "all_available_checks_pass": true,
+          "crop_origin_matches_protocol": true,
+          "crop_size_matches_protocol": true,
+          "endpoint_id_matches_protocol": true,
+          "manifest_matches_protocol": true,
+          "observation_checkpoint_matches_protocol": true
+        },
+        "derived_contract": "legacy_v1",
+        "derived_geometry_cache": {
+          "cache_manifest_path": "/home/CNF2026527811/Documents/VGGT-Depth/runs/spring_v31_ffs/cache/validation/derived_gt_pose_no_depth/cache_manifest.jsonl",
+          "cache_manifest_sha256": "3db49f7d404d996a0c6e594e5ace1395d92d6d2906242a5c1969934d56575355",
+          "component": "vggt-ffs-derived-geometry-batch",
+          "config": {
+            "algorithm": "baseline_metric_scale+scale_only_alignment+strict_pose_quality",
+            "current_left_view_index": 8,
+            "depth_source": "copied_from_vggt_derived",
+            "pose_source": "Spring_GT_pose",
+            "previous_left_view_index": 6,
+            "schema_version": 1
+          },
+          "derived_cache_root": "/home/CNF2026527811/Documents/VGGT-Depth/runs/spring_v31_ffs/cache/validation/derived_gt_pose_no_depth",
+          "run_receipt_path": "/home/CNF2026527811/Documents/VGGT-Depth/runs/spring_v31_ffs/cache/validation/derived_gt_pose_no_depth/run_receipt.json",
+          "run_receipt_sha256": "766352e9da4841af10766bc784b88a51eaa91f9fbd0ec293c7aed992ce3bfb19",
+          "selected_records": 1318
+        },
+        "endpoint_selection": {
+          "available_endpoint_count": 1302,
+          "common_domain_complete": false,
+          "common_domain_expected_endpoint_count": 1302,
+          "coverage_scope": "limited_subset",
+          "endpoint_count": 1302,
+          "endpoint_id_hash_algorithm": "sha256(canonical_json([manifest_index,sequence_id,frame_id,timestamp]))",
+          "endpoint_id_sha256": "aa6ba30295b8d5ab0e1b4326a14fae61f9c8ec42641801cd8442097bc3ab5b57",
+          "entries_sha256": "aa6ba30295b8d5ab0e1b4326a14fae61f9c8ec42641801cd8442097bc3ab5b57",
+          "evaluated_endpoint_count": 64,
+          "evaluated_endpoint_id_sha256": "452b4b05fe9164317b1ab1f60c714a5ad8ec7b6c28ce309a48e3f03fac89449d",
+          "file_sha256": "9fa81b1ca652fdd1f33634f83213c28e826db91562125430aedb0beef4f5c838",
+          "first_manifest_index": 6,
+          "kind": "spring_common_endpoint_index",
+          "last_manifest_index": 1349,
+          "manifest_path": "/home/CNF2026527811/Documents/VGGT-Depth/runs/spring_seed42_primary/manifests/validation.jsonl",
+          "manifest_sha256": "6c016bdb4aa7f4a2be07c713cf9ae90b8dccdeab31c76c71d9d0e96b1a8bc45e",
+          "path": "/home/CNF2026527811/Documents/VGGT-Depth/runs/spring_v31_ffs/manifests/common_endpoints.json",
+          "schema_version": 1
+        },
+        "holdout": {
+          "evaluation_sequences": [
+            "0005",
+            "0010",
+            "0015",
+            "0021",
+            "0023",
+            "0030",
+            "0032",
+            "0047"
+          ],
+          "formal_holdout": true,
+          "pose_source": "gt",
+          "same_manifest": false,
+          "sequence_overlap": [],
+          "training_sequences": [
+            "0001",
+            "0002",
+            "0004",
+            "0006",
+            "0007",
+            "0008",
+            "0009",
+            "0011",
+            "0012",
+            "0013",
+            "0014",
+            "0016",
+            "0017",
+            "0018",
+            "0020",
+            "0022",
+            "0024",
+            "0025",
+            "0026",
+            "0027",
+            "0033",
+            "0036",
+            "0037",
+            "0038",
+            "0039",
+            "0041",
+            "0043",
+            "0044",
+            "0045"
+          ]
+        },
+        "manifest": {
+          "exists": true,
+          "path": "/home/CNF2026527811/Documents/VGGT-Depth/runs/spring_seed42_primary/manifests/validation.jsonl",
+          "sha256": "6c016bdb4aa7f4a2be07c713cf9ae90b8dccdeab31c76c71d9d0e96b1a8bc45e"
+        },
+        "observation_cache_identity": {
+          "checkpoint_sha256": "98b5a9acf39fbfa795025de8cea95ce123daa40f6b6234d719167751024cf692",
+          "component": "ffs-observation",
+          "config_sha256": "191a0e2ef6d9e4f12ff0e15351178e9feb39767db10c0c98f960e9723d06db48",
+          "cuda_version": "13.0",
+          "torch_version": "2.10.0+cu130",
+          "upstream_commit": "a290ba04c1b3ad1ec41a33974a157b2917b624d4"
+        },
+        "pose_source": "gt",
+        "raw_vggt_cache": null,
+        "stage": "temporal",
+        "teacher_cache_identity": {
+          "checkpoint_sha256": "3127a97e557036a275d99b4e0510a0cd752b4804ec2a8d576642ccf13d7eacd4",
+          "component": "ffs-teacher",
+          "config_sha256": "a3dc273e765109509f3eca8f8036c590318e36f067fd38344f6aaa891a203160",
+          "cuda_version": "13.0",
+          "torch_version": "2.10.0+cu130",
+          "upstream_commit": "Spring_GT:cam_data+disp1_left"
+        },
+        "temporal_candidate_fusion": null,
+        "temporal_history": {
+          "age_temperature_frames": 3.0,
+          "candidate_feature_channels": 32,
+          "collision_depth_gap_m": 0.05,
+          "collision_relative_depth_gap": 0.05,
+          "depth_temperature_m": 0.25,
+          "enabled": true,
+          "memory_frames": 2,
+          "protocol_version": "topk_z_aware_hidden_warp_v2",
+          "source_collision_penalty": 0.5,
+          "splat_footprint": "bilinear",
+          "top_k": 2
+        },
+        "use_vggt_depth": false,
+        "use_vggt_pose": false
+      },
+      "metric_receipts": {
+        "boundary_epe": {
+          "count": 1777194,
+          "numerator": 10020278.436802864,
+          "source_key": "boundary_epe",
+          "valid": true,
+          "value": 5.638258083699846
+        },
+        "ffs_trusted_measurement_error": {
+          "count": 4493652,
+          "numerator": 1202124.443359375,
+          "source_key": "ffs_trusted_measurement_error",
+          "valid": true,
+          "value": 0.26751614129429135
+        },
+        "high_detail_1px": {
+          "count": 304525,
+          "numerator": 192037.0,
+          "source_key": "high_detail_1px",
+          "valid": true,
+          "value": 0.6306116082423446
+        },
+        "high_detail_epe": {
+          "count": 304525,
+          "numerator": 4609675.8729457855,
+          "source_key": "high_detail_epe",
+          "valid": true,
+          "value": 15.137265817078353
+        },
+        "invalid_rate": {
+          "count": 18874368,
+          "numerator": 0.0,
+          "source_key": "invalid_rate",
+          "valid": true,
+          "value": 0.0
+        },
+        "low_detail_epe": {
+          "count": 18569843,
+          "numerator": 10741480.144271374,
+          "source_key": "low_detail_epe",
+          "valid": true,
+          "value": 0.5784367775361038
+        },
+        "matched_epe": {
+          "count": 1741496,
+          "numerator": 4596205.60485363,
+          "source_key": "matched_epe",
+          "valid": true,
+          "value": 2.639228344396789
+        },
+        "negative_rate": {
+          "count": 18874368,
+          "numerator": 0.0,
+          "source_key": "negative_rate",
+          "valid": true,
+          "value": 0.0
+        },
+        "non_rigid_temporal_residual_error": {
+          "count": 8082687,
+          "numerator": 999717.558986187,
+          "source_key": "non_rigid_temporal_residual_error",
+          "valid": true,
+          "value": 0.12368628885248024
+        },
+        "overall_1px": {
+          "count": 18874368,
+          "numerator": 993214.0,
+          "source_key": "overall_1px",
+          "valid": true,
+          "value": 0.05262237124972873
+        },
+        "overall_epe": {
+          "count": 18874368,
+          "numerator": 15351156.01721716,
+          "source_key": "overall_epe",
+          "valid": true,
+          "value": 0.8133335122647369
+        },
+        "rigid_temporal_residual_error": {
+          "count": 9508895,
+          "numerator": 4890929.6329422,
+          "source_key": "rigid_temporal_residual_error",
+          "valid": true,
+          "value": 0.5143531012743542
+        },
+        "unmatched_completion_1px": {
+          "count": 17132872,
+          "numerator": 16344895.0,
+          "source_key": "unmatched_completion_1px",
+          "valid": true,
+          "value": 0.9540078861267393
+        },
+        "unmatched_completion_2px": {
+          "count": 17132872,
+          "numerator": 16813026.0,
+          "source_key": "unmatched_completion_2px",
+          "valid": true,
+          "value": 0.9813314428544146
+        },
+        "zero_rate": {
+          "count": 18874368,
+          "numerator": 666.0,
+          "source_key": "zero_rate",
+          "valid": true,
+          "value": 3.528594970703125e-05
+        }
+      },
+      "metric_source": "spring_native_metrics.methods.T3",
+      "metric_sources": {
+        "boundary_epe": "boundary_epe",
+        "ffs_trusted_measurement_error": "ffs_trusted_measurement_error",
+        "high_detail_1px": "high_detail_1px",
+        "high_detail_epe": "high_detail_epe",
+        "invalid_rate": "invalid_rate",
+        "low_detail_epe": "low_detail_epe",
+        "matched_epe": "matched_epe",
+        "negative_rate": "negative_rate",
+        "non_rigid_temporal_residual_error": "non_rigid_temporal_residual_error",
+        "overall_1px": "overall_1px",
+        "overall_epe": "overall_epe",
+        "rigid_temporal_residual_error": "rigid_temporal_residual_error",
+        "unmatched_completion_1px": "unmatched_completion_1px",
+        "unmatched_completion_2px": "unmatched_completion_2px",
+        "zero_rate": "zero_rate"
+      },
+      "metrics": {
+        "boundary_epe": 5.638258083699846,
+        "boundary_epe_count": 1777194,
+        "boundary_epe_numerator": 10020278.436802864,
+        "ffs_trusted_measurement_error": 0.26751614129429135,
+        "ffs_trusted_measurement_error_count": 4493652,
+        "ffs_trusted_measurement_error_numerator": 1202124.443359375,
+        "high_detail_1px": 0.6306116082423446,
+        "high_detail_1px_count": 304525,
+        "high_detail_1px_numerator": 192037.0,
+        "high_detail_epe": 15.137265817078353,
+        "high_detail_epe_count": 304525,
+        "high_detail_epe_numerator": 4609675.8729457855,
+        "invalid_rate": 0.0,
+        "invalid_rate_count": 18874368,
+        "invalid_rate_numerator": 0.0,
+        "low_detail_epe": 0.5784367775361038,
+        "low_detail_epe_count": 18569843,
+        "low_detail_epe_numerator": 10741480.144271374,
+        "matched_epe": 2.639228344396789,
+        "matched_epe_count": 1741496,
+        "matched_epe_numerator": 4596205.60485363,
+        "negative_rate": 0.0,
+        "negative_rate_count": 18874368,
+        "negative_rate_numerator": 0.0,
+        "non_rigid_temporal_residual_error": 0.12368628885248024,
+        "non_rigid_temporal_residual_error_count": 8082687,
+        "non_rigid_temporal_residual_error_numerator": 999717.558986187,
+        "overall_1px": 0.05262237124972873,
+        "overall_1px_count": 18874368,
+        "overall_1px_numerator": 993214.0,
+        "overall_epe": 0.8133335122647369,
+        "overall_epe_count": 18874368,
+        "overall_epe_numerator": 15351156.01721716,
+        "rigid_temporal_residual_error": 0.5143531012743542,
+        "rigid_temporal_residual_error_count": 9508895,
+        "rigid_temporal_residual_error_numerator": 4890929.6329422,
+        "unmatched_completion_1px": 0.9540078861267393,
+        "unmatched_completion_1px_count": 17132872,
+        "unmatched_completion_1px_numerator": 16344895.0,
+        "unmatched_completion_2px": 0.9813314428544146,
+        "unmatched_completion_2px_count": 17132872,
+        "unmatched_completion_2px_numerator": 16813026.0,
+        "zero_rate": 3.528594970703125e-05,
+        "zero_rate_count": 18874368,
+        "zero_rate_numerator": 666.0
+      },
+      "primary_method": "T3",
+      "purpose": "Half-resolution FFS + v2/K=2 T3 control, GT pose",
+      "raw_status": "LIMITED_EVALUATION_COMPLETE",
+      "records_evaluated": 64,
+      "selected_metrics_path": "/home/CNF2026527811/Documents/VGGT-Depth/runs/spring_v31_ffs/arms/F3/eval_step2000_64_fixed384/metrics.json",
+      "selection_class": "canonical_fixed384_canary",
+      "selection_errors": [],
+      "status": "LIMITED_EVALUATION_COMPLETE",
+      "topk_diagnostics": {
+        "age_2_survival_rate": 0.5836969953079973,
+        "attention_entropy": 0.03585741109156026,
+        "candidate_depth_spread": 0.1318905077373586,
+        "gain_by_camera_motion_bucket": {
+          "motion_low_tertile": 0.005736882413202693
+        },
+        "gain_by_fractional_phase_bucket": {
+          "phase_0.25_0.5": 1.004381635830852,
+          "phase_ge_0.5": 0.002351010031361511,
+          "phase_lt_0.25": 0.008960931589172105
+        },
+        "phase_variance": 3.8500485145472085e-08,
+        "unique_age_fraction": 0.03484100930984456
+      },
+      "topk_sources": {
+        "age_2_survival_rate": "age_2_survival_rate",
+        "attention_entropy": "attention_entropy",
+        "candidate_depth_spread": "candidate_depth_spread",
+        "gain_by_camera_motion_bucket": "gain_by_camera_motion_bucket",
+        "gain_by_fractional_phase_bucket": "gain_by_fractional_phase_bucket",
+        "phase_variance": "phase_variance",
+        "unique_age_fraction": "unique_age_fraction"
+      }
+    },
+    {
+      "arm": "F4",
+      "candidate_files": [
+        {
+          "checkpoint_step": 500,
+          "common_domain_complete": null,
+          "coverage_eligible": false,
+          "crop_mode": "full",
+          "crop_origin_hr_xy": null,
+          "endpoint_count": 1302,
+          "exact_common_dir": false,
+          "final_acceptance_eligible": false,
+          "final_evaluation": false,
+          "final_training_checkpoint": false,
+          "fixed384": false,
+          "hr_crop": null,
+          "mtime": 1788380317.552451,
+          "origin_matches_protocol": false,
+          "path": "/home/CNF2026527811/Documents/VGGT-Depth/runs/spring_v31_ffs/arms/F4/canary500_v2/eval_one/metrics.json",
+          "records_evaluated": 1,
+          "status": "LIMITED_EVALUATION_COMPLETE"
+        },
+        {
+          "checkpoint_step": 500,
+          "common_domain_complete": null,
+          "coverage_eligible": false,
+          "crop_mode": "full",
+          "crop_origin_hr_xy": null,
+          "endpoint_count": 1302,
+          "exact_common_dir": false,
+          "final_acceptance_eligible": false,
+          "final_evaluation": false,
+          "final_training_checkpoint": false,
+          "fixed384": false,
+          "hr_crop": null,
+          "mtime": 1788380912.2933958,
+          "origin_matches_protocol": false,
+          "path": "/home/CNF2026527811/Documents/VGGT-Depth/runs/spring_v31_ffs/arms/F4/eval_canary500_64/metrics.json",
+          "records_evaluated": 64,
+          "status": "NON_HOLDOUT_SMOKE_COMPLETE"
+        },
+        {
+          "checkpoint_step": 500,
+          "common_domain_complete": false,
+          "coverage_eligible": false,
+          "crop_mode": "fixed",
+          "crop_origin_hr_xy": [
+            576,
+            348
+          ],
+          "endpoint_count": 1302,
+          "exact_common_dir": false,
+          "final_acceptance_eligible": false,
+          "final_evaluation": false,
+          "final_training_checkpoint": false,
+          "fixed384": true,
+          "hr_crop": [
+            384,
+            768
+          ],
+          "mtime": 1788385525.6348934,
+          "origin_matches_protocol": true,
+          "path": "/home/CNF2026527811/Documents/VGGT-Depth/runs/spring_v31_ffs/arms/F4/eval_canary500_64_fixed384/metrics.json",
+          "records_evaluated": 64,
+          "status": "LIMITED_EVALUATION_COMPLETE"
+        }
+      ],
+      "checkpoint": {
+        "git_hash": "c330270a51a22ec6a7fb11b2d5415acc13f5c649",
+        "parameter_count": 1778244,
+        "path": "/home/CNF2026527811/Documents/VGGT-Depth/runs/spring_v31_ffs/arms/F4/canary500_v2/final.pt",
+        "sha256": "b0644a0642d2e62c4244bee166cee3794b960893b526c0af8ae0183db872b728",
+        "step": 500,
+        "training_completion": {
+          "actual_step": 500,
+          "canonical_schedule": false,
+          "canonical_steps": 15000,
+          "configured_steps": 500,
+          "declared_schedule_steps": 15000,
+          "execution_complete": true,
+          "final_training_checkpoint": false,
+          "stage": "temporal"
+        }
+      },
+      "crop": {
+        "fixed384": true,
+        "mode": "fixed",
+        "origin_hr_xy": [
+          576,
+          348
+        ],
+        "origin_matches_protocol": true,
+        "size_hr_hw": [
+          384,
+          768
+        ]
+      },
+      "declared_config_status": null,
+      "eligibility": {
+        "common_domain_complete": false,
+        "common_domain_coverage_eligible": false,
+        "common_domain_endpoint_count": 1302,
+        "coverage_eligible": false,
+        "cross_arm_common_domain_eligible": false,
+        "final_acceptance_eligible": false,
+        "final_training_checkpoint": false,
+        "formal_holdout": true,
+        "is_canary": true,
+        "is_canonical_fixed384": true,
+        "is_limited_evaluation": true,
+        "is_missing": false,
+        "is_optional": false,
+        "records_evaluated": 64,
+        "status": "LIMITED_EVALUATION_COMPLETE"
+      },
+      "endpoint_count": 1302,
+      "flags": {
+        "cross_arm_common_domain_eligible": false,
+        "is_canary": true,
+        "is_canonical_fixed384": true,
+        "is_final_checkpoint": false,
+        "is_final_evaluation": false,
+        "is_formal_holdout": true,
+        "is_limited_evaluation": true,
+        "is_missing": false,
+        "is_optional": false
+      },
+      "lineage": {
+        "calibration_conditioning": {
+          "enabled": true,
+          "pixel_center_contract": "align_corners_false_half_pixel_v3_1",
+          "protocol_version": "dense_rays_factorized_pose_v3",
+          "use_rays": true,
+          "use_stereo_pose": true,
+          "use_temporal_pose": true
+        },
+        "checkpoint_lineage": {
+          "source_sequence_length": 3,
+          "stage": "temporal",
+          "stage_a_initialization_path": "/home/CNF2026527811/Documents/VGGT-Depth/runs/spring_v31_ffs/arms/F2/train/final.pt",
+          "stage_a_initialization_sha256": "691c0d1e254e6f391b493b12119d47c82fa9e6a78bce16a3064fccf9a342cdb3",
+          "temporal_pose_source": "gt"
+        },
+        "config": {
+          "declared": {
+            "arm": "F4",
+            "defaults_from": "configs/temporal_x2_v3_1.yaml",
+            "experiment": "spring_v31_ffs_F4_v31_t3_gt_pose",
+            "stage": "temporal",
+            "temporal_pose_source": "gt",
+            "use_history": true,
+            "use_vggt_depth": false,
+            "use_vggt_pose": false
+          },
+          "path": "/home/CNF2026527811/Documents/VGGT-Depth/configs/spring_v31_ffs/F4.yaml",
+          "sha256": "c38ba8e898e7c256fe3b213fcb38ad96b3638f55a409d779c7db65676bb17e86"
+        },
+        "consistency": {
+          "all_available_checks_pass": true,
+          "crop_origin_matches_protocol": true,
+          "crop_size_matches_protocol": true,
+          "endpoint_id_matches_protocol": true,
+          "manifest_matches_protocol": true,
+          "observation_checkpoint_matches_protocol": true
+        },
+        "derived_contract": "calibrated_stereo_v2",
+        "derived_geometry_cache": {
+          "cache_manifest_path": "/home/CNF2026527811/Documents/VGGT-Depth/runs/spring_v31_ffs/cache/validation/derived_calibrated_gt_pose_depth/cache_manifest.jsonl",
+          "cache_manifest_sha256": "703c1f340b5b5ce8cf65dc9744022bfab89a1fd616b984c5a49b784747fe9436",
+          "component": "vggt-ffs-derived-geometry-calibrated-stereo-v2-batch",
+          "config": {
+            "algorithm": "baseline_metric_scale+scale_only_alignment+strict_pose_quality+calibrated_stereo_constraint_v2",
+            "current_left_view_index": 8,
+            "depth_source": "copied_from_vggt_derived",
+            "pose_source": "Spring_GT_pose",
+            "previous_left_view_index": 6,
+            "schema_version": 2
+          },
+          "derived_cache_root": "/home/CNF2026527811/Documents/VGGT-Depth/runs/spring_v31_ffs/cache/validation/derived_calibrated_gt_pose_depth",
+          "run_receipt_path": "/home/CNF2026527811/Documents/VGGT-Depth/runs/spring_v31_ffs/cache/validation/derived_calibrated_gt_pose_depth/run_receipt.json",
+          "run_receipt_sha256": "e8f14e6e975475471e76e1f6a5db00f52afcfd6d093e98167f48d355f090231f",
+          "selected_records": 1318
+        },
+        "endpoint_selection": {
+          "available_endpoint_count": 1302,
+          "common_domain_complete": false,
+          "common_domain_expected_endpoint_count": 1302,
+          "coverage_scope": "limited_subset",
+          "endpoint_count": 1302,
+          "endpoint_id_hash_algorithm": "sha256(canonical_json([manifest_index,sequence_id,frame_id,timestamp]))",
+          "endpoint_id_sha256": "aa6ba30295b8d5ab0e1b4326a14fae61f9c8ec42641801cd8442097bc3ab5b57",
+          "entries_sha256": "aa6ba30295b8d5ab0e1b4326a14fae61f9c8ec42641801cd8442097bc3ab5b57",
+          "evaluated_endpoint_count": 64,
+          "evaluated_endpoint_id_sha256": "452b4b05fe9164317b1ab1f60c714a5ad8ec7b6c28ce309a48e3f03fac89449d",
+          "file_sha256": "9fa81b1ca652fdd1f33634f83213c28e826db91562125430aedb0beef4f5c838",
+          "first_manifest_index": 6,
+          "kind": "spring_common_endpoint_index",
+          "last_manifest_index": 1349,
+          "manifest_path": "/home/CNF2026527811/Documents/VGGT-Depth/runs/spring_seed42_primary/manifests/validation.jsonl",
+          "manifest_sha256": "6c016bdb4aa7f4a2be07c713cf9ae90b8dccdeab31c76c71d9d0e96b1a8bc45e",
+          "path": "/home/CNF2026527811/Documents/VGGT-Depth/runs/spring_v31_ffs/manifests/common_endpoints.json",
+          "schema_version": 1
+        },
+        "holdout": {
+          "evaluation_sequences": [
+            "0005",
+            "0010",
+            "0015",
+            "0021",
+            "0023",
+            "0030",
+            "0032",
+            "0047"
+          ],
+          "formal_holdout": true,
+          "pose_source": "gt",
+          "same_manifest": false,
+          "sequence_overlap": [],
+          "training_sequences": [
+            "0001",
+            "0002",
+            "0004",
+            "0006",
+            "0007",
+            "0008",
+            "0009",
+            "0011",
+            "0012",
+            "0013",
+            "0014",
+            "0016",
+            "0017",
+            "0018",
+            "0020",
+            "0022",
+            "0024",
+            "0025",
+            "0026",
+            "0027",
+            "0033",
+            "0036",
+            "0037",
+            "0038",
+            "0039",
+            "0041",
+            "0043",
+            "0044",
+            "0045"
+          ]
+        },
+        "manifest": {
+          "exists": true,
+          "path": "/home/CNF2026527811/Documents/VGGT-Depth/runs/spring_seed42_primary/manifests/validation.jsonl",
+          "sha256": "6c016bdb4aa7f4a2be07c713cf9ae90b8dccdeab31c76c71d9d0e96b1a8bc45e"
+        },
+        "observation_cache_identity": {
+          "checkpoint_sha256": "98b5a9acf39fbfa795025de8cea95ce123daa40f6b6234d719167751024cf692",
+          "component": "ffs-observation",
+          "config_sha256": "191a0e2ef6d9e4f12ff0e15351178e9feb39767db10c0c98f960e9723d06db48",
+          "cuda_version": "13.0",
+          "torch_version": "2.10.0+cu130",
+          "upstream_commit": "a290ba04c1b3ad1ec41a33974a157b2917b624d4"
+        },
+        "pose_source": "gt",
+        "raw_vggt_cache": null,
+        "stage": "temporal",
+        "teacher_cache_identity": {
+          "checkpoint_sha256": "3127a97e557036a275d99b4e0510a0cd752b4804ec2a8d576642ccf13d7eacd4",
+          "component": "ffs-teacher",
+          "config_sha256": "a3dc273e765109509f3eca8f8036c590318e36f067fd38344f6aaa891a203160",
+          "cuda_version": "13.0",
+          "torch_version": "2.10.0+cu130",
+          "upstream_commit": "Spring_GT:cam_data+disp1_left"
+        },
+        "temporal_candidate_fusion": {
+          "enabled": true,
+          "per_age_quota": 2,
+          "phase_redundancy_penalty": 0.25,
+          "phase_redundancy_sigma_grid_px": 0.125,
+          "protocol_version": "current_conditioned_age_phase_diverse_v3_1",
+          "surface_depth_gap_m": 0.05,
+          "surface_relative_depth_gap": 0.05
+        },
+        "temporal_history": {
+          "age_temperature_frames": 3.0,
+          "candidate_feature_channels": 32,
+          "collision_depth_gap_m": 0.05,
+          "collision_relative_depth_gap": 0.05,
+          "depth_temperature_m": 0.25,
+          "enabled": true,
+          "memory_frames": 2,
+          "protocol_version": "topk_z_aware_hidden_warp_v2",
+          "source_collision_penalty": 0.5,
+          "splat_footprint": "bilinear",
+          "top_k": 4
+        },
+        "use_vggt_depth": false,
+        "use_vggt_pose": false
+      },
+      "metric_receipts": {
+        "boundary_epe": {
+          "count": 1777194,
+          "numerator": 11245841.912380695,
+          "source_key": "boundary_epe",
+          "valid": true,
+          "value": 6.3278639880512175
+        },
+        "ffs_trusted_measurement_error": {
+          "count": 4493652,
+          "numerator": 1202124.443359375,
+          "source_key": "ffs_trusted_measurement_error",
+          "valid": true,
+          "value": 0.26751614129429135
+        },
+        "high_detail_1px": {
+          "count": 304525,
+          "numerator": 206563.0,
+          "source_key": "high_detail_1px",
+          "valid": true,
+          "value": 0.678312125441261
+        },
+        "high_detail_epe": {
+          "count": 304525,
+          "numerator": 5016096.390116215,
+          "source_key": "high_detail_epe",
+          "valid": true,
+          "value": 16.471870585719447
+        },
+        "invalid_rate": {
+          "count": 18874368,
+          "numerator": 0.0,
+          "source_key": "invalid_rate",
+          "valid": true,
+          "value": 0.0
+        },
+        "low_detail_epe": {
+          "count": 18569843,
+          "numerator": 13275276.556999683,
+          "source_key": "low_detail_epe",
+          "valid": true,
+          "value": 0.7148836184021418
+        },
+        "matched_epe": {
+          "count": 1741496,
+          "numerator": 6947142.244754791,
+          "source_key": "matched_epe",
+          "valid": true,
+          "value": 3.9891807071361582
+        },
+        "negative_rate": {
+          "count": 18874368,
+          "numerator": 0.0,
+          "source_key": "negative_rate",
+          "valid": true,
+          "value": 0.0
+        },
+        "non_rigid_temporal_residual_error": {
+          "count": 7632545,
+          "numerator": 1060763.027177305,
+          "source_key": "non_rigid_temporal_residual_error",
+          "valid": true,
+          "value": 0.13897894177856862
+        },
+        "overall_1px": {
+          "count": 18874368,
+          "numerator": 1580371.0,
+          "source_key": "overall_1px",
+          "valid": true,
+          "value": 0.08373106850518121
+        },
+        "overall_epe": {
+          "count": 18874368,
+          "numerator": 18291372.947115898,
+          "source_key": "overall_epe",
+          "valid": true,
+          "value": 0.9691118106373627
+        },
+        "rigid_temporal_residual_error": {
+          "count": 9373795,
+          "numerator": 4735390.673080921,
+          "source_key": "rigid_temporal_residual_error",
+          "valid": true,
+          "value": 0.5051732700662774
+        },
+        "unmatched_completion_1px": {
+          "count": 17132872,
+          "numerator": 16191361.0,
+          "source_key": "unmatched_completion_1px",
+          "valid": true,
+          "value": 0.9450465164276018
+        },
+        "unmatched_completion_2px": {
+          "count": 17132872,
+          "numerator": 16736282.0,
+          "source_key": "unmatched_completion_2px",
+          "valid": true,
+          "value": 0.9768521004534441
+        },
+        "zero_rate": {
+          "count": 18874368,
+          "numerator": 8859.0,
+          "source_key": "zero_rate",
+          "valid": true,
+          "value": 0.00046936670939127606
+        }
+      },
+      "metric_source": "spring_native_metrics.methods.T3",
+      "metric_sources": {
+        "boundary_epe": "boundary_epe",
+        "ffs_trusted_measurement_error": "ffs_trusted_measurement_error",
+        "high_detail_1px": "high_detail_1px",
+        "high_detail_epe": "high_detail_epe",
+        "invalid_rate": "invalid_rate",
+        "low_detail_epe": "low_detail_epe",
+        "matched_epe": "matched_epe",
+        "negative_rate": "negative_rate",
+        "non_rigid_temporal_residual_error": "non_rigid_temporal_residual_error",
+        "overall_1px": "overall_1px",
+        "overall_epe": "overall_epe",
+        "rigid_temporal_residual_error": "rigid_temporal_residual_error",
+        "unmatched_completion_1px": "unmatched_completion_1px",
+        "unmatched_completion_2px": "unmatched_completion_2px",
+        "zero_rate": "zero_rate"
+      },
+      "metrics": {
+        "boundary_epe": 6.3278639880512175,
+        "boundary_epe_count": 1777194,
+        "boundary_epe_numerator": 11245841.912380695,
+        "ffs_trusted_measurement_error": 0.26751614129429135,
+        "ffs_trusted_measurement_error_count": 4493652,
+        "ffs_trusted_measurement_error_numerator": 1202124.443359375,
+        "high_detail_1px": 0.678312125441261,
+        "high_detail_1px_count": 304525,
+        "high_detail_1px_numerator": 206563.0,
+        "high_detail_epe": 16.471870585719447,
+        "high_detail_epe_count": 304525,
+        "high_detail_epe_numerator": 5016096.390116215,
+        "invalid_rate": 0.0,
+        "invalid_rate_count": 18874368,
+        "invalid_rate_numerator": 0.0,
+        "low_detail_epe": 0.7148836184021418,
+        "low_detail_epe_count": 18569843,
+        "low_detail_epe_numerator": 13275276.556999683,
+        "matched_epe": 3.9891807071361582,
+        "matched_epe_count": 1741496,
+        "matched_epe_numerator": 6947142.244754791,
+        "negative_rate": 0.0,
+        "negative_rate_count": 18874368,
+        "negative_rate_numerator": 0.0,
+        "non_rigid_temporal_residual_error": 0.13897894177856862,
+        "non_rigid_temporal_residual_error_count": 7632545,
+        "non_rigid_temporal_residual_error_numerator": 1060763.027177305,
+        "overall_1px": 0.08373106850518121,
+        "overall_1px_count": 18874368,
+        "overall_1px_numerator": 1580371.0,
+        "overall_epe": 0.9691118106373627,
+        "overall_epe_count": 18874368,
+        "overall_epe_numerator": 18291372.947115898,
+        "rigid_temporal_residual_error": 0.5051732700662774,
+        "rigid_temporal_residual_error_count": 9373795,
+        "rigid_temporal_residual_error_numerator": 4735390.673080921,
+        "unmatched_completion_1px": 0.9450465164276018,
+        "unmatched_completion_1px_count": 17132872,
+        "unmatched_completion_1px_numerator": 16191361.0,
+        "unmatched_completion_2px": 0.9768521004534441,
+        "unmatched_completion_2px_count": 17132872,
+        "unmatched_completion_2px_numerator": 16736282.0,
+        "zero_rate": 0.00046936670939127606,
+        "zero_rate_count": 18874368,
+        "zero_rate_numerator": 8859.0
+      },
+      "primary_method": "T3",
+      "purpose": "Half-resolution FFS + v3.1 T3, GT pose",
+      "raw_status": "LIMITED_EVALUATION_COMPLETE",
+      "records_evaluated": 64,
+      "selected_metrics_path": "/home/CNF2026527811/Documents/VGGT-Depth/runs/spring_v31_ffs/arms/F4/eval_canary500_64_fixed384/metrics.json",
+      "selection_class": "canonical_fixed384_canary",
+      "selection_errors": [],
+      "status": "LIMITED_EVALUATION_COMPLETE",
+      "topk_diagnostics": {
+        "age_2_survival_rate": 0.9998853956773484,
+        "attention_entropy": 0.5109727622609754,
+        "candidate_depth_spread": 0.3085417558154256,
+        "gain_by_camera_motion_bucket": {
+          "motion_low_tertile": 0.085656192881288
+        },
+        "gain_by_fractional_phase_bucket": {
+          "phase_0.25_0.5": 2.832263368240092,
+          "phase_ge_0.5": 0.06176649905683007,
+          "phase_lt_0.25": 0.09605400329746772
+        },
+        "phase_variance": 2.5259490530757595e-07,
+        "unique_age_fraction": 0.9997854802569804
+      },
+      "topk_sources": {
+        "age_2_survival_rate": "age_2_survival_rate",
+        "attention_entropy": "attention_entropy",
+        "candidate_depth_spread": "candidate_depth_spread",
+        "gain_by_camera_motion_bucket": "gain_by_camera_motion_bucket",
+        "gain_by_fractional_phase_bucket": "gain_by_fractional_phase_bucket",
+        "phase_variance": "phase_variance",
+        "unique_age_fraction": "unique_age_fraction"
+      }
+    },
+    {
+      "arm": "F5",
+      "candidate_files": [
+        {
+          "checkpoint_step": 500,
+          "common_domain_complete": false,
+          "coverage_eligible": false,
+          "crop_mode": "fixed",
+          "crop_origin_hr_xy": [
+            576,
+            348
+          ],
+          "endpoint_count": 1302,
+          "exact_common_dir": false,
+          "final_acceptance_eligible": false,
+          "final_evaluation": false,
+          "final_training_checkpoint": false,
+          "fixed384": true,
+          "hr_crop": [
+            384,
+            768
+          ],
+          "mtime": 1788385637.7926424,
+          "origin_matches_protocol": true,
+          "path": "/home/CNF2026527811/Documents/VGGT-Depth/runs/spring_v31_ffs/arms/F5/eval_canary500_64_fixed384/metrics.json",
+          "records_evaluated": 64,
+          "status": "LIMITED_EVALUATION_COMPLETE"
+        }
+      ],
+      "checkpoint": {
+        "git_hash": "c330270a51a22ec6a7fb11b2d5415acc13f5c649",
+        "parameter_count": 1778244,
+        "path": "/home/CNF2026527811/Documents/VGGT-Depth/runs/spring_v31_ffs/arms/F5/canary500/final.pt",
+        "sha256": "46ac2c132dd3bf736746afcf05dfe75e086f369747cea84f84bcb6a917d10d2c",
+        "step": 500,
+        "training_completion": {
+          "actual_step": 500,
+          "canonical_schedule": false,
+          "canonical_steps": 15000,
+          "configured_steps": 500,
+          "declared_schedule_steps": 15000,
+          "execution_complete": true,
+          "final_training_checkpoint": false,
+          "stage": "temporal"
+        }
+      },
+      "crop": {
+        "fixed384": true,
+        "mode": "fixed",
+        "origin_hr_xy": [
+          576,
+          348
+        ],
+        "origin_matches_protocol": true,
+        "size_hr_hw": [
+          384,
+          768
+        ]
+      },
+      "declared_config_status": null,
+      "eligibility": {
+        "common_domain_complete": false,
+        "common_domain_coverage_eligible": false,
+        "common_domain_endpoint_count": 1302,
+        "coverage_eligible": false,
+        "cross_arm_common_domain_eligible": false,
+        "final_acceptance_eligible": false,
+        "final_training_checkpoint": false,
+        "formal_holdout": true,
+        "is_canary": true,
+        "is_canonical_fixed384": true,
+        "is_limited_evaluation": true,
+        "is_missing": false,
+        "is_optional": false,
+        "records_evaluated": 64,
+        "status": "LIMITED_EVALUATION_COMPLETE"
+      },
+      "endpoint_count": 1302,
+      "flags": {
+        "cross_arm_common_domain_eligible": false,
+        "is_canary": true,
+        "is_canonical_fixed384": true,
+        "is_final_checkpoint": false,
+        "is_final_evaluation": false,
+        "is_formal_holdout": true,
+        "is_limited_evaluation": true,
+        "is_missing": false,
+        "is_optional": false
+      },
+      "lineage": {
+        "calibration_conditioning": {
+          "enabled": true,
+          "pixel_center_contract": "align_corners_false_half_pixel_v3_1",
+          "protocol_version": "dense_rays_factorized_pose_v3",
+          "use_rays": true,
+          "use_stereo_pose": true,
+          "use_temporal_pose": true
+        },
+        "checkpoint_lineage": {
+          "source_sequence_length": 3,
+          "stage": "temporal",
+          "stage_a_initialization_path": "/home/CNF2026527811/Documents/VGGT-Depth/runs/spring_v31_ffs/arms/F2/train/final.pt",
+          "stage_a_initialization_sha256": "691c0d1e254e6f391b493b12119d47c82fa9e6a78bce16a3064fccf9a342cdb3",
+          "temporal_pose_source": "gt"
+        },
+        "config": {
+          "declared": {
+            "arm": "F5",
+            "defaults_from": "configs/spring_v31_ffs/F4.yaml",
+            "experiment": "spring_v31_ffs_F5_v31_depth_gt_pose",
+            "use_vggt_depth": true
+          },
+          "path": "/home/CNF2026527811/Documents/VGGT-Depth/configs/spring_v31_ffs/F5.yaml",
+          "sha256": "75a26dd171119985433ac24161899992bb8ae56cd270a375199a9c79d02af9a2"
+        },
+        "consistency": {
+          "all_available_checks_pass": true,
+          "crop_origin_matches_protocol": true,
+          "crop_size_matches_protocol": true,
+          "endpoint_id_matches_protocol": true,
+          "manifest_matches_protocol": true,
+          "observation_checkpoint_matches_protocol": true
+        },
+        "derived_contract": "calibrated_stereo_v2",
+        "derived_geometry_cache": {
+          "cache_manifest_path": "/home/CNF2026527811/Documents/VGGT-Depth/runs/spring_v31_ffs/cache/validation/derived_calibrated_gt_pose_depth/cache_manifest.jsonl",
+          "cache_manifest_sha256": "703c1f340b5b5ce8cf65dc9744022bfab89a1fd616b984c5a49b784747fe9436",
+          "component": "vggt-ffs-derived-geometry-calibrated-stereo-v2-batch",
+          "config": {
+            "algorithm": "baseline_metric_scale+scale_only_alignment+strict_pose_quality+calibrated_stereo_constraint_v2",
+            "current_left_view_index": 8,
+            "depth_source": "copied_from_vggt_derived",
+            "pose_source": "Spring_GT_pose",
+            "previous_left_view_index": 6,
+            "schema_version": 2
+          },
+          "derived_cache_root": "/home/CNF2026527811/Documents/VGGT-Depth/runs/spring_v31_ffs/cache/validation/derived_calibrated_gt_pose_depth",
+          "run_receipt_path": "/home/CNF2026527811/Documents/VGGT-Depth/runs/spring_v31_ffs/cache/validation/derived_calibrated_gt_pose_depth/run_receipt.json",
+          "run_receipt_sha256": "e8f14e6e975475471e76e1f6a5db00f52afcfd6d093e98167f48d355f090231f",
+          "selected_records": 1318
+        },
+        "endpoint_selection": {
+          "available_endpoint_count": 1302,
+          "common_domain_complete": false,
+          "common_domain_expected_endpoint_count": 1302,
+          "coverage_scope": "limited_subset",
+          "endpoint_count": 1302,
+          "endpoint_id_hash_algorithm": "sha256(canonical_json([manifest_index,sequence_id,frame_id,timestamp]))",
+          "endpoint_id_sha256": "aa6ba30295b8d5ab0e1b4326a14fae61f9c8ec42641801cd8442097bc3ab5b57",
+          "entries_sha256": "aa6ba30295b8d5ab0e1b4326a14fae61f9c8ec42641801cd8442097bc3ab5b57",
+          "evaluated_endpoint_count": 64,
+          "evaluated_endpoint_id_sha256": "452b4b05fe9164317b1ab1f60c714a5ad8ec7b6c28ce309a48e3f03fac89449d",
+          "file_sha256": "9fa81b1ca652fdd1f33634f83213c28e826db91562125430aedb0beef4f5c838",
+          "first_manifest_index": 6,
+          "kind": "spring_common_endpoint_index",
+          "last_manifest_index": 1349,
+          "manifest_path": "/home/CNF2026527811/Documents/VGGT-Depth/runs/spring_seed42_primary/manifests/validation.jsonl",
+          "manifest_sha256": "6c016bdb4aa7f4a2be07c713cf9ae90b8dccdeab31c76c71d9d0e96b1a8bc45e",
+          "path": "/home/CNF2026527811/Documents/VGGT-Depth/runs/spring_v31_ffs/manifests/common_endpoints.json",
+          "schema_version": 1
+        },
+        "holdout": {
+          "evaluation_sequences": [
+            "0005",
+            "0010",
+            "0015",
+            "0021",
+            "0023",
+            "0030",
+            "0032",
+            "0047"
+          ],
+          "formal_holdout": true,
+          "pose_source": "gt",
+          "same_manifest": false,
+          "sequence_overlap": [],
+          "training_sequences": [
+            "0001",
+            "0002",
+            "0004",
+            "0006",
+            "0007",
+            "0008",
+            "0009",
+            "0011",
+            "0012",
+            "0013",
+            "0014",
+            "0016",
+            "0017",
+            "0018",
+            "0020",
+            "0022",
+            "0024",
+            "0025",
+            "0026",
+            "0027",
+            "0033",
+            "0036",
+            "0037",
+            "0038",
+            "0039",
+            "0041",
+            "0043",
+            "0044",
+            "0045"
+          ]
+        },
+        "manifest": {
+          "exists": true,
+          "path": "/home/CNF2026527811/Documents/VGGT-Depth/runs/spring_seed42_primary/manifests/validation.jsonl",
+          "sha256": "6c016bdb4aa7f4a2be07c713cf9ae90b8dccdeab31c76c71d9d0e96b1a8bc45e"
+        },
+        "observation_cache_identity": {
+          "checkpoint_sha256": "98b5a9acf39fbfa795025de8cea95ce123daa40f6b6234d719167751024cf692",
+          "component": "ffs-observation",
+          "config_sha256": "191a0e2ef6d9e4f12ff0e15351178e9feb39767db10c0c98f960e9723d06db48",
+          "cuda_version": "13.0",
+          "torch_version": "2.10.0+cu130",
+          "upstream_commit": "a290ba04c1b3ad1ec41a33974a157b2917b624d4"
+        },
+        "pose_source": "gt",
+        "raw_vggt_cache": null,
+        "stage": "temporal",
+        "teacher_cache_identity": {
+          "checkpoint_sha256": "3127a97e557036a275d99b4e0510a0cd752b4804ec2a8d576642ccf13d7eacd4",
+          "component": "ffs-teacher",
+          "config_sha256": "a3dc273e765109509f3eca8f8036c590318e36f067fd38344f6aaa891a203160",
+          "cuda_version": "13.0",
+          "torch_version": "2.10.0+cu130",
+          "upstream_commit": "Spring_GT:cam_data+disp1_left"
+        },
+        "temporal_candidate_fusion": {
+          "enabled": true,
+          "per_age_quota": 2,
+          "phase_redundancy_penalty": 0.25,
+          "phase_redundancy_sigma_grid_px": 0.125,
+          "protocol_version": "current_conditioned_age_phase_diverse_v3_1",
+          "surface_depth_gap_m": 0.05,
+          "surface_relative_depth_gap": 0.05
+        },
+        "temporal_history": {
+          "age_temperature_frames": 3.0,
+          "candidate_feature_channels": 32,
+          "collision_depth_gap_m": 0.05,
+          "collision_relative_depth_gap": 0.05,
+          "depth_temperature_m": 0.25,
+          "enabled": true,
+          "memory_frames": 2,
+          "protocol_version": "topk_z_aware_hidden_warp_v2",
+          "source_collision_penalty": 0.5,
+          "splat_footprint": "bilinear",
+          "top_k": 4
+        },
+        "use_vggt_depth": true,
+        "use_vggt_pose": false
+      },
+      "metric_receipts": {
+        "boundary_epe": {
+          "count": 1777194,
+          "numerator": 10995698.470032215,
+          "source_key": "boundary_epe",
+          "valid": true,
+          "value": 6.187112082323154
+        },
+        "ffs_trusted_measurement_error": {
+          "count": 4493652,
+          "numerator": 1202124.443359375,
+          "source_key": "ffs_trusted_measurement_error",
+          "valid": true,
+          "value": 0.26751614129429135
+        },
+        "high_detail_1px": {
+          "count": 304525,
+          "numerator": 208956.0,
+          "source_key": "high_detail_1px",
+          "valid": true,
+          "value": 0.6861702651670635
+        },
+        "high_detail_epe": {
+          "count": 304525,
+          "numerator": 5025932.738674164,
+          "source_key": "high_detail_epe",
+          "valid": true,
+          "value": 16.504171213116045
+        },
+        "invalid_rate": {
+          "count": 18874368,
+          "numerator": 0.0,
+          "source_key": "invalid_rate",
+          "valid": true,
+          "value": 0.0
+        },
+        "low_detail_epe": {
+          "count": 18569843,
+          "numerator": 11373654.837133884,
+          "source_key": "low_detail_epe",
+          "valid": true,
+          "value": 0.6124798597992392
+        },
+        "matched_epe": {
+          "count": 1741496,
+          "numerator": 5290601.32408762,
+          "source_key": "matched_epe",
+          "valid": true,
+          "value": 3.037963523365899
+        },
+        "negative_rate": {
+          "count": 18874368,
+          "numerator": 0.0,
+          "source_key": "negative_rate",
+          "valid": true,
+          "value": 0.0
+        },
+        "non_rigid_temporal_residual_error": {
+          "count": 7992265,
+          "numerator": 940089.4293913841,
+          "source_key": "non_rigid_temporal_residual_error",
+          "valid": true,
+          "value": 0.11762490725612629
+        },
+        "overall_1px": {
+          "count": 18874368,
+          "numerator": 1078798.0,
+          "source_key": "overall_1px",
+          "valid": true,
+          "value": 0.057156774732801646
+        },
+        "overall_epe": {
+          "count": 18874368,
+          "numerator": 16399587.575808048,
+          "source_key": "overall_epe",
+          "valid": true,
+          "value": 0.868881415039065
+        },
+        "rigid_temporal_residual_error": {
+          "count": 9406302,
+          "numerator": 4632564.149821281,
+          "source_key": "rigid_temporal_residual_error",
+          "valid": true,
+          "value": 0.4924957916321719
+        },
+        "unmatched_completion_1px": {
+          "count": 17132872,
+          "numerator": 16248753.0,
+          "source_key": "unmatched_completion_1px",
+          "valid": true,
+          "value": 0.9483963342514904
+        },
+        "unmatched_completion_2px": {
+          "count": 17132872,
+          "numerator": 16793065.0,
+          "source_key": "unmatched_completion_2px",
+          "valid": true,
+          "value": 0.9801663725731448
+        },
+        "zero_rate": {
+          "count": 18874368,
+          "numerator": 0.0,
+          "source_key": "zero_rate",
+          "valid": true,
+          "value": 0.0
+        }
+      },
+      "metric_source": "spring_native_metrics.methods.T3_VGGT",
+      "metric_sources": {
+        "boundary_epe": "boundary_epe",
+        "ffs_trusted_measurement_error": "ffs_trusted_measurement_error",
+        "high_detail_1px": "high_detail_1px",
+        "high_detail_epe": "high_detail_epe",
+        "invalid_rate": "invalid_rate",
+        "low_detail_epe": "low_detail_epe",
+        "matched_epe": "matched_epe",
+        "negative_rate": "negative_rate",
+        "non_rigid_temporal_residual_error": "non_rigid_temporal_residual_error",
+        "overall_1px": "overall_1px",
+        "overall_epe": "overall_epe",
+        "rigid_temporal_residual_error": "rigid_temporal_residual_error",
+        "unmatched_completion_1px": "unmatched_completion_1px",
+        "unmatched_completion_2px": "unmatched_completion_2px",
+        "zero_rate": "zero_rate"
+      },
+      "metrics": {
+        "boundary_epe": 6.187112082323154,
+        "boundary_epe_count": 1777194,
+        "boundary_epe_numerator": 10995698.470032215,
+        "ffs_trusted_measurement_error": 0.26751614129429135,
+        "ffs_trusted_measurement_error_count": 4493652,
+        "ffs_trusted_measurement_error_numerator": 1202124.443359375,
+        "high_detail_1px": 0.6861702651670635,
+        "high_detail_1px_count": 304525,
+        "high_detail_1px_numerator": 208956.0,
+        "high_detail_epe": 16.504171213116045,
+        "high_detail_epe_count": 304525,
+        "high_detail_epe_numerator": 5025932.738674164,
+        "invalid_rate": 0.0,
+        "invalid_rate_count": 18874368,
+        "invalid_rate_numerator": 0.0,
+        "low_detail_epe": 0.6124798597992392,
+        "low_detail_epe_count": 18569843,
+        "low_detail_epe_numerator": 11373654.837133884,
+        "matched_epe": 3.037963523365899,
+        "matched_epe_count": 1741496,
+        "matched_epe_numerator": 5290601.32408762,
+        "negative_rate": 0.0,
+        "negative_rate_count": 18874368,
+        "negative_rate_numerator": 0.0,
+        "non_rigid_temporal_residual_error": 0.11762490725612629,
+        "non_rigid_temporal_residual_error_count": 7992265,
+        "non_rigid_temporal_residual_error_numerator": 940089.4293913841,
+        "overall_1px": 0.057156774732801646,
+        "overall_1px_count": 18874368,
+        "overall_1px_numerator": 1078798.0,
+        "overall_epe": 0.868881415039065,
+        "overall_epe_count": 18874368,
+        "overall_epe_numerator": 16399587.575808048,
+        "rigid_temporal_residual_error": 0.4924957916321719,
+        "rigid_temporal_residual_error_count": 9406302,
+        "rigid_temporal_residual_error_numerator": 4632564.149821281,
+        "unmatched_completion_1px": 0.9483963342514904,
+        "unmatched_completion_1px_count": 17132872,
+        "unmatched_completion_1px_numerator": 16248753.0,
+        "unmatched_completion_2px": 0.9801663725731448,
+        "unmatched_completion_2px_count": 17132872,
+        "unmatched_completion_2px_numerator": 16793065.0,
+        "zero_rate": 0.0,
+        "zero_rate_count": 18874368,
+        "zero_rate_numerator": 0.0
+      },
+      "primary_method": "T3_VGGT",
+      "purpose": "F4 + VGGT depth prior, GT pose",
+      "raw_status": "LIMITED_EVALUATION_COMPLETE",
+      "records_evaluated": 64,
+      "selected_metrics_path": "/home/CNF2026527811/Documents/VGGT-Depth/runs/spring_v31_ffs/arms/F5/eval_canary500_64_fixed384/metrics.json",
+      "selection_class": "canonical_fixed384_canary",
+      "selection_errors": [],
+      "status": "LIMITED_EVALUATION_COMPLETE",
+      "topk_diagnostics": {
+        "age_2_survival_rate": 1.0,
+        "attention_entropy": 0.5109890107281285,
+        "candidate_depth_spread": 0.2757232950503889,
+        "gain_by_camera_motion_bucket": {
+          "motion_low_tertile": 0.0925171799317468
+        },
+        "gain_by_fractional_phase_bucket": {
+          "phase_0.25_0.5": 1.4774228008463979,
+          "phase_ge_0.5": 0.08019945751948399,
+          "phase_lt_0.25": 0.09862560330657288
+        },
+        "phase_variance": 2.5841598004016126e-07,
+        "unique_age_fraction": 1.0
+      },
+      "topk_sources": {
+        "age_2_survival_rate": "age_2_survival_rate",
+        "attention_entropy": "attention_entropy",
+        "candidate_depth_spread": "candidate_depth_spread",
+        "gain_by_camera_motion_bucket": "gain_by_camera_motion_bucket",
+        "gain_by_fractional_phase_bucket": "gain_by_fractional_phase_bucket",
+        "phase_variance": "phase_variance",
+        "unique_age_fraction": "unique_age_fraction"
+      }
+    },
+    {
+      "arm": "F6",
+      "candidate_files": [
+        {
+          "checkpoint_step": 500,
+          "common_domain_complete": false,
+          "coverage_eligible": false,
+          "crop_mode": "fixed",
+          "crop_origin_hr_xy": [
+            576,
+            348
+          ],
+          "endpoint_count": 1302,
+          "exact_common_dir": false,
+          "final_acceptance_eligible": false,
+          "final_evaluation": false,
+          "final_training_checkpoint": false,
+          "fixed384": true,
+          "hr_crop": [
+            384,
+            768
+          ],
+          "mtime": 1788385750.564012,
+          "origin_matches_protocol": true,
+          "path": "/home/CNF2026527811/Documents/VGGT-Depth/runs/spring_v31_ffs/arms/F6/eval_canary500_64_fixed384/metrics.json",
+          "records_evaluated": 64,
+          "status": "LIMITED_EVALUATION_COMPLETE"
+        }
+      ],
+      "checkpoint": {
+        "git_hash": "c330270a51a22ec6a7fb11b2d5415acc13f5c649",
+        "parameter_count": 1778244,
+        "path": "/home/CNF2026527811/Documents/VGGT-Depth/runs/spring_v31_ffs/arms/F6/canary500/final.pt",
+        "sha256": "7a0de41577d5fdbd2878b5bca8efbc918dfc53b8ddca66475b16bf982786688b",
+        "step": 500,
+        "training_completion": {
+          "actual_step": 500,
+          "canonical_schedule": false,
+          "canonical_steps": 15000,
+          "configured_steps": 500,
+          "declared_schedule_steps": 15000,
+          "execution_complete": true,
+          "final_training_checkpoint": false,
+          "stage": "temporal"
+        }
+      },
+      "crop": {
+        "fixed384": true,
+        "mode": "fixed",
+        "origin_hr_xy": [
+          576,
+          348
+        ],
+        "origin_matches_protocol": true,
+        "size_hr_hw": [
+          384,
+          768
+        ]
+      },
+      "declared_config_status": null,
+      "eligibility": {
+        "common_domain_complete": false,
+        "common_domain_coverage_eligible": false,
+        "common_domain_endpoint_count": 1302,
+        "coverage_eligible": false,
+        "cross_arm_common_domain_eligible": false,
+        "final_acceptance_eligible": false,
+        "final_training_checkpoint": false,
+        "formal_holdout": true,
+        "is_canary": true,
+        "is_canonical_fixed384": true,
+        "is_limited_evaluation": true,
+        "is_missing": false,
+        "is_optional": false,
+        "records_evaluated": 64,
+        "status": "LIMITED_EVALUATION_COMPLETE"
+      },
+      "endpoint_count": 1302,
+      "flags": {
+        "cross_arm_common_domain_eligible": false,
+        "is_canary": true,
+        "is_canonical_fixed384": true,
+        "is_final_checkpoint": false,
+        "is_final_evaluation": false,
+        "is_formal_holdout": true,
+        "is_limited_evaluation": true,
+        "is_missing": false,
+        "is_optional": false
+      },
+      "lineage": {
+        "calibration_conditioning": {
+          "enabled": true,
+          "pixel_center_contract": "align_corners_false_half_pixel_v3_1",
+          "protocol_version": "dense_rays_factorized_pose_v3",
+          "use_rays": true,
+          "use_stereo_pose": true,
+          "use_temporal_pose": true
+        },
+        "checkpoint_lineage": {
+          "source_sequence_length": 3,
+          "stage": "temporal",
+          "stage_a_initialization_path": "/home/CNF2026527811/Documents/VGGT-Depth/runs/spring_v31_ffs/arms/F2/train/final.pt",
+          "stage_a_initialization_sha256": "691c0d1e254e6f391b493b12119d47c82fa9e6a78bce16a3064fccf9a342cdb3",
+          "temporal_pose_source": "vggt"
+        },
+        "config": {
+          "declared": {
+            "arm": "F6",
+            "defaults_from": "configs/spring_v31_ffs/F5.yaml",
+            "experiment": "spring_v31_ffs_F6_v31_depth_vggt_pose",
+            "temporal_pose_source": "vggt",
+            "use_vggt_depth": true,
+            "use_vggt_pose": true
+          },
+          "path": "/home/CNF2026527811/Documents/VGGT-Depth/configs/spring_v31_ffs/F6.yaml",
+          "sha256": "406a517387b7d709d77f1e60b10e57f19cf8fdfdb0f3de700780bb90f1d0d171"
+        },
+        "consistency": {
+          "all_available_checks_pass": true,
+          "crop_origin_matches_protocol": true,
+          "crop_size_matches_protocol": true,
+          "endpoint_id_matches_protocol": true,
+          "manifest_matches_protocol": true,
+          "observation_checkpoint_matches_protocol": true
+        },
+        "derived_contract": "calibrated_stereo_v2",
+        "derived_geometry_cache": {
+          "cache_manifest_path": "/home/CNF2026527811/Documents/VGGT-Depth/runs/spring_v31_ffs/cache/validation/derived_calibrated_vggt_pose_depth/cache_manifest.jsonl",
+          "cache_manifest_sha256": "422a4e3d1e37067ca8027893c99153b16c7d2948d6af606a861ef0e8dbbb08e4",
+          "component": "vggt-ffs-derived-geometry-calibrated-stereo-v2-batch",
+          "config": {
+            "algorithm": "baseline_metric_scale+scale_only_alignment+strict_pose_quality+calibrated_stereo_constraint_v2",
+            "current_left_view_index": 8,
+            "previous_left_view_index": 6,
+            "schema_version": 2
+          },
+          "derived_cache_root": "/home/CNF2026527811/Documents/VGGT-Depth/runs/spring_v31_ffs/cache/validation/derived_calibrated_vggt_pose_depth",
+          "run_receipt_path": "/home/CNF2026527811/Documents/VGGT-Depth/runs/spring_v31_ffs/cache/validation/derived_calibrated_vggt_pose_depth/run_receipt.json",
+          "run_receipt_sha256": "a2143e9fefc9dd24847b195045e530d5bf2389bb430789c398e77b5b734513de",
+          "selected_records": 1318
+        },
+        "endpoint_selection": {
+          "available_endpoint_count": 1302,
+          "common_domain_complete": false,
+          "common_domain_expected_endpoint_count": 1302,
+          "coverage_scope": "limited_subset",
+          "endpoint_count": 1302,
+          "endpoint_id_hash_algorithm": "sha256(canonical_json([manifest_index,sequence_id,frame_id,timestamp]))",
+          "endpoint_id_sha256": "aa6ba30295b8d5ab0e1b4326a14fae61f9c8ec42641801cd8442097bc3ab5b57",
+          "entries_sha256": "aa6ba30295b8d5ab0e1b4326a14fae61f9c8ec42641801cd8442097bc3ab5b57",
+          "evaluated_endpoint_count": 64,
+          "evaluated_endpoint_id_sha256": "452b4b05fe9164317b1ab1f60c714a5ad8ec7b6c28ce309a48e3f03fac89449d",
+          "file_sha256": "9fa81b1ca652fdd1f33634f83213c28e826db91562125430aedb0beef4f5c838",
+          "first_manifest_index": 6,
+          "kind": "spring_common_endpoint_index",
+          "last_manifest_index": 1349,
+          "manifest_path": "/home/CNF2026527811/Documents/VGGT-Depth/runs/spring_seed42_primary/manifests/validation.jsonl",
+          "manifest_sha256": "6c016bdb4aa7f4a2be07c713cf9ae90b8dccdeab31c76c71d9d0e96b1a8bc45e",
+          "path": "/home/CNF2026527811/Documents/VGGT-Depth/runs/spring_v31_ffs/manifests/common_endpoints.json",
+          "schema_version": 1
+        },
+        "holdout": {
+          "evaluation_sequences": [
+            "0005",
+            "0010",
+            "0015",
+            "0021",
+            "0023",
+            "0030",
+            "0032",
+            "0047"
+          ],
+          "formal_holdout": true,
+          "same_manifest": false,
+          "sequence_overlap": [],
+          "training_sequences": [
+            "0001",
+            "0002",
+            "0004",
+            "0006",
+            "0007",
+            "0008",
+            "0009",
+            "0011",
+            "0012",
+            "0013",
+            "0014",
+            "0016",
+            "0017",
+            "0018",
+            "0020",
+            "0022",
+            "0024",
+            "0025",
+            "0026",
+            "0027",
+            "0033",
+            "0036",
+            "0037",
+            "0038",
+            "0039",
+            "0041",
+            "0043",
+            "0044",
+            "0045"
+          ]
+        },
+        "manifest": {
+          "exists": true,
+          "path": "/home/CNF2026527811/Documents/VGGT-Depth/runs/spring_seed42_primary/manifests/validation.jsonl",
+          "sha256": "6c016bdb4aa7f4a2be07c713cf9ae90b8dccdeab31c76c71d9d0e96b1a8bc45e"
+        },
+        "observation_cache_identity": {
+          "checkpoint_sha256": "98b5a9acf39fbfa795025de8cea95ce123daa40f6b6234d719167751024cf692",
+          "component": "ffs-observation",
+          "config_sha256": "191a0e2ef6d9e4f12ff0e15351178e9feb39767db10c0c98f960e9723d06db48",
+          "cuda_version": "13.0",
+          "torch_version": "2.10.0+cu130",
+          "upstream_commit": "a290ba04c1b3ad1ec41a33974a157b2917b624d4"
+        },
+        "pose_source": "vggt",
+        "raw_vggt_cache": {
+          "config": {
+            "current_left_view_index": 8,
+            "schema_version": 1
+          },
+          "manifest_sha256": "6c016bdb4aa7f4a2be07c713cf9ae90b8dccdeab31c76c71d9d0e96b1a8bc45e",
+          "receipt_path": "/home/CNF2026527811/Documents/VGGT-Depth/runs/spring_seed42_primary/cache/validation/vggt/run_receipt.json",
+          "receipt_sha256": "a76eba89a6270fa1a38abc5d07b5bbb874af8c906fcb2b106fd8d74f5aafa668"
+        },
+        "stage": "temporal",
+        "teacher_cache_identity": {
+          "checkpoint_sha256": "3127a97e557036a275d99b4e0510a0cd752b4804ec2a8d576642ccf13d7eacd4",
+          "component": "ffs-teacher",
+          "config_sha256": "a3dc273e765109509f3eca8f8036c590318e36f067fd38344f6aaa891a203160",
+          "cuda_version": "13.0",
+          "torch_version": "2.10.0+cu130",
+          "upstream_commit": "Spring_GT:cam_data+disp1_left"
+        },
+        "temporal_candidate_fusion": {
+          "enabled": true,
+          "per_age_quota": 2,
+          "phase_redundancy_penalty": 0.25,
+          "phase_redundancy_sigma_grid_px": 0.125,
+          "protocol_version": "current_conditioned_age_phase_diverse_v3_1",
+          "surface_depth_gap_m": 0.05,
+          "surface_relative_depth_gap": 0.05
+        },
+        "temporal_history": {
+          "age_temperature_frames": 3.0,
+          "candidate_feature_channels": 32,
+          "collision_depth_gap_m": 0.05,
+          "collision_relative_depth_gap": 0.05,
+          "depth_temperature_m": 0.25,
+          "enabled": true,
+          "memory_frames": 2,
+          "protocol_version": "topk_z_aware_hidden_warp_v2",
+          "source_collision_penalty": 0.5,
+          "splat_footprint": "bilinear",
+          "top_k": 4
+        },
+        "use_vggt_depth": true,
+        "use_vggt_pose": true
+      },
+      "metric_receipts": {
+        "boundary_epe": {
+          "count": 1777194,
+          "numerator": 10984699.563725471,
+          "source_key": "boundary_epe",
+          "valid": true,
+          "value": 6.180923165239963
+        },
+        "ffs_trusted_measurement_error": {
+          "count": 4493652,
+          "numerator": 1202124.443359375,
+          "source_key": "ffs_trusted_measurement_error",
+          "valid": true,
+          "value": 0.26751614129429135
+        },
+        "high_detail_1px": {
+          "count": 304525,
+          "numerator": 209171.0,
+          "source_key": "high_detail_1px",
+          "valid": true,
+          "value": 0.6868762827354076
+        },
+        "high_detail_epe": {
+          "count": 304525,
+          "numerator": 5002804.6326851845,
+          "source_key": "high_detail_epe",
+          "valid": true,
+          "value": 16.428223077531186
+        },
+        "invalid_rate": {
+          "count": 18874368,
+          "numerator": 0.0,
+          "source_key": "invalid_rate",
+          "valid": true,
+          "value": 0.0
+        },
+        "low_detail_epe": {
+          "count": 18569843,
+          "numerator": 11132570.23143053,
+          "source_key": "low_detail_epe",
+          "valid": true,
+          "value": 0.5994972726172499
+        },
+        "matched_epe": {
+          "count": 1741496,
+          "numerator": 5204481.745543957,
+          "source_key": "matched_epe",
+          "valid": true,
+          "value": 2.988512029625079
+        },
+        "negative_rate": {
+          "count": 18874368,
+          "numerator": 0.0,
+          "source_key": "negative_rate",
+          "valid": true,
+          "value": 0.0
+        },
+        "non_rigid_temporal_residual_error": {
+          "count": 7984611,
+          "numerator": 865902.4665770531,
+          "source_key": "non_rigid_temporal_residual_error",
+          "valid": true,
+          "value": 0.10844641856404189
+        },
+        "overall_1px": {
+          "count": 18874368,
+          "numerator": 1045506.0,
+          "source_key": "overall_1px",
+          "valid": true,
+          "value": 0.05539290110270182
+        },
+        "overall_epe": {
+          "count": 18874368,
+          "numerator": 16135374.864115715,
+          "source_key": "overall_epe",
+          "valid": true,
+          "value": 0.8548829218607857
+        },
+        "rigid_temporal_residual_error": {
+          "count": 9405011,
+          "numerator": 4636881.849236488,
+          "source_key": "rigid_temporal_residual_error",
+          "valid": true,
+          "value": 0.49302248016897465
+        },
+        "unmatched_completion_1px": {
+          "count": 17132872,
+          "numerator": 16281313.0,
+          "source_key": "unmatched_completion_1px",
+          "valid": true,
+          "value": 0.9502967745279367
+        },
+        "unmatched_completion_2px": {
+          "count": 17132872,
+          "numerator": 16782960.0,
+          "source_key": "unmatched_completion_2px",
+          "valid": true,
+          "value": 0.9795765706998804
+        },
+        "zero_rate": {
+          "count": 18874368,
+          "numerator": 0.0,
+          "source_key": "zero_rate",
+          "valid": true,
+          "value": 0.0
+        }
+      },
+      "metric_source": "spring_native_metrics.methods.T3_VGGT",
+      "metric_sources": {
+        "boundary_epe": "boundary_epe",
+        "ffs_trusted_measurement_error": "ffs_trusted_measurement_error",
+        "high_detail_1px": "high_detail_1px",
+        "high_detail_epe": "high_detail_epe",
+        "invalid_rate": "invalid_rate",
+        "low_detail_epe": "low_detail_epe",
+        "matched_epe": "matched_epe",
+        "negative_rate": "negative_rate",
+        "non_rigid_temporal_residual_error": "non_rigid_temporal_residual_error",
+        "overall_1px": "overall_1px",
+        "overall_epe": "overall_epe",
+        "rigid_temporal_residual_error": "rigid_temporal_residual_error",
+        "unmatched_completion_1px": "unmatched_completion_1px",
+        "unmatched_completion_2px": "unmatched_completion_2px",
+        "zero_rate": "zero_rate"
+      },
+      "metrics": {
+        "boundary_epe": 6.180923165239963,
+        "boundary_epe_count": 1777194,
+        "boundary_epe_numerator": 10984699.563725471,
+        "ffs_trusted_measurement_error": 0.26751614129429135,
+        "ffs_trusted_measurement_error_count": 4493652,
+        "ffs_trusted_measurement_error_numerator": 1202124.443359375,
+        "high_detail_1px": 0.6868762827354076,
+        "high_detail_1px_count": 304525,
+        "high_detail_1px_numerator": 209171.0,
+        "high_detail_epe": 16.428223077531186,
+        "high_detail_epe_count": 304525,
+        "high_detail_epe_numerator": 5002804.6326851845,
+        "invalid_rate": 0.0,
+        "invalid_rate_count": 18874368,
+        "invalid_rate_numerator": 0.0,
+        "low_detail_epe": 0.5994972726172499,
+        "low_detail_epe_count": 18569843,
+        "low_detail_epe_numerator": 11132570.23143053,
+        "matched_epe": 2.988512029625079,
+        "matched_epe_count": 1741496,
+        "matched_epe_numerator": 5204481.745543957,
+        "negative_rate": 0.0,
+        "negative_rate_count": 18874368,
+        "negative_rate_numerator": 0.0,
+        "non_rigid_temporal_residual_error": 0.10844641856404189,
+        "non_rigid_temporal_residual_error_count": 7984611,
+        "non_rigid_temporal_residual_error_numerator": 865902.4665770531,
+        "overall_1px": 0.05539290110270182,
+        "overall_1px_count": 18874368,
+        "overall_1px_numerator": 1045506.0,
+        "overall_epe": 0.8548829218607857,
+        "overall_epe_count": 18874368,
+        "overall_epe_numerator": 16135374.864115715,
+        "rigid_temporal_residual_error": 0.49302248016897465,
+        "rigid_temporal_residual_error_count": 9405011,
+        "rigid_temporal_residual_error_numerator": 4636881.849236488,
+        "unmatched_completion_1px": 0.9502967745279367,
+        "unmatched_completion_1px_count": 17132872,
+        "unmatched_completion_1px_numerator": 16281313.0,
+        "unmatched_completion_2px": 0.9795765706998804,
+        "unmatched_completion_2px_count": 17132872,
+        "unmatched_completion_2px_numerator": 16782960.0,
+        "zero_rate": 0.0,
+        "zero_rate_count": 18874368,
+        "zero_rate_numerator": 0.0
+      },
+      "primary_method": "T3_VGGT",
+      "purpose": "F5 + VGGT pose",
+      "raw_status": "LIMITED_EVALUATION_COMPLETE",
+      "records_evaluated": 64,
+      "selected_metrics_path": "/home/CNF2026527811/Documents/VGGT-Depth/runs/spring_v31_ffs/arms/F6/eval_canary500_64_fixed384/metrics.json",
+      "selection_class": "canonical_fixed384_canary",
+      "selection_errors": [],
+      "status": "LIMITED_EVALUATION_COMPLETE",
+      "topk_diagnostics": {
+        "age_2_survival_rate": 0.9999726505314748,
+        "attention_entropy": 0.8261208753667075,
+        "candidate_depth_spread": 0.2835566684006623,
+        "gain_by_camera_motion_bucket": {
+          "motion_low_tertile": 0.0894329549773829
+        },
+        "gain_by_fractional_phase_bucket": {
+          "phase_0.25_0.5": 0.09062019258271903,
+          "phase_ge_0.5": 0.0838256142596947,
+          "phase_lt_0.25": 0.05849035306772614
+        },
+        "phase_variance": 0.13582162520125274,
+        "unique_age_fraction": 0.9999726505314748
+      },
+      "topk_sources": {
+        "age_2_survival_rate": "age_2_survival_rate",
+        "attention_entropy": "attention_entropy",
+        "candidate_depth_spread": "candidate_depth_spread",
+        "gain_by_camera_motion_bucket": "gain_by_camera_motion_bucket",
+        "gain_by_fractional_phase_bucket": "gain_by_fractional_phase_bucket",
+        "phase_variance": "phase_variance",
+        "unique_age_fraction": "unique_age_fraction"
+      }
+    },
+    {
+      "arm": "F7",
+      "candidate_files": [],
+      "checkpoint": {
+        "git_hash": null,
+        "parameter_count": null,
+        "path": null,
+        "sha256": null,
+        "step": null,
+        "training_completion": null
+      },
+      "crop": {
+        "fixed384": false,
+        "mode": null,
+        "origin_hr_xy": null,
+        "origin_matches_protocol": false,
+        "size_hr_hw": null
+      },
+      "declared_config_status": "OPTIONAL_NOT_IN_BASELINE_QUEUE",
+      "eligibility": {
+        "common_domain_complete": null,
+        "common_domain_coverage_eligible": null,
+        "common_domain_endpoint_count": null,
+        "coverage_eligible": null,
+        "cross_arm_common_domain_eligible": false,
+        "final_acceptance_eligible": null,
+        "final_training_checkpoint": null,
+        "formal_holdout": null,
+        "is_canary": false,
+        "is_canonical_fixed384": false,
+        "is_limited_evaluation": false,
+        "is_missing": true,
+        "is_optional": true,
+        "records_evaluated": null,
+        "status": "OPTIONAL_NOT_RUN"
+      },
+      "endpoint_count": null,
+      "flags": {
+        "cross_arm_common_domain_eligible": false,
+        "is_canary": false,
+        "is_canonical_fixed384": false,
+        "is_final_checkpoint": null,
+        "is_final_evaluation": false,
+        "is_formal_holdout": null,
+        "is_limited_evaluation": false,
+        "is_missing": true,
+        "is_optional": true
+      },
+      "lineage": {
+        "calibration_conditioning": null,
+        "checkpoint_lineage": {},
+        "config": {
+          "declared": {
+            "arm": "F7",
+            "base_arm": "F6",
+            "description": "Optional Stage-C refiner; requires a separate v3.1-compatible Spring adapter.",
+            "experiment": "spring_v31_ffs_F7_stage_c_optional",
+            "protocol": "spring_v31_ffs_common_domain_v1",
+            "stage": "optional_stage_c",
+            "status": "OPTIONAL_NOT_IN_BASELINE_QUEUE"
+          },
+          "path": "/home/CNF2026527811/Documents/VGGT-Depth/configs/spring_v31_ffs/F7.yaml",
+          "sha256": "2edf1464803ee04811a25cd69cbed9a86e8488db3d864306458f206fe6c7fb48"
+        },
+        "consistency": {
+          "all_available_checks_pass": false,
+          "crop_origin_matches_protocol": null,
+          "crop_size_matches_protocol": null,
+          "endpoint_id_matches_protocol": null,
+          "manifest_matches_protocol": null,
+          "observation_checkpoint_matches_protocol": null
+        },
+        "derived_contract": null,
+        "derived_geometry_cache": null,
+        "endpoint_selection": null,
+        "holdout": {},
+        "manifest": null,
+        "observation_cache_identity": null,
+        "pose_source": "vggt",
+        "raw_vggt_cache": null,
+        "stage": "optional_stage_c",
+        "teacher_cache_identity": null,
+        "temporal_candidate_fusion": null,
+        "temporal_history": null,
+        "use_vggt_depth": true,
+        "use_vggt_pose": true
+      },
+      "metric_receipts": {
+        "boundary_epe": {
+          "count": null,
+          "numerator": null,
+          "source_key": null,
+          "valid": false,
+          "value": null
+        },
+        "ffs_trusted_measurement_error": {
+          "count": null,
+          "numerator": null,
+          "source_key": null,
+          "valid": false,
+          "value": null
+        },
+        "high_detail_1px": {
+          "count": null,
+          "numerator": null,
+          "source_key": null,
+          "valid": false,
+          "value": null
+        },
+        "high_detail_epe": {
+          "count": null,
+          "numerator": null,
+          "source_key": null,
+          "valid": false,
+          "value": null
+        },
+        "invalid_rate": {
+          "count": null,
+          "numerator": null,
+          "source_key": null,
+          "valid": false,
+          "value": null
+        },
+        "low_detail_epe": {
+          "count": null,
+          "numerator": null,
+          "source_key": null,
+          "valid": false,
+          "value": null
+        },
+        "matched_epe": {
+          "count": null,
+          "numerator": null,
+          "source_key": null,
+          "valid": false,
+          "value": null
+        },
+        "negative_rate": {
+          "count": null,
+          "numerator": null,
+          "source_key": null,
+          "valid": false,
+          "value": null
+        },
+        "non_rigid_temporal_residual_error": {
+          "count": null,
+          "numerator": null,
+          "source_key": null,
+          "valid": false,
+          "value": null
+        },
+        "overall_1px": {
+          "count": null,
+          "numerator": null,
+          "source_key": null,
+          "valid": false,
+          "value": null
+        },
+        "overall_epe": {
+          "count": null,
+          "numerator": null,
+          "source_key": null,
+          "valid": false,
+          "value": null
+        },
+        "rigid_temporal_residual_error": {
+          "count": null,
+          "numerator": null,
+          "source_key": null,
+          "valid": false,
+          "value": null
+        },
+        "unmatched_completion_1px": {
+          "count": null,
+          "numerator": null,
+          "source_key": null,
+          "valid": false,
+          "value": null
+        },
+        "unmatched_completion_2px": {
+          "count": null,
+          "numerator": null,
+          "source_key": null,
+          "valid": false,
+          "value": null
+        },
+        "zero_rate": {
+          "count": null,
+          "numerator": null,
+          "source_key": null,
+          "valid": false,
+          "value": null
+        }
+      },
+      "metric_source": null,
+      "metric_sources": {
+        "boundary_epe": null,
+        "ffs_trusted_measurement_error": null,
+        "high_detail_1px": null,
+        "high_detail_epe": null,
+        "invalid_rate": null,
+        "low_detail_epe": null,
+        "matched_epe": null,
+        "negative_rate": null,
+        "non_rigid_temporal_residual_error": null,
+        "overall_1px": null,
+        "overall_epe": null,
+        "rigid_temporal_residual_error": null,
+        "unmatched_completion_1px": null,
+        "unmatched_completion_2px": null,
+        "zero_rate": null
+      },
+      "metrics": {
+        "boundary_epe": null,
+        "boundary_epe_count": null,
+        "boundary_epe_numerator": null,
+        "ffs_trusted_measurement_error": null,
+        "ffs_trusted_measurement_error_count": null,
+        "ffs_trusted_measurement_error_numerator": null,
+        "high_detail_1px": null,
+        "high_detail_1px_count": null,
+        "high_detail_1px_numerator": null,
+        "high_detail_epe": null,
+        "high_detail_epe_count": null,
+        "high_detail_epe_numerator": null,
+        "invalid_rate": null,
+        "invalid_rate_count": null,
+        "invalid_rate_numerator": null,
+        "low_detail_epe": null,
+        "low_detail_epe_count": null,
+        "low_detail_epe_numerator": null,
+        "matched_epe": null,
+        "matched_epe_count": null,
+        "matched_epe_numerator": null,
+        "negative_rate": null,
+        "negative_rate_count": null,
+        "negative_rate_numerator": null,
+        "non_rigid_temporal_residual_error": null,
+        "non_rigid_temporal_residual_error_count": null,
+        "non_rigid_temporal_residual_error_numerator": null,
+        "overall_1px": null,
+        "overall_1px_count": null,
+        "overall_1px_numerator": null,
+        "overall_epe": null,
+        "overall_epe_count": null,
+        "overall_epe_numerator": null,
+        "rigid_temporal_residual_error": null,
+        "rigid_temporal_residual_error_count": null,
+        "rigid_temporal_residual_error_numerator": null,
+        "unmatched_completion_1px": null,
+        "unmatched_completion_1px_count": null,
+        "unmatched_completion_1px_numerator": null,
+        "unmatched_completion_2px": null,
+        "unmatched_completion_2px_count": null,
+        "unmatched_completion_2px_numerator": null,
+        "zero_rate": null,
+        "zero_rate_count": null,
+        "zero_rate_numerator": null
+      },
+      "primary_method": null,
+      "purpose": "F6 + optional Stage C",
+      "raw_status": null,
+      "records_evaluated": null,
+      "selected_metrics_path": null,
+      "selection_class": "missing",
+      "selection_errors": [
+        "arm directory missing"
+      ],
+      "status": "OPTIONAL_NOT_RUN",
+      "topk_diagnostics": {},
+      "topk_sources": {}
+    }
+  ],
+  "generated_at_utc": "2026-09-02T22:17:46.519077+00:00",
+  "notes": [
+    "This report is read-only with respect to runs/spring_v31_ffs; training and evaluation processes are not started or stopped.",
+    "Canary and limited-subset metric values are included for evidence continuity but are not full-domain ranking claims.",
+    "Null means unavailable or not evaluated; no metric is imputed across crop, pose, or GT lineage boundaries."
+  ],
+  "protocol": {
+    "crop": {
+      "mode": "fixed",
+      "origin_hr_xy": [
+        576,
+        348
+      ],
+      "size_hr_hw": [
+        384,
+        768
+      ],
+      "spatial_scale": 2
+    },
+    "endpoint_count": 1302,
+    "endpoint_id_sha256": "aa6ba30295b8d5ab0e1b4326a14fae61f9c8ec42641801cd8442097bc3ab5b57",
+    "endpoint_selection": {
+      "endpoint_count": 1302,
+      "endpoint_id_hash_algorithm": "sha256(canonical_json([manifest_index,sequence_id,frame_id,timestamp]))",
+      "endpoint_id_sha256": "aa6ba30295b8d5ab0e1b4326a14fae61f9c8ec42641801cd8442097bc3ab5b57",
+      "file_sha256": "9fa81b1ca652fdd1f33634f83213c28e826db91562125430aedb0beef4f5c838",
+      "kind": "spring_common_endpoint_index",
+      "path": "/home/CNF2026527811/Documents/VGGT-Depth/runs/spring_v31_ffs/manifests/common_endpoints.json",
+      "schema_version": 1
+    },
+    "name": "spring_v31_ffs_common_domain_v1",
+    "observation_checkpoint": {
+      "checkpoint_sha256": "98b5a9acf39fbfa795025de8cea95ce123daa40f6b6234d719167751024cf692",
+      "component": "ffs-observation",
+      "config_sha256": "08b7c63687deac7a882d3c952b0485fcecddeb101ec1fc4b8fff7580fe6cc129",
+      "cuda_version": "13.0",
+      "torch_version": "2.10.0+cu130",
+      "upstream_commit": "a290ba04c1b3ad1ec41a33974a157b2917b624d4"
+    },
+    "observation_upstream_commit": "a290ba04c1b3ad1ec41a33974a157b2917b624d4",
+    "seed": 42,
+    "sequence_disjoint_expected": true,
+    "train_manifest": {
+      "exists": true,
+      "path": "/home/CNF2026527811/Documents/VGGT-Depth/runs/spring_seed42_primary/manifests/train.jsonl",
+      "sha256": "c0bb8ce75e55f2d71815091a901bc93edc71558bb3fd5cd22fa6919ae27884b6"
+    },
+    "validation_manifest": {
+      "exists": true,
+      "path": "/home/CNF2026527811/Documents/VGGT-Depth/runs/spring_seed42_primary/manifests/validation.jsonl",
+      "sha256": "6c016bdb4aa7f4a2be07c713cf9ae90b8dccdeab31c76c71d9d0e96b1a8bc45e"
+    }
+  },
+  "report": "spring_v31_ffs_common_domain",
+  "required_metrics": [
+    "overall_epe",
+    "overall_1px",
+    "high_detail_epe",
+    "high_detail_1px",
+    "low_detail_epe",
+    "matched_epe",
+    "unmatched_completion_1px",
+    "unmatched_completion_2px",
+    "rigid_temporal_residual_error",
+    "non_rigid_temporal_residual_error",
+    "boundary_epe",
+    "ffs_trusted_measurement_error",
+    "negative_rate",
+    "zero_rate",
+    "invalid_rate"
+  ],
+  "run_root": "/home/CNF2026527811/Documents/VGGT-Depth/runs/spring_v31_ffs",
+  "schema_version": 1,
+  "selection_policy": {
+    "canonical_fixed384": "prefer fixed crop 384x768; rank complete common-domain/final candidates ahead of limited canaries",
+    "frozen_baselines": "F0/F1 read top-level metrics",
+    "missing_policy": "retain arm with null metrics and explicit missing/optional status",
+    "trainable_arms": "F2-F7 read primary methods, preferring spring_native_metrics.methods when available"
+  },
+  "status": "PARTIAL",
+  "summary": {
+    "all_non_optional_arms_present": true,
+    "arm_count": 8,
+    "canary_arm_count": 4,
+    "canary_arms": [
+      "F3",
+      "F4",
+      "F5",
+      "F6"
+    ],
+    "complete_common_domain_arm_count": 3,
+    "formal_arms": [
+      "F3",
+      "F4",
+      "F5",
+      "F6"
+    ],
+    "full_domain_arms": [
+      "F0",
+      "F1",
+      "F2"
+    ],
+    "missing_arm_count": 0,
+    "missing_arms": [],
+    "optional_arms_not_run": [
+      "F7"
+    ]
+  },
+  "topk_diagnostics": [
+    "age_2_survival_rate",
+    "unique_age_fraction",
+    "phase_variance",
+    "candidate_depth_spread",
+    "attention_entropy",
+    "gain_by_fractional_phase_bucket",
+    "gain_by_camera_motion_bucket"
+  ]
+}
