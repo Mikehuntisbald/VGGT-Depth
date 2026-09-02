@@ -1,11 +1,13 @@
-experiment: spring_corrected_S2_t3_single_age_control
+experiment: spring_corrected_S2_t3_k2_control
 seed: 42
 arm: S2
 defaults_from: configs/ablations/temporal_x2_v2_strict_bilinear_gt_no_depth.yaml
 
-# The current V2 contract requires two memory ages.  This row is the
-# deterministic history control; the runner/evaluator records the retained
-# candidate ages and a later K=1 mask control is kept as an internal diagnostic.
+# K=2 is the smallest valid V2 candidate set.  It gives a matched lower-K
+# control against S3's K=4 path without forking the model state dictionary.
+temporal_history_v2:
+  top_k: 2
+
 train:
   stage: temporal
   steps: 15000
