@@ -1,0 +1,56 @@
+{
+  "protocol": "spring_seed42_common_fixed384_v1",
+  "status": "PASS_WITH_EXISTING_S6_RECEIPT",
+  "manifest": {
+    "path": "/home/CNF2026527811/Documents/VGGT-Depth/runs/spring_seed42_primary/manifests/validation.jsonl",
+    "sha256": "6c016bdb4aa7f4a2be07c713cf9ae90b8dccdeab31c76c71d9d0e96b1a8bc45e"
+  },
+  "endpoint_selection": {
+    "path": "/home/CNF2026527811/Documents/VGGT-Depth/runs/spring_seed42_primary/manifests/common_fixed384_endpoints.json",
+    "file_sha256": "9fa81b1ca652fdd1f33634f83213c28e826db91562125430aedb0beef4f5c838",
+    "endpoint_id_sha256": "aa6ba30295b8d5ab0e1b4326a14fae61f9c8ec42641801cd8442097bc3ab5b57",
+    "count": 1302
+  },
+  "crop": {
+    "coordinate_space": "model_hr_image",
+    "source_hw": [1080, 1920],
+    "size_hw": [384, 768],
+    "origin_xy": [576, 348],
+    "source_gt_4k_hw": [2160, 3840],
+    "source_gt_4k_equivalent_xywh": [1152, 696, 1536, 768]
+  },
+  "endpoint_checks": {
+    "s4": {"available": 1302, "selected": 1302},
+    "s5": {"available": 1302, "selected": 1302},
+    "s6": {"available": 1302, "selected": 1302},
+    "s5_fixed_vs_s6_base_aggregate_exact": true
+  },
+  "receipts": {
+    "s5_fixed": {
+      "path": "/home/CNF2026527811/Documents/VGGT-Depth/runs/spring_seed42_primary/corrected_plan/arms/S5/eval_fixed_crop_20260902/metrics.json",
+      "sha256": "8764cdf8961f606834cc7edc4d2640a237f9323895cbd7f9406565c51fc6f5dc"
+    },
+    "s6": {
+      "path": "/home/CNF2026527811/Documents/VGGT-Depth/runs/spring_seed42_primary/corrected_plan/arms/S6/eval/metrics.json",
+      "sha256": "27f42087c35fcc6d9e1ab1f65bfb9ecace6048d5294698fa5a493719afd00f4b"
+    }
+  },
+  "paired_s6": {
+    "base": "T3_VGGT_base",
+    "candidate": "T3_VGGT_epipolar",
+    "epe_px": {"base": 0.4442911727745924, "candidate": 0.44187274932501414},
+    "bad_1": {"base": 0.04999853414553817, "candidate": 0.04970287265360267},
+    "trusted_epe_px": {"base": 0.14127752064323867, "candidate": 0.13586364376317786},
+    "low_confidence_epe_px": {"base": 0.7119285018191734, "candidate": 0.7122416933137088},
+    "invalid_rate": {"base": 0.01113808262895492, "candidate": 0.011138116485288391},
+    "correction_nonzero_rate": 0.9224918658905231,
+    "candidate_coverage_rate": 0.9707950918233766,
+    "correction_saturated_rate": 0.0
+  },
+  "interpretation": {
+    "absolute_cross_crop_ranking": "forbidden",
+    "primary_claim": "paired_fixed_crop_refinement_gain",
+    "gt_pose_vs_vggt_pose": "reported_as_separate_arms",
+    "native_spring_fields_in_s6_receipt": "unavailable; use separate sidecar replay"
+  }
+}

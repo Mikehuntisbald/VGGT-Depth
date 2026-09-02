@@ -44,6 +44,11 @@ from data.collate import (  # noqa: E402
     collate_temporal_training_samples,
     collate_training_samples,
 )
+from data.endpoint_selection import (  # noqa: E402
+    EndpointSelection,
+    load_endpoint_index,
+    resolve_endpoint_dataset_indices,
+)
 from data.manifest import load_manifest  # noqa: E402
 from data.training_dataset import (  # noqa: E402
     CachedFFSTrainingDataset,
@@ -174,6 +179,14 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument("--manifest", type=Path, help="explicit validation JSONL manifest")
+    parser.add_argument(
+        "--spring-endpoint-index-list",
+        type=Path,
+        help=(
+            "manifest-bound common Spring endpoint JSON; filtering happens "
+            "after the complete causal dataset is built"
+        ),
+    )
     parser.add_argument(
         "--observation-cache-root",
         type=Path,
@@ -4115,6 +4128,7 @@ def run(args: argparse.Namespace) -> int:
     )
     derived_lineage: dict[str, Any] | None = None
     formal_coverage: dict[str, int] | None = None
+    endpoint_selection: EndpointSelection | None = None
     if stage == "spatial":
         dataset: CachedFFSTrainingDataset | CachedTemporalTrainingDataset = (
             CachedFFSTrainingDataset(
@@ -4172,6 +4186,27 @@ def run(args: argparse.Namespace) -> int:
         collate_function = collate_temporal_training_samples
     if len(dataset) == 0:
         raise ValueError("validation dataset is empty")
+    # Always construct/validate the complete dataset first.  For temporal
+    # evaluation the endpoint list maps to ``window.endpoint_index`` while
+    # each selected item still loads its full T=3/T=5 causal context.
+    if getattr(args, "spring_endpoint_index_list", None) is not None:
+        endpoint_selection = load_endpoint_index(
+            args.spring_endpoint_index_list,
+            manifest_path=manifest_path,
+        )
+        if stage == "spatial":
+            available_endpoint_indices = range(len(dataset))
+        else:
+            assert isinstance(dataset, CachedTemporalTrainingDataset)
+            available_endpoint_indices = (
+                window.endpoint_index for window in dataset.windows
+            )
+        endpoint_dataset_indices = resolve_endpoint_dataset_indices(
+            endpoint_selection,
+            available_endpoint_indices,
+        )
+    else:
+        endpoint_dataset_indices = tuple(range(len(dataset)))
     if spring_native_enabled:
         # Native Spring metrics are intentionally impossible to enable on a
         # generic manifest or an FFS-only teacher cache.  Fail closed before
@@ -4210,12 +4245,13 @@ def run(args: argparse.Namespace) -> int:
         merge=False,
     )
     start_index = int(config.eval.start)
-    if start_index >= len(dataset):
+    if start_index >= len(endpoint_dataset_indices):
         raise ValueError(
-            f"eval.start={start_index} is outside dataset length {len(dataset)}"
+            f"eval.start={start_index} is outside selected endpoint length "
+            f"{len(endpoint_dataset_indices)}"
         )
     requested_limit = config.eval.limit
-    available_count = len(dataset) - start_index
+    available_count = len(endpoint_dataset_indices) - start_index
     sample_count = (
         available_count
         if requested_limit is None
@@ -4224,7 +4260,8 @@ def run(args: argparse.Namespace) -> int:
     if sample_count <= 0:
         raise ValueError("evaluation selects no validation records")
     selected_dataset = Subset(
-        dataset, range(start_index, start_index + sample_count)
+        dataset,
+        endpoint_dataset_indices[start_index : start_index + sample_count],
     )
     device = _resolve_device(args.device)
     pin_memory = bool(config.eval.pin_memory) and device.type == "cuda"
@@ -5461,7 +5498,23 @@ def run(args: argparse.Namespace) -> int:
         )
     )
     elapsed_seconds = time.perf_counter() - started
-    full_selection = start_index == 0 and sample_count == len(dataset)
+    full_selection = (
+        endpoint_selection is None
+        and start_index == 0
+        and sample_count == len(dataset)
+    )
+    endpoint_selection_report = (
+        None
+        if endpoint_selection is None
+        else endpoint_selection.to_report(
+            available_endpoint_count=len(dataset),
+            evaluated_manifest_indices=(
+                endpoint_selection.manifest_indices[
+                    start_index : start_index + sample_count
+                ]
+            ),
+        )
+    )
     checkpoint_completion = checkpoint_training_completion(
         checkpoint_metadata,
         stage=stage,
@@ -5853,6 +5906,11 @@ def run(args: argparse.Namespace) -> int:
             "paired_bootstrap_unit": "sequence_id/frame_id",
         },
         "selection_start": start_index,
+        **(
+            {}
+            if endpoint_selection_report is None
+            else {"endpoint_selection": endpoint_selection_report}
+        ),
         "visualizations_written": visualized,
         "visualization_selection": visualization_records,
         **(

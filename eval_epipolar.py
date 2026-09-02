@@ -35,6 +35,11 @@ if str(SRC_ROOT) not in sys.path:
     sys.path.insert(0, str(SRC_ROOT))
 
 from data.cache_dataset import sha256_file  # noqa: E402
+from data.endpoint_selection import (  # noqa: E402
+    EndpointSelection,
+    load_endpoint_index,
+    resolve_endpoint_dataset_indices,
+)
 from data.epipolar_training_dataset import (  # noqa: E402
     EpipolarTrainingDataset,
     collate_epipolar_training_samples,
@@ -1521,6 +1526,14 @@ def build_parser() -> argparse.ArgumentParser:
         help="relocated Stage-B base; SHA/step must match Stage-C lineage",
     )
     parser.add_argument("--manifest", type=Path, required=True)
+    parser.add_argument(
+        "--spring-endpoint-index-list",
+        type=Path,
+        help=(
+            "manifest-bound common Spring endpoint JSON; filtering happens "
+            "after the complete causal dataset is built"
+        ),
+    )
     parser.add_argument("--observation-cache-root", type=Path, required=True)
     parser.add_argument("--teacher-cache-root", type=Path, required=True)
     parser.add_argument("--derived-cache-root", type=Path, required=True)
@@ -2667,8 +2680,26 @@ def run(args: argparse.Namespace) -> int:
         manifest_sha256=sha256_file(manifest),
     )
     dataset = EpipolarTrainingDataset(temporal_dataset)
-    selected_count = len(dataset) if args.limit is None else min(args.limit, len(dataset))
-    selected = Subset(dataset, range(selected_count))
+    endpoint_selection: EndpointSelection | None = None
+    if getattr(args, "spring_endpoint_index_list", None) is not None:
+        endpoint_selection = load_endpoint_index(
+            args.spring_endpoint_index_list,
+            manifest_path=manifest,
+        )
+        endpoint_dataset_indices = resolve_endpoint_dataset_indices(
+            endpoint_selection,
+            (window.endpoint_index for window in temporal_dataset.windows),
+        )
+    else:
+        endpoint_dataset_indices = tuple(range(len(dataset)))
+    selected_count = (
+        len(endpoint_dataset_indices)
+        if args.limit is None
+        else min(args.limit, len(endpoint_dataset_indices))
+    )
+    if selected_count <= 0:
+        raise ValueError("evaluation selects no endpoint windows")
+    selected = Subset(dataset, endpoint_dataset_indices[:selected_count])
 
     evaluation_config = _resolved_dict(config)
     refiner, stage_c_metadata = load_stage_c_checkpoint(
@@ -3099,7 +3130,21 @@ def run(args: argparse.Namespace) -> int:
             ),
         },
     }
-    full_selection = args.limit is None and selected_count == len(dataset)
+    full_selection = (
+        endpoint_selection is None
+        and args.limit is None
+        and selected_count == len(dataset)
+    )
+    endpoint_selection_report = (
+        None
+        if endpoint_selection is None
+        else endpoint_selection.to_report(
+            available_endpoint_count=len(dataset),
+            evaluated_manifest_indices=endpoint_selection.manifest_indices[
+                :selected_count
+            ],
+        )
+    )
     acceptance_eligible = (
         full_selection
         and bool(completion["all_complete"])
@@ -3186,6 +3231,7 @@ def run(args: argparse.Namespace) -> int:
         "runtime_geometry_statistics": runtime_geometry_statistics,
         "windows_evaluated": selected_count,
         "full_evaluable_windows": len(dataset),
+        "endpoint_selection": endpoint_selection_report,
         "formal_coverage": formal_coverage,
         "canonical_coverage": canonical_coverage,
         "fixed_hr_crop": [crop_height, crop_width],

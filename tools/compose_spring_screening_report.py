@@ -349,6 +349,73 @@ def gpu_snapshot() -> list[dict[str, Any]]:
     return rows
 
 
+def scheduler_failure_receipts(
+    arm_root: Path, names: tuple[str, ...]
+) -> dict[str, dict[str, Any]]:
+    """Load terminal scheduler receipts for arms lacking valid metrics.
+
+    Watchers write these receipts atomically.  A ``RUNNING`` receipt is
+    intentionally ignored (the compose watcher should keep waiting), while a
+    malformed terminal-looking file is surfaced as a synthetic failure rather
+    than being silently treated as an absent arm.
+    """
+
+    failures: dict[str, dict[str, Any]] = {}
+    for name in names:
+        metrics = arm_root / name / "eval" / "metrics.json"
+        metrics_valid = False
+        if metrics.is_file():
+            try:
+                metrics_value = read_json(metrics)
+                metrics_valid = isinstance(metrics_value.get("status"), str)
+            except (OSError, json.JSONDecodeError, ValueError):
+                metrics_valid = False
+        if metrics_valid:
+            continue
+        candidates = (
+            arm_root / name / "eval" / "failure_receipt.json",
+            arm_root / name / "train" / "failure_receipt.json",
+        )
+        for receipt_path in candidates:
+            if not receipt_path.is_file():
+                continue
+            try:
+                receipt = read_json(receipt_path)
+            except (OSError, json.JSONDecodeError, ValueError) as exc:
+                failures[name] = {
+                    "status": "FAILED",
+                    "stage": "scheduler",
+                    "detail": f"malformed scheduler receipt: {type(exc).__name__}: {exc}",
+                    "receipt_path": str(receipt_path.resolve()),
+                }
+                break
+            status = str(receipt.get("status", ""))
+            if status in {"FAILED", "BLOCKED"}:
+                receipt = dict(receipt)
+                receipt.setdefault("receipt_path", str(receipt_path.resolve()))
+                failures[name] = receipt
+                break
+            if status == "COMPLETE":
+                # COMPLETE without metrics is an inconsistent terminal state;
+                # retaining it as FAILED prevents an infinite compose wait.
+                failures[name] = {
+                    "status": "FAILED",
+                    "stage": receipt.get("stage", "scheduler"),
+                    "detail": "scheduler marked COMPLETE but metrics.json is missing",
+                    "receipt_path": str(receipt_path.resolve()),
+                    "source_receipt": receipt,
+                }
+                break
+        if not metrics_valid and name not in failures and metrics.is_file():
+            failures[name] = {
+                "status": "FAILED",
+                "stage": "eval",
+                "detail": "metrics.json exists but is malformed or lacks status",
+                "receipt_path": str(metrics.resolve()),
+            }
+    return failures
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--output-json", type=Path, required=True)
@@ -394,10 +461,21 @@ def main() -> int:
         else {"records": None, "sequences": [], "sequence_lengths": {}}
     )
     arm_reports: dict[str, dict[str, Any]] = {"S0": s0}
-    for name in ("S1", "S2", "S3", "S4", "S5", "S6"):
+    arm_names = ("S1", "S2", "S3", "S4", "S5", "S6")
+    for name in arm_names:
         path = args.arm_root / name / "eval" / "metrics.json"
         if path.is_file():
             arm_reports[name] = read_json(path)
+    scheduler_failures = scheduler_failure_receipts(args.arm_root, arm_names)
+    # Include a synthetic report for a terminally failed arm. This keeps the
+    # arm visible in the composed matrix (with null metrics) and preserves the
+    # exact failure receipt for downstream automation.
+    for name, receipt in scheduler_failures.items():
+        if name not in arm_reports:
+            arm_reports[name] = {
+                "status": str(receipt.get("status", "FAILED")),
+                "scheduler_failure": receipt,
+            }
 
     expected_training_steps: dict[str, int] = {}
     blocked_rows = blocked.get("arms")
@@ -525,6 +603,7 @@ def main() -> int:
                 ),
                 "metrics": primary,
                 "auxiliary": auxiliary,
+                "scheduler_failure": report.get("scheduler_failure"),
                 "raw_metrics_path": str((args.s0 if name == "S0" else args.arm_root / name / "eval" / "metrics.json").resolve()),
             }
         )
@@ -620,6 +699,7 @@ def main() -> int:
     payload = {
         "schema_version": 1,
         "report": "spring_seed42_screening",
+        "status": "PARTIAL_FAILURE" if scheduler_failures else "COMPOSED",
         "generated_at_utc": dt.datetime.now(dt.timezone.utc).isoformat(),
         "protocol": {
             "seed": 42,
@@ -670,6 +750,7 @@ def main() -> int:
         "arms": arms,
         "resource_snapshot": {"gpus": gpu_snapshot()},
         "blocked_receipt": str(args.blocked.resolve()),
+        "scheduler_failures": scheduler_failures,
         "monitor": {
             "script": str((Path(__file__).resolve().parents[1] / "tools" / "monitor_spring_vggt.py").resolve()),
             "log": str(
@@ -704,6 +785,11 @@ def main() -> int:
             "S6 uses tools/train_spring_epipolar.py and tools/eval_spring_epipolar.py; any produced result remains bounded screening-only and cannot replace canonical Stage-C evidence.",
             "S6 native Spring fields are an explicitly marked exact-zero-correction reuse of the fixed-crop S5 base side-channel; the S6 pseudo-GT evaluator itself remains the direct Stage-C receipt.",
             "Crop comparability: S0-S5 native rows use full-resolution evaluation, while the Stage-C S6 receipt and its exact-zero native reuse use the required fixed 384x768 center crop; absolute cross-arm ranking across these crop domains is exploratory only.",
+            (
+                "Scheduler failure receipts are included verbatim; arms without metrics are marked FAILED/BLOCKED with null metrics and are not treated as completed."
+                if scheduler_failures
+                else "No terminal scheduler failure receipts were present when this report was composed."
+            ),
         ],
     }
     args.output_json.parent.mkdir(parents=True, exist_ok=True)
@@ -725,6 +811,12 @@ def main() -> int:
     )
     lines = [
         "# Spring seed=42 seven-arm screening",
+        "",
+        (
+            "**Composition status: PARTIAL_FAILURE** — one or more scheduler failure receipts were present; null metrics are intentional."
+            if scheduler_failures
+            else "**Composition status: COMPOSED**"
+        ),
         "",
         f"This report covers a {coverage_text} (train sequences {', '.join(train_info['sequences']) or 'unknown'}, validation sequences {', '.join(validation_info['sequences']) or 'unknown'}; {schedule_text}).",
         "Crop note: S0-S5 native metrics are full-resolution; S6 Stage-C and its exact-zero native reuse are the required fixed 384x768 center crop, so cross-arm absolute values are exploratory rather than a single-domain ranking.",

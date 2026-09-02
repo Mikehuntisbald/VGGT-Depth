@@ -19,6 +19,7 @@ result by changing a count or filename.
 from __future__ import annotations
 
 import argparse
+import copy
 import json
 import os
 import sys
@@ -142,6 +143,49 @@ def _mark_screening_report(
     _atomic_json(metrics_path, report)
 
 
+def _spring_endpoint_size_compat_batch(batch: Any) -> Any:
+    """Fill the canonical ``image_size_wh`` alias from Spring metadata.
+
+    Spring manifests intentionally record the source frame as
+    ``image_shape_hw=[height,width]``.  The canonical Stage-C provenance
+    checker uses the equivalent ``image_size_wh=[width,height]`` field.  Keep
+    the on-disk manifest and its hash unchanged: only the in-memory endpoint
+    record passed to that checker is adapted.  The subsequent image-size
+    assertion still verifies the derived dimensions against the actual files.
+    """
+
+    identities = batch.get("identity_metadata") if isinstance(batch, dict) else None
+    if not isinstance(identities, list):
+        return batch
+    patched_identities = copy.deepcopy(identities)
+    for identity in patched_identities:
+        if not isinstance(identity, dict):
+            continue
+        per_time = identity.get("per_time_ffs")
+        if not isinstance(per_time, list) or not per_time:
+            continue
+        endpoint = per_time[-1]
+        if not isinstance(endpoint, dict):
+            continue
+        record = endpoint.get("manifest_record")
+        if not isinstance(record, dict) or "image_size_wh" in record:
+            continue
+        shape = record.get("image_shape_hw")
+        if (
+            isinstance(shape, list)
+            and len(shape) == 2
+            and all(
+                isinstance(value, int) and not isinstance(value, bool) and value > 0
+                for value in shape
+            )
+        ):
+            height, width = shape
+            record["image_size_wh"] = [int(width), int(height)]
+    patched = dict(batch)
+    patched["identity_metadata"] = patched_identities
+    return patched
+
+
 def run(args: argparse.Namespace) -> int:
     if not args.spring_screening:
         raise ValueError(
@@ -204,6 +248,7 @@ def run(args: argparse.Namespace) -> int:
     original_require = canonical.require_formal_stage_c_coverage
     original_rectification = canonical.validate_rectification_audit_binding
     original_holdout = canonical._audit_temporal_holdout_and_raw_lineage
+    original_batch_causality = canonical.validate_epipolar_batch_causality
     canonical._validate_formal_temporal_coverage = spring_temporal_coverage
     canonical.require_formal_stage_c_coverage = require_spring_stage_c_coverage
     canonical.validate_rectification_audit_binding = (
@@ -219,6 +264,9 @@ def run(args: argparse.Namespace) -> int:
     canonical._audit_temporal_holdout_and_raw_lineage = (
         lambda **kwargs: strict_spring_holdout_lineage(original_holdout, **kwargs)
     )
+    canonical.validate_epipolar_batch_causality = (
+        lambda batch: original_batch_causality(_spring_endpoint_size_compat_batch(batch))
+    )
     try:
         result = canonical.run(args)
     finally:
@@ -226,6 +274,7 @@ def run(args: argparse.Namespace) -> int:
         canonical.require_formal_stage_c_coverage = original_require
         canonical.validate_rectification_audit_binding = original_rectification
         canonical._audit_temporal_holdout_and_raw_lineage = original_holdout
+        canonical.validate_epipolar_batch_causality = original_batch_causality
     if int(result) == 0:
         _mark_screening_report(args, checkpoint_marker=checkpoint_marker)
     return int(result)

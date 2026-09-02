@@ -8,8 +8,11 @@ __pycache__/
 # Large/private artifacts
 checkpoints/ffs/*/
 checkpoints/vggt/*
+checkpoints/foundationstereo/*
 cache/
 outputs/
+runs/
+third_party/FoundationStereo/
 visualizations/*
 failures/*
 
@@ -22,4 +25,3 @@ manifests/*.jsonl
 .idea/
 .vscode/
 .DS_Store
-
