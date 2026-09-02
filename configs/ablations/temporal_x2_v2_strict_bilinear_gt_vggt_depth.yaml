@@ -1,0 +1,9 @@
+experiment: ffs_omega_tsr_temporal_x2_v2_strict_bilinear_gt_vggt_depth
+defaults_from: configs/ablations/temporal_x2_v2_strict_bilinear.yaml
+
+data:
+  temporal_pose_source: gt
+
+model:
+  use_vggt_pose: false
+  use_vggt_depth: true

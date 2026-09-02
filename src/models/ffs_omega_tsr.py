@@ -376,7 +376,9 @@ class FFSOmegaTSR(nn.Module):
         physical_output_v2: bool = False,
         physical_valid_threshold: float = 0.5,
         completion_threshold: float = 0.5,
+        strict_threshold: bool = False,
         trusted_ffs_confidence_threshold: float = 0.8,
+        convex_initialization: str = "uniform",
         temporal_history_top_k: int | None = None,
         temporal_history_feature_channels: int = 32,
         calibration_conditioning_v3: bool = False,
@@ -413,6 +415,15 @@ class FFSOmegaTSR(nn.Module):
             raise ValueError("positivity_floor_hr_px must be finite and non-negative")
         if not isinstance(physical_output_v2, bool):
             raise TypeError("physical_output_v2 must be a bool")
+        if not isinstance(strict_threshold, bool):
+            raise TypeError("strict_threshold must be a bool")
+        if not isinstance(convex_initialization, str):
+            raise TypeError("convex_initialization must be a string")
+        convex_initialization = convex_initialization.strip().lower()
+        if convex_initialization not in {"uniform", "bilinear"}:
+            raise ValueError(
+                "convex_initialization must be 'uniform' or 'bilinear'"
+            )
         for name, value in (
             ("physical_valid_threshold", physical_valid_threshold),
             ("completion_threshold", completion_threshold),
@@ -520,9 +531,14 @@ class FFSOmegaTSR(nn.Module):
         self.physical_output_v2 = physical_output_v2
         self.physical_valid_threshold = float(physical_valid_threshold)
         self.completion_threshold = float(completion_threshold)
+        # Opt-in V2 fix: old checkpoints retain ``>=`` threshold semantics;
+        # corrected lineages can request strict ``>`` decisions to avoid a
+        # sigmoid(0)==0.5 tie being interpreted as a positive prediction.
+        self.strict_threshold = strict_threshold
         self.trusted_ffs_confidence_threshold = float(
             trusted_ffs_confidence_threshold
         )
+        self.convex_initialization = convex_initialization
         self.temporal_history_top_k = temporal_history_top_k
         self.calibration_conditioning_v3 = calibration_conditioning_v3
         self.use_rays = use_rays
@@ -618,6 +634,15 @@ class FFSOmegaTSR(nn.Module):
         assert isinstance(final_mask_layer, nn.Conv2d)
         nn.init.zeros_(final_mask_layer.weight)
         nn.init.zeros_(final_mask_layer.bias)
+        if self.convex_initialization == "bilinear":
+            with torch.no_grad():
+                final_mask_layer.bias.copy_(
+                    self.convex_upsampler.bilinear_mask_logits(
+                        scale=scale,
+                        dtype=final_mask_layer.bias.dtype,
+                        device=final_mask_layer.bias.device,
+                    ).reshape_as(final_mask_layer.bias)
+                )
         final_hr_layer = self.hr_output_head[-1]
         assert isinstance(final_hr_layer, nn.Conv2d)
         nn.init.zeros_(final_hr_layer.weight)
@@ -1369,13 +1394,18 @@ class FFSOmegaTSR(nn.Module):
                 raw_completion_probability,
                 torch.zeros_like(raw_completion_probability),
             )
-            predicted_valid = (
-                valid_probability >= self.physical_valid_threshold
-            )
+            if self.strict_threshold:
+                predicted_valid = valid_probability > self.physical_valid_threshold
+            else:
+                predicted_valid = valid_probability >= self.physical_valid_threshold
             completion_mask = (
                 hole_hr
                 & source_support_hr
-                & (completion_probability >= self.completion_threshold)
+                & (
+                    completion_probability > self.completion_threshold
+                    if self.strict_threshold
+                    else completion_probability >= self.completion_threshold
+                )
             )
             requested_valid = (
                 trusted_ffs_hr
@@ -1417,7 +1447,11 @@ class FFSOmegaTSR(nn.Module):
                 completion_mask = (
                     hole_hr
                     & completion_metric_support_hr
-                    & (completion_probability >= self.completion_threshold)
+                    & (
+                        completion_probability > self.completion_threshold
+                        if self.strict_threshold
+                        else completion_probability >= self.completion_threshold
+                    )
                 )
                 anchored_magnitude_hr_px, _, trusted_ffs_hr = (
                     project_ffs_measurement_ownership_v3_1(

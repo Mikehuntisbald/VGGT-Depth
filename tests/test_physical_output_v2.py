@@ -72,6 +72,65 @@ def test_v2_all_invalid_is_exact_zero_and_never_fake_completion() -> None:
     assert not output.completion_mask.any()
 
 
+def test_v2_strict_threshold_excludes_sigmoid_half_ties() -> None:
+    rgb, disparity, confidence = _tsr_inputs()
+    # Supply a valid VGGT source while making every FFS cell a hole.  The
+    # zero-initialized validity/completion head emits exactly p=0.5; legacy V2
+    # uses >= and therefore accepts the tie, while the opt-in strict path
+    # correctly rejects it.
+    valid_ffs = torch.zeros_like(disparity, dtype=torch.bool)
+    valid_vggt = torch.ones_like(disparity, dtype=torch.bool)
+    disparity_vggt = disparity.abs() + 1.0
+    confidence_vggt = torch.ones_like(confidence)
+    legacy = FFSOmegaTSR(physical_output_v2=True).eval()
+    strict = FFSOmegaTSR(
+        physical_output_v2=True,
+        strict_threshold=True,
+    ).eval()
+    with torch.no_grad():
+        legacy_output = legacy(
+            rgb,
+            disparity,
+            confidence,
+            disparity_vggt_hr_px=disparity_vggt,
+            confidence_vggt=confidence_vggt,
+            valid_ffs=valid_ffs,
+            valid_vggt=valid_vggt,
+        )
+        strict_output = strict(
+            rgb,
+            disparity,
+            confidence,
+            disparity_vggt_hr_px=disparity_vggt,
+            confidence_vggt=confidence_vggt,
+            valid_ffs=valid_ffs,
+            valid_vggt=valid_vggt,
+        )
+    assert legacy.completion_threshold == strict.completion_threshold == 0.5
+    assert legacy_output.completion_probability is not None
+    assert strict_output.completion_probability is not None
+    torch.testing.assert_close(
+        legacy_output.completion_probability,
+        torch.full_like(legacy_output.completion_probability, 0.5),
+        rtol=0.0,
+        atol=1e-6,
+    )
+    assert legacy_output.completion_mask is not None
+    assert strict_output.completion_mask is not None
+    assert legacy_output.completion_mask.all()
+    assert not strict_output.completion_mask.any()
+    assert legacy_output.output_valid_mask is not None
+    assert strict_output.output_valid_mask is not None
+    assert legacy_output.output_valid_mask.all()
+    assert not strict_output.output_valid_mask.any()
+    torch.testing.assert_close(
+        strict_output.disparity_hr_px,
+        torch.zeros_like(strict_output.disparity_hr_px),
+        rtol=0.0,
+        atol=0.0,
+    )
+
+
 def test_v2_nonnegative_zero_invalid_and_trusted_ffs_is_conserved_exactly() -> None:
     model = FFSOmegaTSR(physical_output_v2=True).eval()
     rgb, disparity, confidence = _tsr_inputs()
@@ -201,6 +260,73 @@ def test_v2_config_build_and_training_loss_wire_all_three_terms() -> None:
     ]
     assert head_gradients
     assert all(torch.isfinite(value).all() for value in head_gradients)
+
+
+def test_opt_in_v2_fix_config_wires_strict_threshold_and_bilinear_convex_init() -> None:
+    config = OmegaConf.create(train.DEFAULT_CONFIG)
+    config.physical_output_v2 = {
+        "enabled": True,
+        "protocol_version": "explicit_valid_completion_nonnegative_v2",
+        "valid_threshold": 0.5,
+        "completion_threshold": 0.5,
+        "strict_threshold": True,
+        "trusted_ffs_confidence_threshold": 0.8,
+        "valid_bce_weight": 0.05,
+        "completion_bce_weight": 0.05,
+        "calibration_weight": 0.01,
+    }
+    config.model.convex_initialization = "bilinear"
+    contract = train.physical_output_v2_from_config(config)
+    assert contract.strict_threshold is True
+    model = train.build_model(config)
+    assert model.strict_threshold is True
+    assert model.convex_initialization == "bilinear"
+    final_mask_layer = model.convex_mask_head[-1]
+    assert isinstance(final_mask_layer, nn.Conv2d)
+    assert torch.count_nonzero(final_mask_layer.bias).item() == final_mask_layer.bias.numel()
+    torch.testing.assert_close(
+        final_mask_layer.weight,
+        torch.zeros_like(final_mask_layer.weight),
+        rtol=0.0,
+        atol=0.0,
+    )
+
+
+def test_legacy_v2_config_defaults_to_non_strict_uniform_convex_init() -> None:
+    config = OmegaConf.create(train.DEFAULT_CONFIG)
+    config.physical_output_v2 = {
+        "enabled": True,
+        "protocol_version": "explicit_valid_completion_nonnegative_v2",
+        "valid_threshold": 0.5,
+        "completion_threshold": 0.5,
+        "trusted_ffs_confidence_threshold": 0.8,
+        "valid_bce_weight": 0.05,
+        "completion_bce_weight": 0.05,
+        "calibration_weight": 0.01,
+    }
+    contract = train.physical_output_v2_from_config(config)
+    assert contract.strict_threshold is False
+    torch.manual_seed(77)
+    model = train.build_model(config)
+    assert model.strict_threshold is False
+    assert model.convex_initialization == "uniform"
+    final_mask_layer = model.convex_mask_head[-1]
+    assert isinstance(final_mask_layer, nn.Conv2d)
+    torch.testing.assert_close(
+        final_mask_layer.bias,
+        torch.zeros_like(final_mask_layer.bias),
+        rtol=0.0,
+        atol=0.0,
+    )
+
+
+def test_opt_in_fix_yaml_resolves_without_changing_v2_protocol() -> None:
+    config = train.resolve_config("configs/ablations/v2_strict_bilinear.yaml")
+    contract = train.physical_output_v2_from_config(config)
+    assert contract.enabled is True
+    assert contract.strict_threshold is True
+    assert contract.valid_threshold == 0.5
+    assert train.convex_initialization_from_config(config) == "bilinear"
 
 
 def test_v2_config_rejects_legacy_positivity_lineage_mixing() -> None:

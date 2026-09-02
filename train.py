@@ -337,6 +337,10 @@ class PhysicalOutputV2:
     enabled: bool = False
     valid_threshold: float = 0.5
     completion_threshold: float = 0.5
+    # Compatibility default is intentionally ``False``: existing V2
+    # checkpoints use ``>=`` at the hard decision boundary.  New corrected
+    # runs can opt into strict ``>`` semantics to avoid a p==0.5 tie.
+    strict_threshold: bool = False
     trusted_ffs_confidence_threshold: float = 0.8
     valid_bce_weight: float = 0.0
     completion_bce_weight: float = 0.0
@@ -700,6 +704,10 @@ def physical_output_v2_from_config(
             raise ValueError(f"physical_output_v2.{name} must be in (0,1)")
         return float(value)
 
+    strict_threshold = section.get("strict_threshold", False)
+    if not isinstance(strict_threshold, bool):
+        raise ValueError("physical_output_v2.strict_threshold must be a bool")
+
     def positive_weight(name: str) -> float:
         value = section.get(name)
         if (
@@ -715,6 +723,7 @@ def physical_output_v2_from_config(
         enabled=True,
         valid_threshold=probability("valid_threshold"),
         completion_threshold=probability("completion_threshold"),
+        strict_threshold=strict_threshold,
         trusted_ffs_confidence_threshold=probability(
             "trusted_ffs_confidence_threshold"
         ),
@@ -722,6 +731,42 @@ def physical_output_v2_from_config(
         completion_bce_weight=positive_weight("completion_bce_weight"),
         calibration_weight=positive_weight("calibration_weight"),
     )
+
+
+def convex_initialization_from_config(
+    config: Mapping[str, Any] | DictConfig,
+) -> str:
+    """Return the opt-in convex-mask initialization mode.
+
+    The key is deliberately optional and is not added to ``DEFAULT_CONFIG``;
+    this preserves the resolved configuration/fingerprint of all legacy runs.
+    ``convex_init`` is accepted as a short compatibility alias for local
+    ablation files, while ``convex_initialization`` is canonical.
+    """
+
+    model = config.get("model")
+    if model is None:
+        return "uniform"
+    value = model.get("convex_initialization")
+    alias = model.get("convex_init")
+    if value is not None and alias is not None and str(value).strip().lower() != str(alias).strip().lower():
+        raise ValueError(
+            "model.convex_initialization and model.convex_init disagree"
+        )
+    if value is None:
+        value = alias
+    if value is None:
+        return "uniform"
+    if not isinstance(value, str):
+        raise ValueError(
+            "model.convex_initialization must be 'uniform' or 'bilinear'"
+        )
+    normalized = value.strip().lower()
+    if normalized not in {"uniform", "bilinear"}:
+        raise ValueError(
+            "model.convex_initialization must be 'uniform' or 'bilinear'"
+        )
+    return normalized
 
 
 def positivity_ablation_from_config(
@@ -1310,6 +1355,7 @@ def build_temporal_dataset_and_identities(
 def build_model(config: DictConfig) -> FFSOmegaTSR:
     positivity_ablation = positivity_ablation_from_config(config)
     physical_v2 = physical_output_v2_from_config(config)
+    convex_initialization = convex_initialization_from_config(config)
     calibration_v3 = calibration_conditioning_v3_from_config(config)
     temporal_history_v2 = temporal_history_v2_from_config(config)
     measurement_v31 = measurement_ownership_v3_1_from_config(config)
@@ -1328,9 +1374,11 @@ def build_model(config: DictConfig) -> FFSOmegaTSR:
         physical_output_v2=physical_v2.enabled,
         physical_valid_threshold=physical_v2.valid_threshold,
         completion_threshold=physical_v2.completion_threshold,
+        strict_threshold=physical_v2.strict_threshold,
         trusted_ffs_confidence_threshold=(
             physical_v2.trusted_ffs_confidence_threshold
         ),
+        convex_initialization=convex_initialization,
         temporal_history_top_k=(
             temporal_history_v2.top_k if temporal_history_v2.enabled else None
         ),

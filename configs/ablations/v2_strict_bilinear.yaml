@@ -1,0 +1,15 @@
+experiment: ffs_omega_tsr_spatial_x2_v2_strict_bilinear
+defaults_from: configs/mvp_x2_v2.yaml
+
+# Opt-in physical-output correction.  The protocol version remains V2 so the
+# checkpoint graph and tensor contract are unchanged; only hard decisions use
+# strict ``>`` semantics, avoiding sigmoid(0)==0.5 tie promotion.
+physical_output_v2:
+  strict_threshold: true
+
+# Initialize the learned convex mask to the align_corners=False bilinear
+# kernel.  Existing configs omit this key and retain the historical uniform
+# 3x3 initialization.
+model:
+  convex_initialization: bilinear
+

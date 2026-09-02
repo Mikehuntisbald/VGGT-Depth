@@ -98,6 +98,48 @@ def test_convex_upsampling_preserves_hr_pixel_units_and_constant_borders() -> No
     )
 
 
+def test_convex_bilinear_initialization_matches_align_corners_false_resize() -> None:
+    upsampler = ConvexUpsampler(scale=2)
+    generator = torch.Generator().manual_seed(123)
+    disparity_hr_px_lr_grid = torch.randn(2, 1, 5, 7, generator=generator)
+    # The helper returns one bias vector in the same flattened channel order
+    # as ConvexUpsampler's [3x3, phase_y, phase_x] mask layout.
+    mask_logits = upsampler.bilinear_mask_logits().reshape(1, -1, 1, 1)
+    mask_logits = mask_logits.expand(
+        disparity_hr_px_lr_grid.shape[0],
+        upsampler.mask_channels,
+        disparity_hr_px_lr_grid.shape[-2],
+        disparity_hr_px_lr_grid.shape[-1],
+    )
+    actual = upsampler(disparity_hr_px_lr_grid, mask_logits)
+    expected = torch.nn.functional.interpolate(
+        disparity_hr_px_lr_grid,
+        scale_factor=2,
+        mode="bilinear",
+        align_corners=False,
+    )
+    torch.testing.assert_close(actual, expected, rtol=0.0, atol=2e-5)
+    torch.testing.assert_close(
+        torch.softmax(mask_logits[:1, :, :1, :1].reshape(9, 2, 2), dim=0).sum(dim=0),
+        torch.ones(2, 2),
+        rtol=0.0,
+        atol=1e-6,
+    )
+
+
+def test_model_bilinear_convex_initialization_preserves_initial_spatial_output() -> None:
+    model = FFSOmegaTSR(convex_initialization="bilinear").eval()
+    rgb, disparity, confidence = _base_inputs()
+    confidence.fill_(1.0)
+    valid = torch.ones_like(confidence, dtype=torch.bool)
+    with torch.no_grad():
+        output = model(rgb, disparity, confidence, valid_ffs=valid)
+    expected = torch.nn.functional.interpolate(
+        disparity, scale_factor=2, mode="bilinear", align_corners=False
+    )
+    torch.testing.assert_close(output.disparity_hr_px, expected, rtol=0.0, atol=2e-5)
+
+
 def test_masked_softmax_excludes_sources_and_has_finite_all_invalid_fallback() -> None:
     logits = torch.tensor(
         [[[[1.0, 1.0]], [[100.0, 2.0]], [[3.0, 100.0]]]], dtype=torch.float32
