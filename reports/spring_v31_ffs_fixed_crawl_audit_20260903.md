@@ -1,5 +1,10 @@
 # Spring v3.1 + FFS fixed-crop crawl audit (seed 42)
 
+> Canonical values are now maintained in
+> [spring_v31_ffs_common_domain_report.md](spring_v31_ffs_common_domain_report.md).
+> This audit is retained for crawl history; the table below has been aligned
+> with the canonical global numerator/count aggregation.
+
 This is a read-only audit of the current arm outputs.  It does not certify a
 full validation result unless `records=1302`, `crop_mode=fixed`, and
 `hr_crop=[384,768]` all hold.  The temporal rows below are 64-window canaries;
@@ -16,13 +21,13 @@ Common domain:
 
 | arm | current output | status | crop | windows | primary row | EPE | bad-1 | high-detail EPE | low-detail EPE | matched EPE | unmatched@1 | boundary EPE | rigid residual | non-rigid residual | zero rate | comparability |
 | --- | --- | --- | --- | ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |
-| F0 | `arms/F0/eval_common_fixed384` | SCREENING_ONLY | fixed 384x768 | 1302 | FFS full | 0.4941 | 0.0605 | 7.8390 | 0.4076 | 2.5118 | 0.9503 | 2.7046 | n/a | n/a | 0 | full common domain |
-| F1 | `arms/F1/eval_common_fixed384` | SCREENING_ONLY | fixed 384x768 | 1302 | FFS half+bilinear | 0.5984 | 0.0705 | 7.9596 | 0.5120 | 2.9165 | 0.9422 | 3.6218 | n/a | n/a | 0 | full common domain |
-| F2 | `arms/F2/eval_common_fixed384` | LIMITED_EVALUATION_COMPLETE | fixed 384x768 | 1302 | T1 | 0.5876 | 0.0742 | 7.5996 | 0.5048 | 2.7839 | 0.9386 | 3.3243 | n/a | n/a | 0.010776 | full common endpoint domain; Stage-A final checkpoint |
-| F3 | `arms/F3/eval_step2000_64_fixed384` | LIMITED_EVALUATION_COMPLETE | fixed 384x768 | 64 | T3 (GT pose, v2/K=2) | 0.8133 | 0.0526 | 15.3362 | 0.5783 | 2.7027 | 0.9540 | 5.7469 | 0.5144 | 0.1237 | 0.000035 | 2000-step checkpoint; canary only |
-| F4 | `arms/F4/eval_canary500_64_fixed384` | LIMITED_EVALUATION_COMPLETE | fixed 384x768 | 64 | T3 (GT pose, v3.1) | 0.9691 | 0.0837 | 16.6810 | 0.7149 | 3.9787 | 0.9450 | 6.4309 | 0.5052 | 0.1390 | 0.000469 | 500-step checkpoint; canary only |
-| F5 | `arms/F5/eval_canary500_64_fixed384` | LIMITED_EVALUATION_COMPLETE | fixed 384x768 | 64 | T3_VGGT (depth + GT pose) | 0.8689 | 0.0572 | 16.7157 | 0.6123 | 3.1117 | 0.9484 | 6.2923 | 0.4925 | 0.1176 | 0 | 500-step checkpoint; canary only |
-| F6 | `arms/F6/eval_canary500_64_fixed384` | LIMITED_EVALUATION_COMPLETE | fixed 384x768 | 64 | T3_VGGT (depth + VGGT pose) | 0.8549 | 0.0554 | 16.6390 | 0.5993 | 3.0644 | 0.9503 | 6.2855 | 0.4930 | 0.1084 | 0 | 500-step checkpoint; canary only |
+| F0 | `arms/F0/eval_common_fixed384` | SCREENING_ONLY | fixed 384x768 | 1302 | FFS full | 0.4917 | 0.0588 | 7.6177 | 0.4034 | 2.6700 | 0.9524 | 2.3024 | n/a | n/a | 0 | full common domain |
+| F1 | `arms/F1/eval_common_fixed384` | SCREENING_ONLY | fixed 384x768 | 1302 | FFS half+bilinear | 0.5995 | 0.0698 | 7.6682 | 0.5119 | 3.0428 | 0.9431 | 2.9497 | n/a | n/a | 0 | full common domain |
+| F2 | `arms/F2/eval_common_fixed384` | FINAL_CHECKPOINT_EVALUATION_COMPLETE | fixed 384x768 | 1302 | T1 | 0.5863 | 0.0726 | 7.3906 | 0.5019 | 2.9045 | 0.9404 | 2.7445 | n/a | n/a | 0.010776 | full common endpoint domain; Stage-A final checkpoint |
+| F3 | `arms/F3/eval_step2000_64_fixed384` | LIMITED_EVALUATION_COMPLETE | fixed 384x768 | 64 | T3 (GT pose, v2/K=2) | 0.8133 | 0.0526 | 15.1373 | 0.5784 | 2.6392 | 0.9540 | 5.6383 | 0.5144 | 0.1237 | 0.000035 | 2000-step checkpoint; canary only |
+| F4 | `arms/F4/eval_canary500_64_fixed384` | LIMITED_EVALUATION_COMPLETE | fixed 384x768 | 64 | T3 (GT pose, v3.1) | 0.9691 | 0.0837 | 16.4719 | 0.7149 | 3.9892 | 0.9450 | 6.3279 | 0.5052 | 0.1390 | 0.000469 | 500-step checkpoint; canary only |
+| F5 | `arms/F5/eval_canary500_64_fixed384` | LIMITED_EVALUATION_COMPLETE | fixed 384x768 | 64 | T3_VGGT (depth + GT pose) | 0.8689 | 0.0572 | 16.5042 | 0.6125 | 3.0380 | 0.9484 | 6.1871 | 0.4925 | 0.1176 | 0 | 500-step checkpoint; canary only |
+| F6 | `arms/F6/eval_canary500_64_fixed384` | LIMITED_EVALUATION_COMPLETE | fixed 384x768 | 64 | T3_VGGT (depth + VGGT pose) | 0.8549 | 0.0554 | 16.4282 | 0.5995 | 2.9885 | 0.9503 | 6.1809 | 0.4930 | 0.1084 | 0 | 500-step checkpoint; canary only |
 
 The F3--F6 canaries use the same endpoint-selection hash
 `452b4b05fe9164317b1ab1f60c714a5ad8ec7b6c28ce309a48e3f03fac89449d`, so their
@@ -35,7 +40,7 @@ from F4--F6 (step 500).
 
 - F0/F1 fixed reports both resolve to `(576,348)` and 1302 endpoints.
 - F3/F4/F5/F6 fixed reports resolve to the same fixed crop and endpoint hash;
-  all correctly report `formal_holdout=true`, `coverage_eligible=false`, and
+  they correctly report `formal_holdout=true`, `coverage_eligible=false`, and
   `final_acceptance_eligible=false` because only 64 windows were selected.
 - F3 uses `temporal_pose_source=gt`, `legacy_v1`, top-K=2, and no VGGT depth.
 - F4 uses GT pose, calibrated stereo v2, top-K=4, and no VGGT depth.
