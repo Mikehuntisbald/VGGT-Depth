@@ -41,6 +41,88 @@ from data.manifest import load_manifest  # noqa: E402
 LEGACY_ALGORITHM = "baseline_metric_scale+scale_only_alignment+strict_pose_quality"
 
 
+def _observation_lineage(
+    observation_root: Path,
+    manifest: Path,
+    *,
+    expected_records: int,
+) -> dict[str, Any]:
+    """Validate and freeze the canonical observation receipt and inventory."""
+
+    receipt_path = observation_root / "run_receipt.json"
+    cache_manifest_path = observation_root / "cache_manifest.jsonl"
+    try:
+        receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ValueError(
+            f"cannot read observation cache receipt: {receipt_path}"
+        ) from exc
+    if not isinstance(receipt, Mapping) or receipt.get("schema_version") != 1:
+        raise ValueError(f"observation cache receipt schema is invalid: {receipt_path}")
+
+    identity = receipt.get("identity")
+    config = receipt.get("config")
+    if not isinstance(identity, Mapping) or not isinstance(config, Mapping):
+        raise ValueError(
+            f"observation cache receipt identity/config is invalid: {receipt_path}"
+        )
+    if identity.get("component") != "ffs-observation" or identity.get(
+        "config_sha256"
+    ) != canonical_json_sha256(config):
+        raise ValueError(
+            f"observation cache receipt identity differs from its config: {receipt_path}"
+        )
+
+    manifest_sha = sha256_file(manifest)
+    try:
+        declared_manifest = (
+            Path(str(receipt.get("manifest", ""))).expanduser().resolve()
+        )
+        declared_cache_manifest = (
+            Path(str(receipt.get("cache_manifest", ""))).expanduser().resolve()
+        )
+        cache_manifest_sha = sha256_file(cache_manifest_path)
+    except OSError as exc:
+        raise ValueError(
+            f"cannot read observation cache inventory: {cache_manifest_path}"
+        ) from exc
+    if (
+        declared_manifest != manifest
+        or receipt.get("manifest_sha256") != manifest_sha
+        or declared_cache_manifest != cache_manifest_path
+        or receipt.get("cache_manifest_sha256") != cache_manifest_sha
+    ):
+        raise ValueError(
+            f"observation cache receipt/inventory lineage differs: {receipt_path}"
+        )
+
+    selected = receipt.get("selected_records")
+    written = receipt.get("written_records")
+    reused = receipt.get("reused_records")
+    if (
+        any(
+            isinstance(value, bool) or not isinstance(value, int) or value < 0
+            for value in (selected, written, reused)
+        )
+        or selected != written + reused
+        or selected != expected_records
+    ):
+        raise ValueError(
+            f"observation cache receipt coverage is incomplete: {receipt_path}"
+        )
+
+    return {
+        "root": str(observation_root),
+        "receipt_path": str(receipt_path),
+        "receipt_sha256": sha256_file(receipt_path),
+        "cache_manifest_path": str(cache_manifest_path),
+        "cache_manifest_sha256": cache_manifest_sha,
+        "manifest_path": str(manifest),
+        "manifest_sha256": manifest_sha,
+        "identity": dict(identity),
+    }
+
+
 def _atomic_json(path: Path, payload: Mapping[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.NamedTemporaryFile(
@@ -59,7 +141,9 @@ def _atomic_jsonl(path: Path, rows: list[Mapping[str, Any]]) -> None:
     ) as handle:
         for row in rows:
             handle.write(
-                json.dumps(dict(row), sort_keys=True, separators=(",", ":"), allow_nan=False)
+                json.dumps(
+                    dict(row), sort_keys=True, separators=(",", ":"), allow_nan=False
+                )
                 + "\n"
             )
         temporary = Path(handle.name)
@@ -67,7 +151,9 @@ def _atomic_jsonl(path: Path, rows: list[Mapping[str, Any]]) -> None:
 
 
 def _safe(value: Any) -> str:
-    text = "".join(ch if ch.isalnum() or ch in "_.-" else "_" for ch in str(value)).strip("._")
+    text = "".join(
+        ch if ch.isalnum() or ch in "_.-" else "_" for ch in str(value)
+    ).strip("._")
     if not text:
         raise ValueError(f"invalid path component: {value!r}")
     return text
@@ -162,9 +248,13 @@ def main(argv: Sequence[str] | None = None) -> int:
     records = load_manifest(manifest)
     if not records:
         raise ValueError("manifest is empty")
-    selected_records = _selected_records(
-        records, sequence_warmup=args.sequence_warmup
+    observation_lineage = _observation_lineage(
+        observation_root,
+        manifest,
+        expected_records=len(records),
     )
+    observation_identity = observation_lineage["identity"]
+    selected_records = _selected_records(records, sequence_warmup=args.sequence_warmup)
     manifest_sha = sha256_file(manifest)
     config = {
         "schema_version": 1,
@@ -191,10 +281,16 @@ def main(argv: Sequence[str] | None = None) -> int:
             raise FileNotFoundError(f"observation cache missing: {obs_path}")
         obs_sha = sha256_file(obs_path)
         obs_payload = load_cache_record(obs_path)
+        if obs_payload.get("identity") != observation_identity:
+            raise ValueError(
+                f"observation cache identity differs from canonical receipt: {obs_path}"
+            )
         obs_tensors = obs_payload.get("tensors", {})
         trusted = obs_tensors.get("observation_trusted_mask")
         disparity = obs_tensors.get("observation_disparity_hr_px")
-        if not isinstance(trusted, torch.Tensor) or not isinstance(disparity, torch.Tensor):
+        if not isinstance(trusted, torch.Tensor) or not isinstance(
+            disparity, torch.Tensor
+        ):
             raise ValueError(f"observation cache lacks required tensors: {obs_path}")
         if disparity.ndim == 4:
             disparity = disparity[0]
@@ -214,7 +310,9 @@ def main(argv: Sequence[str] | None = None) -> int:
             cuda_version=torch.version.cuda,
             config_sha256=canonical_json_sha256(config),
         )
-        cache_path = output_root / _safe(record.sequence_id) / f"{_safe(record.frame_id)}.pt"
+        cache_path = (
+            output_root / _safe(record.sequence_id) / f"{_safe(record.frame_id)}.pt"
+        )
         if cache_path.is_file() and not args.overwrite:
             payload = load_cache_record(cache_path, expected_identity=identity)
             status = "reused"
@@ -240,13 +338,13 @@ def main(argv: Sequence[str] | None = None) -> int:
                 "target_timestamp": record.timestamp,
                 "target_manifest_record": record.to_dict(),
                 "pose_source": "Spring_GT_pose",
-                "ffs_raw_identity": obs_payload.get("identity"),
+                "ffs_raw_identity": observation_identity,
             }
             metadata = {
                 "source": {
                     "ffs_cache_path": str(obs_path),
                     "ffs_cache_sha256": obs_sha,
-                    "ffs_raw_identity": obs_payload.get("identity"),
+                    "ffs_raw_identity": observation_identity,
                     "linkage": linkage,
                     "manifest_path": str(manifest),
                     "manifest_sha256": manifest_sha,
@@ -273,7 +371,9 @@ def main(argv: Sequence[str] | None = None) -> int:
                     "aligned_disparity": "zero-filled; VGGT depth disabled",
                 },
             }
-            save_cache_record(cache_path, tensors=tensors, metadata=metadata, identity=identity)
+            save_cache_record(
+                cache_path, tensors=tensors, metadata=metadata, identity=identity
+            )
             status = "written"
         counts["selected"] += 1
         counts["written"] += int(status == "written")
@@ -318,6 +418,13 @@ def main(argv: Sequence[str] | None = None) -> int:
             "manifest": str(manifest),
             "manifest_sha256": manifest_sha,
             "observation_root": str(observation_root),
+            "observation_run_receipt": observation_lineage["receipt_path"],
+            "observation_run_receipt_sha256": observation_lineage["receipt_sha256"],
+            "observation_cache_manifest": observation_lineage["cache_manifest_path"],
+            "observation_cache_manifest_sha256": observation_lineage[
+                "cache_manifest_sha256"
+            ],
+            "observation_identity": observation_identity,
             "vggt_root": None,
             "pose_source": "Spring_GT_pose",
         },

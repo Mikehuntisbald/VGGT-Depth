@@ -529,21 +529,31 @@ def _cache_receipt_lineage(
     config = receipt.get("config")
     if not isinstance(identity, Mapping) or not isinstance(config, Mapping):
         raise SpringV31Error(f"{component} cache identity/config is missing")
+    expected_commit: str | None = None
+    expected_checkpoint: str | None = None
+    sequence_warmup = 0
+    selected_field = "selected_records"
+    if component.startswith("ffs-observation"):
+        expected_commit = FFS_UPSTREAM_COMMIT
+        expected_checkpoint = FFS_CHECKPOINT_SHA256
+    elif component == "vggt-omega":
+        expected_commit = VGGT_UPSTREAM_COMMIT
+        expected_checkpoint = VGGT_CHECKPOINT_SHA256
+        sequence_warmup = 4
+        selected_field = "selected_windows"
     _validate_cache_identity(
         identity,
         component,
         component=component,
-        expected_commit=(
-            FFS_UPSTREAM_COMMIT if component.startswith("ffs-observation") else None
-        ),
-        expected_checkpoint=(
-            FFS_CHECKPOINT_SHA256 if component.startswith("ffs-observation") else None
-        ),
+        expected_commit=expected_commit,
+        expected_checkpoint=expected_checkpoint,
     )
-    selected = receipt.get("selected_records")
+    selected = receipt.get(selected_field)
     written = receipt.get("written_records")
     reused = receipt.get("reused_records")
-    expected_records = len(load_manifest(manifest))
+    expected_records = len(
+        _expected_cache_records(manifest, sequence_warmup=sequence_warmup)
+    )
     if (
         receipt.get("schema_version") != 1
         or not _same_resolved_path(receipt.get("manifest"), manifest)
@@ -551,16 +561,19 @@ def _cache_receipt_lineage(
         or not _same_resolved_path(receipt.get("cache_manifest"), inventory_path)
         or receipt.get("cache_manifest_sha256") != sha256_file(inventory_path)
         or identity.get("config_sha256") != canonical_json_sha256(config)
+        or not _is_nonnegative_int(selected)
         or selected != expected_records
         or not _is_nonnegative_int(written)
         or not _is_nonnegative_int(reused)
         or written + reused != selected
     ):
         raise SpringV31Error(f"{component} cache receipt/inventory lineage differs")
+    if component == "vggt-omega" and receipt.get("available_windows") != selected:
+        raise SpringV31Error("vggt-omega cache available/selected coverage differs")
     _validate_full_inventory_once(
         root,
         manifest,
-        sequence_warmup=0,
+        sequence_warmup=sequence_warmup,
         expected_identity=identity,
         payload_kind="raw",
         receipt_sha256=sha256_file(receipt_path),
@@ -576,6 +589,94 @@ def _cache_receipt_lineage(
         "manifest_sha256": sha256_file(manifest),
         "identity": dict(identity),
     }
+
+
+def _validate_derived_raw_input_lineage(
+    receipt: Mapping[str, Any],
+    manifest: Path,
+    *,
+    calibrated: bool,
+    expected_ffs_root: Path | None = None,
+    expected_vggt_root: Path | None = None,
+) -> dict[str, dict[str, Any]]:
+    """Bind a derived receipt to the current canonical raw cache evidence."""
+
+    inputs = receipt.get("inputs")
+    if not isinstance(inputs, Mapping):
+        raise SpringV31Error("derived geometry raw input lineage is missing")
+    manifest = manifest.expanduser().resolve()
+    if not _same_resolved_path(inputs.get("manifest"), manifest) or inputs.get(
+        "manifest_sha256"
+    ) != sha256_file(manifest):
+        raise SpringV31Error("derived geometry raw input manifest lineage differs")
+
+    ffs_root_key = "ffs_root" if calibrated else "observation_root"
+    ffs_root_value = inputs.get(ffs_root_key)
+    if not isinstance(ffs_root_value, str):
+        raise SpringV31Error("derived geometry FFS raw root lineage is missing")
+    ffs_root = Path(ffs_root_value).expanduser().resolve()
+    if expected_ffs_root is not None and ffs_root != expected_ffs_root.resolve():
+        raise SpringV31Error("derived geometry FFS raw root differs from the job")
+    ffs_lineage = _cache_receipt_lineage(
+        ffs_root,
+        manifest,
+        component="ffs-observation",
+    )
+    ffs_prefix = "ffs" if calibrated else "observation"
+    expected_ffs_inputs = {
+        f"{ffs_prefix}_run_receipt": ffs_lineage["receipt_path"],
+        f"{ffs_prefix}_run_receipt_sha256": ffs_lineage["receipt_sha256"],
+        f"{ffs_prefix}_cache_manifest": ffs_lineage["cache_manifest_path"],
+        f"{ffs_prefix}_cache_manifest_sha256": ffs_lineage["cache_manifest_sha256"],
+        f"{ffs_prefix}_identity": ffs_lineage["identity"],
+    }
+    if any(inputs.get(name) != value for name, value in expected_ffs_inputs.items()):
+        raise SpringV31Error(
+            "derived geometry FFS receipt/inventory/identity lineage differs"
+        )
+
+    evidence = {"ffs": ffs_lineage}
+    if not calibrated:
+        if inputs.get("vggt_root") is not None:
+            raise SpringV31Error("GT-pose control unexpectedly binds a VGGT raw root")
+        return evidence
+
+    vggt_root_value = inputs.get("vggt_root")
+    if not isinstance(vggt_root_value, str):
+        raise SpringV31Error("derived geometry VGGT raw root lineage is missing")
+    vggt_root = Path(vggt_root_value).expanduser().resolve()
+    if expected_vggt_root is not None and vggt_root != expected_vggt_root.resolve():
+        raise SpringV31Error("derived geometry VGGT raw root differs from the job")
+    vggt_lineage = _cache_receipt_lineage(
+        vggt_root,
+        manifest,
+        component="vggt-omega",
+    )
+    expected_vggt_inputs = {
+        "vggt_run_receipt": vggt_lineage["receipt_path"],
+        "vggt_run_receipt_sha256": vggt_lineage["receipt_sha256"],
+        "vggt_cache_manifest": vggt_lineage["cache_manifest_path"],
+        "vggt_cache_manifest_sha256": vggt_lineage["cache_manifest_sha256"],
+        "vggt_identity": vggt_lineage["identity"],
+    }
+    if any(inputs.get(name) != value for name, value in expected_vggt_inputs.items()):
+        raise SpringV31Error(
+            "derived geometry VGGT receipt/inventory/identity lineage differs"
+        )
+
+    raw_audit = receipt.get("raw_input_audit")
+    if (
+        not isinstance(raw_audit, Mapping)
+        or raw_audit.get("passed") is not True
+        or raw_audit.get("canonical_receipt") != vggt_lineage["receipt_path"]
+        or raw_audit.get("canonical_receipt_sha256") != vggt_lineage["receipt_sha256"]
+        or raw_audit.get("canonical_receipt_complete_manifest_coverage") is not True
+        or raw_audit.get("vggt_identity") != vggt_lineage["identity"]
+        or raw_audit.get("ffs_identity") != ffs_lineage["identity"]
+    ):
+        raise SpringV31Error("derived geometry raw input audit lineage differs")
+    evidence["vggt"] = vggt_lineage
+    return evidence
 
 
 def _calibration_lineage(paths: Paths, sidecar: Path, manifest: Path) -> dict[str, Any]:
@@ -613,7 +714,12 @@ def _calibration_lineage(paths: Paths, sidecar: Path, manifest: Path) -> dict[st
 
 
 def _derived_receipt_lineage(
-    root: Path, manifest: Path, *, calibrated: bool
+    root: Path,
+    manifest: Path,
+    *,
+    calibrated: bool,
+    expected_ffs_root: Path | None = None,
+    expected_vggt_root: Path | None = None,
 ) -> dict[str, Any]:
     root = root.resolve()
     manifest = manifest.resolve()
@@ -633,6 +739,7 @@ def _derived_receipt_lineage(
     if (
         receipt.get("schema_version") != (2 if calibrated else 1)
         or receipt.get("component") != expected_component
+        or not _same_resolved_path(receipt.get("manifest"), manifest)
         or receipt.get("manifest_sha256") != sha256_file(manifest)
         or not isinstance(config, Mapping)
         or not isinstance(output, Mapping)
@@ -653,6 +760,13 @@ def _derived_receipt_lineage(
         or config.get("depth_prior_source") != "disabled_zero_fill"
     ):
         raise SpringV31Error("F3 geometry is not GT-pose/no-depth control")
+    _validate_derived_raw_input_lineage(
+        receipt,
+        manifest,
+        calibrated=calibrated,
+        expected_ffs_root=expected_ffs_root,
+        expected_vggt_root=expected_vggt_root,
+    )
     _validate_full_inventory_once(
         root,
         manifest,
@@ -2435,11 +2549,20 @@ def _validate_geometry_job(job: Job) -> dict[str, Any]:
     config = receipt.get("config")
     counts = receipt.get("counts")
     selection = receipt.get("selection")
+    output = receipt.get("output")
     if (
-        receipt.get("manifest_sha256") != sha256_file(manifest)
+        not _same_resolved_path(receipt.get("manifest"), manifest)
+        or receipt.get("manifest_sha256") != sha256_file(manifest)
         or not isinstance(config, Mapping)
         or not isinstance(counts, Mapping)
         or not isinstance(selection, Mapping)
+        or not isinstance(output, Mapping)
+        or not _same_resolved_path(output.get("root"), root)
+        or not _same_resolved_path(
+            output.get("cache_manifest"), root / "cache_manifest.jsonl"
+        )
+        or output.get("cache_manifest_sha256")
+        != sha256_file(root / "cache_manifest.jsonl")
     ):
         raise SpringV31Error(f"{job.name} derived receipt lineage is malformed")
     expected = _expected_cache_records(manifest, sequence_warmup=4)
@@ -2449,6 +2572,9 @@ def _validate_geometry_job(job: Job) -> dict[str, Any]:
         raise SpringV31Error(f"{job.name} derived cache has incomplete coverage")
     legacy_control = "legacy_v2_control" in job.name
     if legacy_control:
+        ffs_value = _command_option(job.command, "--observation-root")
+        if ffs_value is None:
+            raise SpringV31Error(f"{job.name} lacks its FFS raw root")
         if (
             receipt.get("schema_version") != 1
             or receipt.get("component") != "vggt-ffs-derived-geometry-batch"
@@ -2458,21 +2584,39 @@ def _validate_geometry_job(job: Job) -> dict[str, Any]:
             or config.get("rectified_stereo_calibration") is not None
         ):
             raise SpringV31Error(f"{job.name} is not the F3 GT-pose/no-depth control")
+        raw_input_lineage = _validate_derived_raw_input_lineage(
+            receipt,
+            manifest,
+            calibrated=False,
+            expected_ffs_root=Path(ffs_value).expanduser().resolve(),
+        )
     else:
         calibration = config.get("rectified_stereo_calibration")
         receipt_value = _command_option(job.command, "--rectified-calibration-receipt")
+        ffs_value = _command_option(job.command, "--ffs-root")
+        vggt_value = _command_option(job.command, "--vggt-root")
         if (
             receipt.get("schema_version") != 2
             or receipt.get("component")
             != "vggt-ffs-derived-geometry-calibrated-stereo-v2-batch"
             or not isinstance(calibration, Mapping)
             or receipt_value is None
+            or ffs_value is None
+            or vggt_value is None
             or calibration.get("receipt_sha256")
             != sha256_file(Path(receipt_value).expanduser().resolve())
         ):
             raise SpringV31Error(f"{job.name} calibrated geometry lineage differs")
+        raw_input_lineage = _validate_derived_raw_input_lineage(
+            receipt,
+            manifest,
+            calibrated=True,
+            expected_ffs_root=Path(ffs_value).expanduser().resolve(),
+            expected_vggt_root=Path(vggt_value).expanduser().resolve(),
+        )
     return {
         "receipt": _path_identity(job.expected_output),
+        "raw_inputs": raw_input_lineage,
         "inventory": _validate_cache_inventory(
             root,
             manifest,
@@ -3085,12 +3229,16 @@ def _verify_eval_result(paths: Paths, arm: str) -> dict[str, Any]:
             raise SpringV31Error(f"{arm} cache receipt/inventory lineage differs")
         if arm == "F3":
             train_derived = _derived_receipt_lineage(
-                paths.train_legacy_derived, paths.train_manifest, calibrated=False
+                paths.train_legacy_derived,
+                paths.train_manifest,
+                calibrated=False,
+                expected_ffs_root=paths.train_half_observation,
             )
             validation_derived = _derived_receipt_lineage(
                 paths.validation_legacy_derived,
                 paths.validation_manifest,
                 calibrated=False,
+                expected_ffs_root=paths.validation_half_observation,
             )
             expected_train_calibration = None
             expected_validation_calibration = None
@@ -3108,11 +3256,15 @@ def _verify_eval_result(paths: Paths, arm: str) -> dict[str, Any]:
                 paths.train_calibrated_derived,
                 paths.train_manifest,
                 calibrated=True,
+                expected_ffs_root=paths.train_half_observation,
+                expected_vggt_root=paths.train_vggt,
             )
             validation_derived = _derived_receipt_lineage(
                 paths.validation_calibrated_derived,
                 paths.validation_manifest,
                 calibrated=True,
+                expected_ffs_root=paths.validation_half_observation,
+                expected_vggt_root=paths.validation_vggt,
             )
             expected_train_calibration = _calibration_lineage(
                 paths, paths.train_calibration, paths.train_manifest

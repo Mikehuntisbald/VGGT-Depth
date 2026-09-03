@@ -9,9 +9,12 @@ from tools.run_spring_v3_1_ffs import (
     ARM_ORDER,
     EXPECTED_ENDPOINT_COUNT,
     EXPECTED_ENDPOINT_ID_SHA256,
+    Job,
     Paths,
     SpringV31Error,
     _cache_jobs,
+    _cache_receipt_lineage,
+    _derived_receipt_lineage,
     _eval_jobs,
     _geometry_jobs,
     _initializer_jobs,
@@ -23,11 +26,12 @@ from tools.run_spring_v3_1_ffs import (
     _runtime_evidence,
     _temporal_train_jobs,
     _validate_cache_inventory,
+    _validate_geometry_job,
     _write_f7_blocked,
     build_parser,
     run,
 )
-from data.cache_dataset import sha256_file
+from data.cache_dataset import canonical_json_sha256, sha256_file
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -234,6 +238,307 @@ def test_cache_inventory_rejects_unlisted_pt_files(tmp_path: Path) -> None:
     stale.write_bytes(b"pre-warmup-stale")
     with pytest.raises(SpringV31Error, match="directory/inventory .pt set differs"):
         _validate_cache_inventory(root, manifest, sequence_warmup=4)
+
+
+def _lineage_test_manifest(tmp_path: Path, *, frames: int = 5) -> Path:
+    manifest = tmp_path / "manifest.jsonl"
+    rows = [
+        {
+            "sequence_id": "0005",
+            "frame_id": frame_id,
+            "timestamp": float(frame_id - 1),
+            "left_path": f"left/{frame_id}.png",
+            "right_path": f"right/{frame_id}.png",
+            "K": [[100.0, 0.0, 50.0], [0.0, 100.0, 25.0], [0.0, 0.0, 1.0]],
+            "baseline_m": 0.065,
+            "gt_disparity_path": f"disp/{frame_id}.dsp5",
+        }
+        for frame_id in range(1, frames + 1)
+    ]
+    manifest.write_text(
+        "".join(json.dumps(row) + "\n" for row in rows), encoding="utf-8"
+    )
+    return manifest
+
+
+def _raw_lineage(root: Path, manifest: Path, identity: dict[str, object]) -> dict:
+    return {
+        "root": str(root.resolve()),
+        "receipt_path": str((root / "run_receipt.json").resolve()),
+        "receipt_sha256": "1" * 64,
+        "cache_manifest_path": str((root / "cache_manifest.jsonl").resolve()),
+        "cache_manifest_sha256": "2" * 64,
+        "manifest_path": str(manifest.resolve()),
+        "manifest_sha256": sha256_file(manifest),
+        "identity": identity,
+    }
+
+
+@pytest.mark.parametrize(
+    "count_field", ["selected_records", "written_records", "reused_records"]
+)
+def test_cache_receipt_lineage_rejects_boolean_counts_and_bad_config_sha(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    count_field: str,
+) -> None:
+    manifest = _lineage_test_manifest(tmp_path, frames=1)
+    root = tmp_path / "raw"
+    root.mkdir()
+    inventory = root / "cache_manifest.jsonl"
+    inventory.write_text("{}\n", encoding="utf-8")
+    config = {"cache_dtype": "float16"}
+    identity = {
+        "component": "spring-ground-truth",
+        "upstream_commit": "Spring-v2",
+        "checkpoint_sha256": "a" * 64,
+        "torch_version": "test",
+        "cuda_version": None,
+        "config_sha256": canonical_json_sha256(config),
+    }
+    receipt = {
+        "schema_version": 1,
+        "manifest": str(manifest.resolve()),
+        "manifest_sha256": sha256_file(manifest),
+        "cache_manifest": str(inventory.resolve()),
+        "cache_manifest_sha256": sha256_file(inventory),
+        "identity": identity,
+        "config": config,
+        "selected_records": 1,
+        "written_records": 1,
+        "reused_records": 0,
+    }
+    receipt[count_field] = True
+    receipt_path = root / "run_receipt.json"
+    receipt_path.write_text(json.dumps(receipt) + "\n", encoding="utf-8")
+    monkeypatch.setattr(
+        "tools.run_spring_v3_1_ffs._validate_full_inventory_once",
+        lambda *args, **kwargs: None,
+    )
+
+    with pytest.raises(SpringV31Error, match="receipt/inventory lineage differs"):
+        _cache_receipt_lineage(root, manifest, component="spring-ground-truth")
+
+    receipt[count_field] = 1 if count_field != "reused_records" else 0
+    receipt["identity"] = {**identity, "config_sha256": "b" * 64}
+    receipt_path.write_text(json.dumps(receipt) + "\n", encoding="utf-8")
+    with pytest.raises(SpringV31Error, match="receipt/inventory lineage differs"):
+        _cache_receipt_lineage(root, manifest, component="spring-ground-truth")
+
+
+@pytest.mark.parametrize(
+    ("stale_field", "stale_value"),
+    [
+        ("observation_run_receipt_sha256", "a" * 64),
+        ("observation_cache_manifest_sha256", "b" * 64),
+        ("observation_identity", {"component": "stale-observation"}),
+    ],
+)
+def test_derived_receipt_lineage_rejects_stale_observation_evidence(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    stale_field: str,
+    stale_value: object,
+) -> None:
+    manifest = _lineage_test_manifest(tmp_path)
+    observation_root = tmp_path / "observation"
+    identity = {"component": "ffs-observation"}
+    current = _raw_lineage(observation_root, manifest, identity)
+    derived_root = tmp_path / "derived"
+    derived_root.mkdir()
+    inventory = derived_root / "cache_manifest.jsonl"
+    inventory.write_text("{}\n", encoding="utf-8")
+    inputs = {
+        "manifest": str(manifest.resolve()),
+        "manifest_sha256": sha256_file(manifest),
+        "observation_root": str(observation_root.resolve()),
+        "observation_run_receipt": current["receipt_path"],
+        "observation_run_receipt_sha256": current["receipt_sha256"],
+        "observation_cache_manifest": current["cache_manifest_path"],
+        "observation_cache_manifest_sha256": current["cache_manifest_sha256"],
+        "observation_identity": identity,
+        "vggt_root": None,
+    }
+    current_value = inputs[stale_field]
+    inputs[stale_field] = stale_value
+    receipt = {
+        "schema_version": 1,
+        "component": "vggt-ffs-derived-geometry-batch",
+        "manifest": str(manifest.resolve()),
+        "manifest_sha256": sha256_file(manifest),
+        "config": {
+            "pose_source": "Spring_GT_pose",
+            "depth_prior_source": "disabled_zero_fill",
+        },
+        "inputs": inputs,
+        "output": {
+            "root": str(derived_root.resolve()),
+            "cache_manifest": str(inventory.resolve()),
+            "cache_manifest_sha256": sha256_file(inventory),
+        },
+        "counts": {"selected": 1},
+        "selection": {"selected_windows": 1},
+    }
+    (derived_root / "run_receipt.json").write_text(
+        json.dumps(receipt) + "\n", encoding="utf-8"
+    )
+    monkeypatch.setattr(
+        "tools.run_spring_v3_1_ffs._cache_receipt_lineage",
+        lambda root, active_manifest, *, component: current,
+    )
+    monkeypatch.setattr(
+        "tools.run_spring_v3_1_ffs._validate_full_inventory_once",
+        lambda *args, **kwargs: None,
+    )
+
+    with pytest.raises(SpringV31Error, match="FFS receipt/inventory/identity"):
+        _derived_receipt_lineage(derived_root, manifest, calibrated=False)
+    inputs[stale_field] = current_value
+    (derived_root / "run_receipt.json").write_text(
+        json.dumps(receipt) + "\n", encoding="utf-8"
+    )
+    assert (
+        _derived_receipt_lineage(
+            derived_root,
+            manifest,
+            calibrated=False,
+            expected_ffs_root=observation_root,
+        )["selected_records"]
+        == 1
+    )
+    with pytest.raises(SpringV31Error, match="raw root differs from the job"):
+        _derived_receipt_lineage(
+            derived_root,
+            manifest,
+            calibrated=False,
+            expected_ffs_root=tmp_path / "another_observation",
+        )
+
+
+@pytest.mark.parametrize(
+    ("stale_field", "stale_value", "message"),
+    [
+        ("ffs_run_receipt_sha256", "a" * 64, "FFS receipt/inventory/identity"),
+        ("ffs_cache_manifest_sha256", "b" * 64, "FFS receipt/inventory/identity"),
+        ("ffs_identity", {"component": "stale-ffs"}, "FFS receipt/inventory/identity"),
+        ("vggt_run_receipt_sha256", "c" * 64, "VGGT receipt/inventory/identity"),
+        ("vggt_cache_manifest_sha256", "d" * 64, "VGGT receipt/inventory/identity"),
+        (
+            "vggt_identity",
+            {"component": "stale-vggt"},
+            "VGGT receipt/inventory/identity",
+        ),
+    ],
+)
+def test_geometry_job_rejects_stale_calibrated_raw_evidence(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    stale_field: str,
+    stale_value: object,
+    message: str,
+) -> None:
+    manifest = _lineage_test_manifest(tmp_path)
+    ffs_root = tmp_path / "ffs"
+    vggt_root = tmp_path / "vggt"
+    ffs_identity = {"component": "ffs-observation"}
+    vggt_identity = {"component": "vggt-omega"}
+    ffs_lineage = _raw_lineage(ffs_root, manifest, ffs_identity)
+    vggt_lineage = _raw_lineage(vggt_root, manifest, vggt_identity)
+    vggt_root.mkdir()
+    (vggt_root / "run_receipt.json").write_text(
+        json.dumps({"manifest": str(manifest.resolve())}) + "\n",
+        encoding="utf-8",
+    )
+    derived_root = tmp_path / "derived"
+    derived_root.mkdir()
+    inventory = derived_root / "cache_manifest.jsonl"
+    inventory.write_text("{}\n", encoding="utf-8")
+    calibration_receipt = tmp_path / "calibration.receipt.json"
+    calibration_receipt.write_text("{}\n", encoding="utf-8")
+    inputs = {
+        "manifest": str(manifest.resolve()),
+        "manifest_sha256": sha256_file(manifest),
+        "ffs_root": str(ffs_root.resolve()),
+        "ffs_run_receipt": ffs_lineage["receipt_path"],
+        "ffs_run_receipt_sha256": ffs_lineage["receipt_sha256"],
+        "ffs_cache_manifest": ffs_lineage["cache_manifest_path"],
+        "ffs_cache_manifest_sha256": ffs_lineage["cache_manifest_sha256"],
+        "ffs_identity": ffs_identity,
+        "vggt_root": str(vggt_root.resolve()),
+        "vggt_run_receipt": vggt_lineage["receipt_path"],
+        "vggt_run_receipt_sha256": vggt_lineage["receipt_sha256"],
+        "vggt_cache_manifest": vggt_lineage["cache_manifest_path"],
+        "vggt_cache_manifest_sha256": vggt_lineage["cache_manifest_sha256"],
+        "vggt_identity": vggt_identity,
+    }
+    current_value = inputs[stale_field]
+    inputs[stale_field] = stale_value
+    receipt = {
+        "schema_version": 2,
+        "component": "vggt-ffs-derived-geometry-calibrated-stereo-v2-batch",
+        "manifest": str(manifest.resolve()),
+        "manifest_sha256": sha256_file(manifest),
+        "config": {
+            "rectified_stereo_calibration": {
+                "receipt_sha256": sha256_file(calibration_receipt)
+            }
+        },
+        "inputs": inputs,
+        "raw_input_audit": {
+            "passed": True,
+            "canonical_receipt": vggt_lineage["receipt_path"],
+            "canonical_receipt_sha256": vggt_lineage["receipt_sha256"],
+            "canonical_receipt_complete_manifest_coverage": True,
+            "vggt_identity": vggt_identity,
+            "ffs_identity": ffs_identity,
+        },
+        "output": {
+            "root": str(derived_root.resolve()),
+            "cache_manifest": str(inventory.resolve()),
+            "cache_manifest_sha256": sha256_file(inventory),
+        },
+        "counts": {"selected": 1},
+        "selection": {"selected_windows": 1},
+    }
+    derived_receipt = derived_root / "run_receipt.json"
+    derived_receipt.write_text(json.dumps(receipt) + "\n", encoding="utf-8")
+    job = Job(
+        "derive_train_calibrated_v3_1",
+        (
+            "python",
+            "derive_geometry_manifest.py",
+            "--vggt-root",
+            str(vggt_root),
+            "--ffs-root",
+            str(ffs_root),
+            "--rectified-calibration-receipt",
+            str(calibration_receipt),
+        ),
+        derived_receipt,
+        "geometry",
+        gpu=False,
+    )
+
+    def current_lineage(root: Path, active_manifest: Path, *, component: str):
+        assert active_manifest.resolve() == manifest.resolve()
+        return vggt_lineage if component == "vggt-omega" else ffs_lineage
+
+    monkeypatch.setattr(
+        "tools.run_spring_v3_1_ffs._cache_receipt_lineage", current_lineage
+    )
+    monkeypatch.setattr(
+        "tools.run_spring_v3_1_ffs._validate_cache_inventory",
+        lambda *args, **kwargs: {"canonical_pt_set": True},
+    )
+
+    with pytest.raises(SpringV31Error, match=message):
+        _validate_geometry_job(job)
+    inputs[stale_field] = current_value
+    derived_receipt.write_text(json.dumps(receipt) + "\n", encoding="utf-8")
+    assert _validate_geometry_job(job)["raw_inputs"] == {
+        "ffs": ffs_lineage,
+        "vggt": vggt_lineage,
+    }
 
 
 def test_completion_claims_runtime_and_metrics_fail_closed() -> None:

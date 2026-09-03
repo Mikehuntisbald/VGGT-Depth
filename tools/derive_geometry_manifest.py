@@ -143,7 +143,9 @@ def _finite_diagnostics(quality: Mapping[str, Any]) -> dict[str, float]:
     return result
 
 
-def _percentile_summary(values: Sequence[float], *, total_windows: int) -> dict[str, Any]:
+def _percentile_summary(
+    values: Sequence[float], *, total_windows: int
+) -> dict[str, Any]:
     """Return deterministic linear percentiles without an optional dependency."""
 
     ordered = sorted(float(value) for value in values)
@@ -197,16 +199,22 @@ def audit_safe_zero_contract(rows: Sequence[Mapping[str, Any]]) -> dict[str, Any
         tensors = payload["tensors"]
         quality = payload["metadata"].get("pose_quality")
         if not isinstance(quality, Mapping):
-            raise CacheMismatchError(f"safe-zero audit: missing pose_quality in {cache_path}")
+            raise CacheMismatchError(
+                f"safe-zero audit: missing pose_quality in {cache_path}"
+            )
         alignment = quality.get("alignment")
         if not isinstance(alignment, Mapping):
-            raise CacheMismatchError(f"safe-zero audit: missing alignment in {cache_path}")
+            raise CacheMismatchError(
+                f"safe-zero audit: missing alignment in {cache_path}"
+            )
         pose_tensor = tensors.get("temporal_pose_valid")
         static_tensor = tensors.get("static_prior_valid")
         if not isinstance(pose_tensor, torch.Tensor) or not isinstance(
             static_tensor, torch.Tensor
         ):
-            raise CacheMismatchError(f"safe-zero audit: validity tensors missing in {cache_path}")
+            raise CacheMismatchError(
+                f"safe-zero audit: validity tensors missing in {cache_path}"
+            )
         pose_valid = bool(pose_tensor.item())
         static_valid = bool(static_tensor.item())
         if not (
@@ -339,6 +347,99 @@ def _receipt_selected_windows(path: Path) -> int | None:
     return selected
 
 
+def _load_receipt(path: Path, *, label: str) -> Mapping[str, Any]:
+    """Load one required canonical cache receipt as a JSON object."""
+
+    if not path.is_file():
+        raise CacheMismatchError(f"{label} is missing: {path}")
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise CacheMismatchError(f"{label} is malformed: {path}") from exc
+    if not isinstance(payload, Mapping):
+        raise CacheMismatchError(f"{label} must contain a JSON object: {path}")
+    return payload
+
+
+def _nonnegative_int(value: Any) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool) and value >= 0
+
+
+def _validate_receipt_identity(
+    receipt: Mapping[str, Any],
+    *,
+    expected_component: str,
+    label: str,
+) -> Mapping[str, Any]:
+    """Require a receipt identity to be component- and config-bound."""
+
+    identity = receipt.get("identity")
+    config = receipt.get("config")
+    if (
+        not isinstance(identity, Mapping)
+        or not isinstance(config, Mapping)
+        or identity.get("component") != expected_component
+        or identity.get("config_sha256") != canonical_json_sha256(config)
+    ):
+        raise CacheMismatchError(f"{label} identity/config binding is malformed")
+    return identity
+
+
+def _inventory_row_count(path: Path, *, label: str) -> int:
+    """Validate a canonical JSONL inventory and return its record count."""
+
+    count = 0
+    try:
+        with path.open("r", encoding="utf-8") as handle:
+            for line_number, line in enumerate(handle, start=1):
+                if not line.strip():
+                    raise CacheMismatchError(
+                        f"{label} contains a blank row at line {line_number}: {path}"
+                    )
+                try:
+                    row = json.loads(line)
+                except json.JSONDecodeError as exc:
+                    raise CacheMismatchError(
+                        f"{label} contains invalid JSON at line {line_number}: {path}"
+                    ) from exc
+                if not isinstance(row, Mapping):
+                    raise CacheMismatchError(
+                        f"{label} row {line_number} is not an object: {path}"
+                    )
+                count += 1
+    except OSError as exc:
+        raise CacheMismatchError(f"cannot read {label}: {path}") from exc
+    if count == 0:
+        raise CacheMismatchError(f"{label} is empty: {path}")
+    return count
+
+
+def _validate_inventory_binding(
+    receipt: Mapping[str, Any],
+    inventory_path: Path,
+    *,
+    label: str,
+) -> str:
+    """Require a receipt to bind the exact root-level canonical inventory."""
+
+    inventory_path = inventory_path.resolve()
+    if not inventory_path.is_file():
+        raise CacheMismatchError(f"{label} is missing: {inventory_path}")
+    receipt_path_value = receipt.get("cache_manifest")
+    if not isinstance(receipt_path_value, str) or (
+        Path(receipt_path_value).expanduser().resolve() != inventory_path
+    ):
+        raise CacheMismatchError(
+            f"receipt is not bound to the canonical {label} path: {inventory_path}"
+        )
+    inventory_sha256 = sha256_file(inventory_path)
+    if receipt.get("cache_manifest_sha256") != inventory_sha256:
+        raise CacheMismatchError(
+            f"receipt is not bound to the current {label} SHA-256: {inventory_path}"
+        )
+    return inventory_sha256
+
+
 def load_raw_vggt_manifest(
     manifest_path: Path, *, vggt_root: Path
 ) -> list[RawVGGTManifestEntry]:
@@ -373,7 +474,9 @@ def load_raw_vggt_manifest(
                     f"malformed raw VGGT manifest row {line_number}: {row!r}"
                 ) from exc
             if selection_index < 0 or target_manifest_index < 0 or not sequence_id:
-                raise ValueError(f"invalid indices/sequence at manifest row {line_number}")
+                raise ValueError(
+                    f"invalid indices/sequence at manifest row {line_number}"
+                )
             if not cache_path.is_file():
                 raise FileNotFoundError(
                     f"raw VGGT cache from row {line_number} is missing: {cache_path}"
@@ -406,7 +509,9 @@ def load_raw_vggt_manifest(
     if [item.selection_index for item in entries] != sorted(
         item.selection_index for item in entries
     ):
-        raise CacheMismatchError("raw VGGT cache manifest is not selection-index ordered")
+        raise CacheMismatchError(
+            "raw VGGT cache manifest is not selection-index ordered"
+        )
     return entries
 
 
@@ -421,7 +526,9 @@ def validate_causal_window_unchanged(
         raise CacheMismatchError("raw VGGT cache does not assert causal=True")
     records = source.get("manifest_records")
     if not isinstance(records, list) or len(records) != 5:
-        raise CacheMismatchError("raw VGGT cache must retain exactly five source records")
+        raise CacheMismatchError(
+            "raw VGGT cache must retain exactly five source records"
+        )
     sequence_ids = [record.get("sequence_id") for record in records]
     frame_ids = [record.get("frame_id") for record in records]
     timestamps = [record.get("timestamp") for record in records]
@@ -431,11 +538,21 @@ def validate_causal_window_unchanged(
         frames_int = [int(value) for value in frame_ids]
         times_float = [float(value) for value in timestamps]
     except (TypeError, ValueError) as exc:
-        raise CacheMismatchError("raw VGGT causal frame/timestamp values are malformed") from exc
-    if any(current <= previous for previous, current in zip(frames_int, frames_int[1:])):
-        raise CacheMismatchError("raw VGGT causal frame IDs are not strictly increasing")
-    if any(current <= previous for previous, current in zip(times_float, times_float[1:])):
-        raise CacheMismatchError("raw VGGT causal timestamps are not strictly increasing")
+        raise CacheMismatchError(
+            "raw VGGT causal frame/timestamp values are malformed"
+        ) from exc
+    if any(
+        current <= previous for previous, current in zip(frames_int, frames_int[1:])
+    ):
+        raise CacheMismatchError(
+            "raw VGGT causal frame IDs are not strictly increasing"
+        )
+    if any(
+        current <= previous for previous, current in zip(times_float, times_float[1:])
+    ):
+        raise CacheMismatchError(
+            "raw VGGT causal timestamps are not strictly increasing"
+        )
     if (
         frames_int[-1] != entry.frame_id
         or times_float[-1] != entry.timestamp
@@ -551,7 +668,9 @@ def derive_geometry_manifest(
     ffs_root = ffs_root.expanduser().resolve()
     output_root = output_root.expanduser().resolve()
     if not vggt_root.is_dir() or not ffs_root.is_dir():
-        raise FileNotFoundError("--vggt-root and --ffs-root must be existing directories")
+        raise FileNotFoundError(
+            "--vggt-root and --ffs-root must be existing directories"
+        )
     if start_window < 0 or limit is not None and limit <= 0:
         raise ValueError("start-window must be non-negative and limit must be positive")
     if cache_dtype not in {"float16", "float32"}:
@@ -573,65 +692,112 @@ def derive_geometry_manifest(
     raw_manifest_path = vggt_root / "cache_manifest.jsonl"
     all_entries = load_raw_vggt_manifest(raw_manifest_path, vggt_root=vggt_root)
     raw_canonical_receipt_path = vggt_root / "run_receipt.json"
-    canonical_vggt_identity: Mapping[str, Any] | None = None
-    raw_canonical_receipt_sha256: str | None = None
-    raw_canonical_contract_verified = False
-    source_manifest_path: str | None = None
-    source_manifest_sha256: str | None = None
-    if raw_canonical_receipt_path.exists():
-        try:
-            raw_canonical_receipt = json.loads(
-                raw_canonical_receipt_path.read_text(encoding="utf-8")
-            )
-            raw_selected = int(raw_canonical_receipt["selected_windows"])
-            raw_written = int(raw_canonical_receipt["written_records"])
-            raw_reused = int(raw_canonical_receipt["reused_records"])
-            raw_available = int(raw_canonical_receipt["available_windows"])
-            canonical_vggt_identity = raw_canonical_receipt["identity"]
-            # Older test/fixture receipts may omit the optional source
-            # manifest binding.  Parse it lazily so a count inconsistency is
-            # reported as the stronger complete-coverage failure first; real
-            # producer receipts always include both fields and are checked
-            # below after coverage has passed.
-            source_manifest_value = raw_canonical_receipt.get("manifest")
-            source_manifest_sha_value = raw_canonical_receipt.get("manifest_sha256")
-            source_manifest_path = (
-                str(source_manifest_value)
-                if isinstance(source_manifest_value, str)
-                else None
-            )
-            source_manifest_sha256 = (
-                str(source_manifest_sha_value)
-                if isinstance(source_manifest_sha_value, str)
-                else None
-            )
-        except (KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
-            raise CacheMismatchError(
-                f"raw VGGT canonical receipt is malformed: {raw_canonical_receipt_path}"
-            ) from exc
-        if (
-            raw_selected != len(all_entries)
-            or raw_written + raw_reused != raw_selected
-            or raw_available != raw_selected
-            or not isinstance(canonical_vggt_identity, Mapping)
-        ):
-            raise CacheMismatchError(
-                "raw VGGT canonical receipt does not prove complete manifest coverage"
-            )
-        if source_manifest_path is None or source_manifest_sha256 is None:
-            raise CacheMismatchError(
-                "raw VGGT canonical receipt is not bound to a valid source manifest"
-            )
-        source_manifest = Path(source_manifest_path).expanduser().resolve()
-        if (
-            not source_manifest.is_file()
-            or source_manifest_sha256 != sha256_file(source_manifest)
-        ):
-            raise CacheMismatchError(
-                "raw VGGT canonical receipt is not bound to a valid source manifest"
-            )
-        raw_canonical_receipt_sha256 = sha256_file(raw_canonical_receipt_path)
-        raw_canonical_contract_verified = True
+    raw_canonical_receipt = _load_receipt(
+        raw_canonical_receipt_path,
+        label="raw VGGT canonical receipt",
+    )
+    raw_selected = raw_canonical_receipt.get("selected_windows")
+    raw_written = raw_canonical_receipt.get("written_records")
+    raw_reused = raw_canonical_receipt.get("reused_records")
+    raw_available = raw_canonical_receipt.get("available_windows")
+    if (
+        not all(
+            _nonnegative_int(value)
+            for value in (raw_selected, raw_written, raw_reused, raw_available)
+        )
+        or raw_selected != len(all_entries)
+        or raw_written + raw_reused != raw_selected
+        or raw_available != raw_selected
+    ):
+        raise CacheMismatchError(
+            "raw VGGT canonical receipt does not prove complete manifest coverage"
+        )
+    if raw_canonical_receipt.get("schema_version") != 1:
+        raise CacheMismatchError(
+            f"raw VGGT canonical receipt is malformed: {raw_canonical_receipt_path}"
+        )
+    canonical_vggt_identity = _validate_receipt_identity(
+        raw_canonical_receipt,
+        expected_component="vggt-omega",
+        label="raw VGGT canonical receipt",
+    )
+    source_manifest_value = raw_canonical_receipt.get("manifest")
+    source_manifest_sha256 = raw_canonical_receipt.get("manifest_sha256")
+    if not isinstance(source_manifest_value, str) or not isinstance(
+        source_manifest_sha256, str
+    ):
+        raise CacheMismatchError(
+            "raw VGGT canonical receipt is not bound to a valid source manifest"
+        )
+    source_manifest = Path(source_manifest_value).expanduser().resolve()
+    if not source_manifest.is_file() or source_manifest_sha256 != sha256_file(
+        source_manifest
+    ):
+        raise CacheMismatchError(
+            "raw VGGT canonical receipt is not bound to a valid source manifest"
+        )
+    source_manifest_path = str(source_manifest)
+    raw_manifest_sha256 = _validate_inventory_binding(
+        raw_canonical_receipt,
+        raw_manifest_path,
+        label="raw VGGT cache manifest",
+    )
+    if (
+        _inventory_row_count(raw_manifest_path, label="raw VGGT cache manifest")
+        != raw_selected
+    ):
+        raise CacheMismatchError(
+            "raw VGGT canonical inventory does not match receipt coverage"
+        )
+    raw_canonical_receipt_sha256 = sha256_file(raw_canonical_receipt_path)
+
+    ffs_canonical_receipt_path = ffs_root / "run_receipt.json"
+    ffs_manifest_path = ffs_root / "cache_manifest.jsonl"
+    ffs_canonical_receipt = _load_receipt(
+        ffs_canonical_receipt_path,
+        label="FFS canonical receipt",
+    )
+    ffs_selected = ffs_canonical_receipt.get("selected_records")
+    ffs_written = ffs_canonical_receipt.get("written_records")
+    ffs_reused = ffs_canonical_receipt.get("reused_records")
+    if (
+        ffs_canonical_receipt.get("schema_version") != 1
+        or not all(
+            _nonnegative_int(value) for value in (ffs_selected, ffs_written, ffs_reused)
+        )
+        or ffs_selected == 0
+        or ffs_written + ffs_reused != ffs_selected
+    ):
+        raise CacheMismatchError(
+            f"FFS canonical receipt is malformed: {ffs_canonical_receipt_path}"
+        )
+    canonical_ffs_identity = _validate_receipt_identity(
+        ffs_canonical_receipt,
+        expected_component="ffs-observation",
+        label="FFS canonical receipt",
+    )
+    ffs_source_manifest_value = ffs_canonical_receipt.get("manifest")
+    if (
+        not isinstance(ffs_source_manifest_value, str)
+        or Path(ffs_source_manifest_value).expanduser().resolve() != source_manifest
+        or ffs_canonical_receipt.get("manifest_sha256") != source_manifest_sha256
+    ):
+        raise CacheMismatchError(
+            "FFS and raw VGGT receipts do not bind the same source manifest"
+        )
+    ffs_manifest_sha256 = _validate_inventory_binding(
+        ffs_canonical_receipt,
+        ffs_manifest_path,
+        label="FFS cache manifest",
+    )
+    if (
+        _inventory_row_count(ffs_manifest_path, label="FFS cache manifest")
+        != ffs_selected
+    ):
+        raise CacheMismatchError(
+            "FFS canonical inventory does not match receipt coverage"
+        )
+    ffs_canonical_receipt_sha256 = sha256_file(ffs_canonical_receipt_path)
     selected = all_entries[start_window:]
     if limit is not None:
         selected = selected[:limit]
@@ -650,9 +816,7 @@ def derive_geometry_manifest(
     rows: list[dict[str, Any]] = []
     failure_histogram: Counter[str] = Counter()
     sequence_counts: dict[str, Counter[str]] = {}
-    diagnostics_all: dict[str, list[float]] = {
-        name: [] for name in DIAGNOSTIC_PATHS
-    }
+    diagnostics_all: dict[str, list[float]] = {name: [] for name in DIAGNOSTIC_PATHS}
     diagnostics_pose_rejected: dict[str, list[float]] = {
         name: [] for name in DIAGNOSTIC_PATHS
     }
@@ -661,7 +825,7 @@ def derive_geometry_manifest(
     written_count = 0
     reused_count = 0
     expected_vggt_identity: Mapping[str, Any] | None = canonical_vggt_identity
-    expected_ffs_identity: Mapping[str, Any] | None = None
+    expected_ffs_identity: Mapping[str, Any] | None = canonical_ffs_identity
     raw_weights_only_safe_load_count = 0
     raw_identity_match_count = 0
     raw_causal_target_valid_count = 0
@@ -681,9 +845,7 @@ def derive_geometry_manifest(
                 raise CacheMismatchError(
                     f"raw VGGT source metadata is missing at {entry.cache_path}"
                 )
-            calibration_window = calibration_index.records_for_vggt_source(
-                vggt_source
-            )
+            calibration_window = calibration_index.records_for_vggt_source(vggt_source)
         vggt_identity = vggt_payload["identity"]
         if expected_vggt_identity is None:
             expected_vggt_identity = vggt_identity
@@ -845,8 +1007,7 @@ def derive_geometry_manifest(
     canonical_receipt_path = output_root / "run_receipt.json"
     existing_canonical_selected = _receipt_selected_windows(canonical_receipt_path)
     preserve_more_complete_canonical = (
-        existing_canonical_selected is not None
-        and existing_canonical_selected > total
+        existing_canonical_selected is not None and existing_canonical_selected > total
     )
     run_manifest_path = output_root / "run_manifests" / f"{run_id}.jsonl"
     _atomic_jsonl(run_manifest_path, rows)
@@ -858,6 +1019,24 @@ def derive_geometry_manifest(
     else:
         _atomic_jsonl(cache_manifest_path, rows)
     safe_zero_audit = audit_safe_zero_contract(rows)
+    source_evidence = (
+        (
+            raw_canonical_receipt_path,
+            raw_canonical_receipt_sha256,
+            "raw VGGT canonical receipt",
+        ),
+        (raw_manifest_path, raw_manifest_sha256, "raw VGGT cache manifest"),
+        (
+            ffs_canonical_receipt_path,
+            ffs_canonical_receipt_sha256,
+            "FFS canonical receipt",
+        ),
+        (ffs_manifest_path, ffs_manifest_sha256, "FFS cache manifest"),
+        (source_manifest, source_manifest_sha256, "source manifest"),
+    )
+    for evidence_path, expected_sha256, label in source_evidence:
+        if not evidence_path.is_file() or sha256_file(evidence_path) != expected_sha256:
+            raise CacheMismatchError(f"{label} changed while deriving geometry")
     elapsed_seconds = time.perf_counter() - started
     completed_wall = datetime.now(timezone.utc)
     receipt: dict[str, Any] = {
@@ -874,12 +1053,20 @@ def derive_geometry_manifest(
         "config": config,
         "inputs": {
             "vggt_root": str(vggt_root),
+            "vggt_run_receipt": str(raw_canonical_receipt_path),
+            "vggt_run_receipt_sha256": raw_canonical_receipt_sha256,
             "vggt_cache_manifest": str(raw_manifest_path),
-            "vggt_cache_manifest_sha256": sha256_file(raw_manifest_path),
+            "vggt_cache_manifest_sha256": raw_manifest_sha256,
+            "vggt_identity": dict(expected_vggt_identity or {}),
             "manifest": source_manifest_path,
             "manifest_sha256": source_manifest_sha256,
             "vggt_available_windows": len(all_entries),
             "ffs_root": str(ffs_root),
+            "ffs_run_receipt": str(ffs_canonical_receipt_path),
+            "ffs_run_receipt_sha256": ffs_canonical_receipt_sha256,
+            "ffs_cache_manifest": str(ffs_manifest_path),
+            "ffs_cache_manifest_sha256": ffs_manifest_sha256,
+            "ffs_identity": dict(expected_ffs_identity or {}),
             **(
                 {
                     "rectified_calibration_sidecar": str(
@@ -907,22 +1094,14 @@ def derive_geometry_manifest(
         },
         "raw_input_audit": {
             "passed": True,
-            "canonical_receipt": (
-                str(raw_canonical_receipt_path)
-                if raw_canonical_receipt_path.exists()
-                else None
-            ),
+            "canonical_receipt": str(raw_canonical_receipt_path),
             "canonical_receipt_sha256": raw_canonical_receipt_sha256,
-            "canonical_receipt_complete_manifest_coverage": (
-                raw_canonical_contract_verified
-            ),
+            "canonical_receipt_complete_manifest_coverage": True,
             "weights_only_safe_load_records": raw_weights_only_safe_load_count,
             "vggt_identity_match_records": raw_identity_match_count,
             "ffs_identity_match_records": len(rows),
             "causal_target_valid_records": raw_causal_target_valid_count,
-            "all_float_tensors_finite_records": (
-                raw_all_float_tensors_finite_count
-            ),
+            "all_float_tensors_finite_records": (raw_all_float_tensors_finite_count),
             "vggt_identity": dict(expected_vggt_identity or {}),
             "ffs_identity": dict(expected_ffs_identity or {}),
         },
@@ -1048,9 +1227,9 @@ def derive_geometry_manifest(
         )
     else:
         receipt["safe_zero_audit"]["verification_command"] = None
-        receipt["safe_zero_audit"]["verification_note"] = (
-            "Non-default test thresholds were supplied through the Python API."
-        )
+        receipt["safe_zero_audit"][
+            "verification_note"
+        ] = "Non-default test thresholds were supplied through the Python API."
     receipt["canonical_update"] = {
         "existing_selected_windows": existing_canonical_selected,
         "current_selected_windows": total,
@@ -1079,7 +1258,9 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--ffs-root", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--report", type=Path)
-    parser.add_argument("--cache-dtype", choices=["float16", "float32"], default="float32")
+    parser.add_argument(
+        "--cache-dtype", choices=["float16", "float32"], default="float32"
+    )
     parser.add_argument("--start-window", type=int, default=0)
     parser.add_argument("--limit", type=int)
     parser.add_argument("--overwrite", action="store_true")
