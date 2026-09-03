@@ -16,6 +16,11 @@ from data.stereo_calibration import (
     build_rectified_calibration_sidecar,
     load_rectified_calibration_sidecar,
 )
+from data.spring import (
+    SPRING_BASELINE_M,
+    SPRING_FLOW_LIBRARY_COMMIT,
+    SPRING_INTRINSICS_FORMAT,
+)
 
 
 BASELINE_M = 0.12
@@ -245,3 +250,94 @@ def test_loader_rejects_live_metadata_tamper(tmp_path: Path) -> None:
         load_rectified_calibration_sidecar(
             sidecar, receipt_path=receipt, expected_manifest_path=manifest
         )
+
+
+def _spring_record(tmp_path: Path, *, metadata_row: int = 1) -> ManifestRecord:
+    metadata = tmp_path / "intrinsics.txt"
+    metadata.write_text(
+        "100 101 4 3\n200 201 8 7\n300 301 12 11\n", encoding="utf-8"
+    )
+    k = [[200.0, 0.0, 8.0], [0.0, 201.0, 7.0], [0.0, 0.0, 1.0]]
+    p_left = [row + [0.0] for row in k]
+    p_right = [row[:] for row in p_left]
+    p_right[0][3] = -k[0][0] * SPRING_BASELINE_M
+    return ManifestRecord(
+        sequence_id="0005",
+        frame_id=2,
+        timestamp=1.0,
+        left_path=str(tmp_path / "left.png"),
+        right_path=str(tmp_path / "right.png"),
+        K=tuple(tuple(value for value in row) for row in k),
+        baseline_m=SPRING_BASELINE_M,
+        gt_disparity_path=None,
+        rectified=True,
+        extras={
+            "dataset": "spring",
+            "K_right": k,
+            "P_left": p_left,
+            "P_right": p_right,
+            "baseline_from_projection_m": SPRING_BASELINE_M,
+            "metadata_path": str(metadata.resolve()),
+            "metadata_sha256": sha256_file(metadata),
+            "calibration_metadata_format": SPRING_INTRINSICS_FORMAT,
+            "calibration_metadata_row": metadata_row,
+            "intrinsics_row_index": 1,
+            "spring_flow_library_commit": SPRING_FLOW_LIBRARY_COMMIT,
+        },
+    )
+
+
+def test_build_spring_intrinsics_sidecar_binds_exact_metadata_row(
+    tmp_path: Path,
+) -> None:
+    manifest = tmp_path / "spring.jsonl"
+    write_manifest(manifest, [_spring_record(tmp_path)])
+    audit = tmp_path / "spring_audit.json"
+    _write_audit(audit, manifest, record_count=1)
+    sidecar = tmp_path / "spring_calibration.jsonl"
+    receipt = tmp_path / "spring_calibration.receipt.json"
+
+    build_rectified_calibration_sidecar(
+        manifest, audit, sidecar, receipt_path=receipt
+    )
+    index = load_rectified_calibration_sidecar(
+        sidecar, receipt_path=receipt, expected_manifest_path=manifest
+    )
+    transform = index.records[0].as_tensor().numpy()
+    expected = np.eye(4)
+    expected[0, 3] = -SPRING_BASELINE_M
+    np.testing.assert_allclose(transform, expected, atol=1e-8, rtol=0.0)
+    row = json.loads(sidecar.read_text(encoding="utf-8"))
+    assert row["derivation"]["metadata_format"] == SPRING_INTRINSICS_FORMAT
+    assert row["derivation"]["metadata_row"] == 1
+    assert row["derivation"]["official_flow_library_commit"] == (
+        SPRING_FLOW_LIBRARY_COMMIT
+    )
+
+
+def test_spring_calibration_rejects_row_or_commit_drift(tmp_path: Path) -> None:
+    for name, record, message in (
+        (
+            "row",
+            _spring_record(tmp_path, metadata_row=0),
+            "metadata row binding mismatch",
+        ),
+        (
+            "commit",
+            ManifestRecord.from_dict(
+                {
+                    **_spring_record(tmp_path).to_dict(),
+                    "spring_flow_library_commit": "0" * 40,
+                }
+            ),
+            "source commit mismatch",
+        ),
+    ):
+        manifest = tmp_path / f"spring_{name}.jsonl"
+        write_manifest(manifest, [record])
+        audit = tmp_path / f"spring_{name}_audit.json"
+        _write_audit(audit, manifest, record_count=1)
+        with pytest.raises(CacheMismatchError, match=message):
+            build_rectified_calibration_sidecar(
+                manifest, audit, tmp_path / f"spring_{name}_calibration.jsonl"
+            )

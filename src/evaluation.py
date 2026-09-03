@@ -1,7 +1,7 @@
 """Spatial and causal evaluation primitives with safe metric aggregation.
 
-The reference target is the trusted subset of an HR FFS teacher cache, so
-results are pseudo-GT engineering measurements rather than paper accuracy.
+The reference target is selected by an explicit supervision contract. Legacy
+runs use trusted HR FFS pseudo-GT; Spring runs may bind rendered dataset GT.
 Stage-B helpers enforce endpoint-only causal T=3 lineage and HR z-buffer
 temporal domains. All disparities passed here are expressed in HR pixels.
 """
@@ -495,6 +495,23 @@ def validate_checkpoint_lineage(
         raise CheckpointMismatchError(
             "evaluation teacher cache identity differs from checkpoint lineage"
         )
+    saved_supervision_value = config.get("supervision")
+    saved_supervision = (
+        None
+        if saved_supervision_value is None
+        else _required_mapping(
+            saved_supervision_value, "checkpoint supervision config"
+        )
+    )
+    expected_target_component = (
+        "ffs-teacher"
+        if saved_supervision is None
+        else saved_supervision.get("teacher_cache_component")
+    )
+    if saved_teacher.get("component") != expected_target_component:
+        raise CheckpointMismatchError(
+            "checkpoint target cache component differs from supervision config"
+        )
 
     saved_calibration = config.get("calibration_conditioning_v3")
     if saved_calibration is None:
@@ -542,6 +559,24 @@ def validate_checkpoint_lineage(
             raise CheckpointMismatchError(
                 "evaluation calibration conditioning differs from checkpoint"
             )
+        current_supervision = current_config.get("supervision")
+        if saved_supervision is not None or current_supervision is not None:
+            saved_supervision_mapping = _required_mapping(
+                saved_supervision, "checkpoint supervision config"
+            )
+            current_supervision_mapping = _required_mapping(
+                current_supervision, "evaluation supervision config"
+            )
+            if _strict_config_mapping_fingerprint(
+                current_supervision_mapping,
+                "evaluation supervision config",
+            ) != _strict_config_mapping_fingerprint(
+                saved_supervision_mapping,
+                "checkpoint supervision config",
+            ):
+                raise CheckpointMismatchError(
+                    "evaluation supervision config differs from checkpoint"
+                )
         if pixel_center_contract == V31_PIXEL_CENTER_CONTRACT:
             for section_name in V31_BEHAVIOR_CONFIG_SECTIONS:
                 saved_section = _required_mapping(
@@ -591,6 +626,9 @@ def validate_checkpoint_lineage(
         "observation_cache_identity": saved_observation,
         "teacher_cache_identity": saved_teacher,
         "calibration_conditioning_v3": dict(saved_calibration),
+        "supervision": (
+            None if saved_supervision is None else dict(saved_supervision)
+        ),
     }
     if required_stage == "spatial":
         if bool(model.get("use_history", False)) or bool(

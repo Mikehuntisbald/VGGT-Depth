@@ -8,6 +8,8 @@ import pytest
 from data.manifest import load_manifest
 from data.spring import (
     SPRING_BASELINE_M,
+    SPRING_FLOW_LIBRARY_COMMIT,
+    SPRING_INTRINSICS_FORMAT,
     SpringFormatError,
     build_spring_manifest,
     load_spring_sequence,
@@ -74,6 +76,17 @@ def test_spring_manifest_contains_explicit_gt_pose_and_disparity_contract(
     assert records[0].baseline_m == pytest.approx(0.065)
     assert records[0].extras["gt_pose_convention"] == "world_to_camera_opencv"
     assert records[0].extras["gt_disparity_unit"] == "full_hd_pixels"
+    extras = records[0].extras
+    np.testing.assert_allclose(extras["K_right"], records[0].K)
+    np.testing.assert_allclose(extras["P_left"], np.c_[records[0].K, np.zeros(3)])
+    assert extras["P_right"][0][3] == pytest.approx(
+        -records[0].K[0][0] * SPRING_BASELINE_M
+    )
+    assert extras["metadata_path"].endswith("cam_data/intrinsics.txt")
+    assert len(extras["metadata_sha256"]) == 64
+    assert extras["calibration_metadata_format"] == SPRING_INTRINSICS_FORMAT
+    assert extras["calibration_metadata_row"] == 0
+    assert extras["spring_flow_library_commit"] == SPRING_FLOW_LIBRARY_COMMIT
     np.testing.assert_allclose(
         records[1].extras["gt_extrinsics_camera_from_world"][0],
         [1.0, 0.0, 0.0, -1.0],
@@ -99,6 +112,19 @@ def test_spring_strict_pixel_presence_fails_closed(tmp_path: Path) -> None:
     root = _write_sequence(tmp_path)
     with pytest.raises(FileNotFoundError, match="missing Spring image"):
         spring_manifest_records(root)
+
+
+def test_official_spring_manifest_rejects_noncanonical_baseline(
+    tmp_path: Path,
+) -> None:
+    root = _write_sequence(tmp_path)
+    with pytest.raises(ValueError, match="official Spring manifests require baseline"):
+        spring_manifest_records(
+            root,
+            require_images=False,
+            require_disparity=False,
+            baseline_m=0.12,
+        )
 
 
 def test_spring_sidecar_row_count_mismatch_is_rejected(tmp_path: Path) -> None:

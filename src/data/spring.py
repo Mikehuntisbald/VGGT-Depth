@@ -31,6 +31,7 @@ from typing import Iterator, Literal, Sequence
 
 import numpy as np
 
+from .cache_dataset import sha256_file
 from .manifest import ManifestRecord, write_manifest
 
 
@@ -39,6 +40,10 @@ SPRING_IMAGE_SIZE_HW = (1080, 1920)
 SPRING_DISPARITY_SIZE_HW = (2160, 3840)
 SPRING_POSE_CONVENTION = "world_to_camera_opencv"
 SPRING_DISPARITY_CONVENTION = "positive_left_reference_magnitude"
+SPRING_GT_COMPONENT = "spring-ground-truth"
+SPRING_GT_TARGET_TYPE = "spring_v2_disp1_ground_truth"
+SPRING_FLOW_LIBRARY_COMMIT = "8454aed75172b230304ea9942b95626b99106534"
+SPRING_INTRINSICS_FORMAT = "spring_intrinsics_fx_fy_cx_cy_v1"
 
 
 class SpringFormatError(ValueError):
@@ -251,6 +256,13 @@ def load_spring_sequence(
     baseline = _finite(baseline_m, name="baseline_m")
     if baseline <= 0:
         raise ValueError("baseline_m must be positive")
+    if not math.isclose(
+        baseline, SPRING_BASELINE_M, abs_tol=1e-12, rel_tol=0.0
+    ):
+        raise ValueError(
+            "official Spring manifests require baseline_m="
+            f"{SPRING_BASELINE_M}, got {baseline}"
+        )
 
     frames: list[SpringFrame] = []
     for index in range(row_count):
@@ -347,11 +359,17 @@ def spring_manifest_records(
         require_disparity=require_disparity,
         baseline_m=baseline_m,
     ):
+        intrinsics_path = (sequence.sequence_root / "cam_data" / "intrinsics.txt").resolve()
+        intrinsics_sha256 = sha256_file(intrinsics_path)
         for frame in sequence.frames:
             timestamp = (
                 float(frame.frame_id - 1) / fps if fps is not None else frame.timestamp
             )
             pose = [list(row) for row in frame.extrinsics_camera_from_world]
+            k = np.asarray(frame.K, dtype=np.float64)
+            p_left = np.concatenate((k, np.zeros((3, 1), dtype=np.float64)), axis=1)
+            p_right = p_left.copy()
+            p_right[0, 3] = -k[0, 0] * float(baseline_m)
             records.append(
                 ManifestRecord(
                     sequence_id=frame.sequence_id,
@@ -386,6 +404,15 @@ def spring_manifest_records(
                         ),
                         "cam_data_root": str((sequence.sequence_root / "cam_data").resolve()),
                         "intrinsics_row_index": frame.frame_id - 1,
+                        "K_right": [list(row) for row in frame.K],
+                        "P_left": p_left.tolist(),
+                        "P_right": p_right.tolist(),
+                        "baseline_from_projection_m": float(baseline_m),
+                        "metadata_path": str(intrinsics_path),
+                        "metadata_sha256": intrinsics_sha256,
+                        "calibration_metadata_format": SPRING_INTRINSICS_FORMAT,
+                        "calibration_metadata_row": frame.frame_id - 1,
+                        "spring_flow_library_commit": SPRING_FLOW_LIBRARY_COMMIT,
                         "frame_index_base": 1,
                         "timestamp_source": (
                             "frame_index/fps" if fps is not None else "frame_index"
@@ -522,7 +549,11 @@ __all__ = [
     "SPRING_BASELINE_M",
     "SPRING_DISPARITY_CONVENTION",
     "SPRING_DISPARITY_SIZE_HW",
+    "SPRING_FLOW_LIBRARY_COMMIT",
+    "SPRING_GT_COMPONENT",
+    "SPRING_GT_TARGET_TYPE",
     "SPRING_IMAGE_SIZE_HW",
+    "SPRING_INTRINSICS_FORMAT",
     "SPRING_POSE_CONVENTION",
     "SpringFormatError",
     "SpringFrame",

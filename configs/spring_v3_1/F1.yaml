@@ -1,0 +1,19 @@
+experiment: spring_v3_1_F1_half_resolution_ffs_bilinear
+seed: 42
+arm: F1
+stage: baseline
+
+ffs:
+  role: observation
+  cache_component: ffs-observation
+  spatial_scale: 2
+  checkpoint_label: 20-30-48
+  iterations: 4
+  max_disp: 192
+  right_left_check: true
+
+evaluation:
+  endpoint_protocol: spring_seed42_common_fixed384_v1
+  crop_hr: [384, 768]
+  crop_origin_hr_xy: [576, 348]
+  prediction: align_corners_false_bilinear

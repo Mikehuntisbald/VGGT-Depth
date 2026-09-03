@@ -1,0 +1,19 @@
+experiment: spring_v3_1_F0_full_resolution_ffs
+seed: 42
+arm: F0
+stage: baseline
+
+ffs:
+  role: observation
+  cache_component: ffs-observation-full-resolution
+  spatial_scale: 1
+  checkpoint_label: 20-30-48
+  iterations: 4
+  max_disp: 384
+  right_left_check: true
+
+evaluation:
+  endpoint_protocol: spring_seed42_common_fixed384_v1
+  crop_hr: [384, 768]
+  crop_origin_hr_xy: [576, 348]
+  prediction: direct_full_resolution_ffs

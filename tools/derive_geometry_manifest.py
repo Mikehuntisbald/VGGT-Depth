@@ -757,7 +757,7 @@ def derive_geometry_manifest(
                     f"derived cache source mismatch for {entry.sequence_id}/{entry.frame_id}"
                 )
             metadata = existing["metadata"]
-            status = "reused_identity_and_source_match"
+            status = "reused"
             reused_count += 1
         else:
             tensors, derived_metadata = derive_geometry(

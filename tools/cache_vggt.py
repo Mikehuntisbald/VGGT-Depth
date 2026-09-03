@@ -83,10 +83,14 @@ class CausalStereoWindow:
         if len(sequence_ids) != 1:
             raise ValueError("a causal window cannot cross sequence boundaries")
         timestamps = [record.timestamp for record in self.records]
-        if any(current <= previous for previous, current in zip(timestamps, timestamps[1:])):
+        if any(
+            current <= previous for previous, current in zip(timestamps, timestamps[1:])
+        ):
             raise ValueError("window timestamps must be strictly increasing")
         frame_ids = [record.frame_id for record in self.records]
-        if any(current <= previous for previous, current in zip(frame_ids, frame_ids[1:])):
+        if any(
+            current <= previous for previous, current in zip(frame_ids, frame_ids[1:])
+        ):
             raise ValueError("window frame_id values must be strictly increasing")
 
     @property
@@ -149,11 +153,15 @@ def build_causal_stereo_windows(
     for sequence_id, indexed_records in grouped.items():
         timestamps = [record.timestamp for _, record in indexed_records]
         frame_ids = [record.frame_id for _, record in indexed_records]
-        if any(current <= previous for previous, current in zip(timestamps, timestamps[1:])):
+        if any(
+            current <= previous for previous, current in zip(timestamps, timestamps[1:])
+        ):
             raise ValueError(
                 f"sequence {sequence_id!r} is not strictly timestamp-ordered in manifest"
             )
-        if any(current <= previous for previous, current in zip(frame_ids, frame_ids[1:])):
+        if any(
+            current <= previous for previous, current in zip(frame_ids, frame_ids[1:])
+        ):
             raise ValueError(
                 f"sequence {sequence_id!r} is not strictly frame_id-ordered in manifest"
             )
@@ -164,7 +172,9 @@ def build_causal_stereo_windows(
                 manifest_indices=tuple(index for index, _ in selected),
             )
             # Make the no-future invariant executable, not merely documentary.
-            if any(record.timestamp > window.target.timestamp for record in window.records):
+            if any(
+                record.timestamp > window.target.timestamp for record in window.records
+            ):
                 raise AssertionError("causal window contains a future timestamp")
             windows.append(window)
 
@@ -211,9 +221,7 @@ def _require_pinned_upstream(repo: Path) -> str:
     if not repo.is_dir():
         raise FileNotFoundError(f"VGGT-Omega repository does not exist: {repo}")
     lock_path = PROJECT_ROOT / "third_party" / "LOCK.json"
-    lock = json.loads(lock_path.read_text(encoding="utf-8"))["components"][
-        "vggt-omega"
-    ]
+    lock = json.loads(lock_path.read_text(encoding="utf-8"))["components"]["vggt-omega"]
     actual = _git_head(repo)
     if actual != lock["commit"]:
         raise RuntimeError(
@@ -338,31 +346,43 @@ def _resample_output_grid(
         raise ValueError(f"target dense grid must be positive (H,W), got {target_hw!r}")
     target_height, target_width = (int(target_hw[0]), int(target_hw[1]))
     if output.depth.ndim != 5 or output.depth.shape[0] != 1:
-        raise ValueError(f"VGGT depth must be [1,S,H,W,1], got {tuple(output.depth.shape)}")
+        raise ValueError(
+            f"VGGT depth must be [1,S,H,W,1], got {tuple(output.depth.shape)}"
+        )
     native_height, native_width = (
         int(output.depth.shape[2]),
         int(output.depth.shape[3]),
     )
     if (native_height, native_width) == (target_height, target_width):
         return output
-    if output.depth_conf.ndim != 4 or tuple(output.depth_conf.shape[:2]) != tuple(output.depth.shape[:2]):
+    if output.depth_conf.ndim != 4 or tuple(output.depth_conf.shape[:2]) != tuple(
+        output.depth.shape[:2]
+    ):
         raise ValueError("VGGT depth_conf shape does not match depth batch/sequence")
     scale_x = target_width / native_width
     scale_y = target_height / native_height
     depth_dtype = output.depth.dtype
     conf_dtype = output.depth_conf.dtype
-    depth = F.interpolate(
-        output.depth[..., 0].reshape(-1, 1, native_height, native_width).float(),
-        size=(target_height, target_width),
-        mode="bilinear",
-        align_corners=False,
-    ).reshape(1, output.depth.shape[1], target_height, target_width, 1).to(depth_dtype)
-    depth_conf = F.interpolate(
-        output.depth_conf.reshape(-1, 1, native_height, native_width).float(),
-        size=(target_height, target_width),
-        mode="bilinear",
-        align_corners=False,
-    ).reshape(1, output.depth_conf.shape[1], target_height, target_width).to(conf_dtype)
+    depth = (
+        F.interpolate(
+            output.depth[..., 0].reshape(-1, 1, native_height, native_width).float(),
+            size=(target_height, target_width),
+            mode="bilinear",
+            align_corners=False,
+        )
+        .reshape(1, output.depth.shape[1], target_height, target_width, 1)
+        .to(depth_dtype)
+    )
+    depth_conf = (
+        F.interpolate(
+            output.depth_conf.reshape(-1, 1, native_height, native_width).float(),
+            size=(target_height, target_width),
+            mode="bilinear",
+            align_corners=False,
+        )
+        .reshape(1, output.depth_conf.shape[1], target_height, target_width)
+        .to(conf_dtype)
+    )
 
     preprocessing: list[ImagePreprocessMetadata] = []
     for item in output.preprocessing:
@@ -401,7 +421,9 @@ def _resample_output_grid(
 
     calibrated_model = output.intrinsics_calibrated_model
     if calibrated_model is not None:
-        scale = torch.eye(3, dtype=calibrated_model.dtype, device=calibrated_model.device)
+        scale = torch.eye(
+            3, dtype=calibrated_model.dtype, device=calibrated_model.device
+        )
         scale[0, 0] = scale_x
         scale[1, 1] = scale_y
         calibrated_model = scale.unsqueeze(0).unsqueeze(0) @ calibrated_model
@@ -511,15 +533,17 @@ def cache_tensors_from_output(
     calibrated_original = output.intrinsics_calibrated_original
     calibrated_model = output.intrinsics_calibrated_model
     if calibrated_original is None or calibrated_model is None:
-        raise ValueError("cache generation requires calibrated intrinsics for all views")
+        raise ValueError(
+            "cache generation requires calibrated intrinsics for all views"
+        )
 
     tensors: dict[str, torch.Tensor] = {
-        "vggt_depth_current_left_arbitrary": output.depth[
-            0, current_left, :, :, 0
-        ].unsqueeze(0).to(cache_dtype),
-        "vggt_depth_conf_current_left_unbounded": output.depth_conf[
-            0, current_left
-        ].unsqueeze(0).to(cache_dtype),
+        "vggt_depth_current_left_arbitrary": output.depth[0, current_left, :, :, 0]
+        .unsqueeze(0)
+        .to(cache_dtype),
+        "vggt_depth_conf_current_left_unbounded": output.depth_conf[0, current_left]
+        .unsqueeze(0)
+        .to(cache_dtype),
         "vggt_extrinsics_camera_from_world": output.extrinsics[0].to(torch.float32),
         "vggt_intrinsics_pred_model_px": output.intrinsics_pred[0].to(torch.float32),
         "vggt_pose_encoding": output.pose_enc[0].to(torch.float32),
@@ -536,12 +560,12 @@ def cache_tensors_from_output(
         ),
     }
     if all_view_dense:
-        tensors["vggt_depth_all_views_arbitrary"] = output.depth[0].permute(
-            0, 3, 1, 2
-        ).to(cache_dtype)
-        tensors["vggt_depth_conf_all_views_unbounded"] = output.depth_conf[
-            0
-        ].unsqueeze(1).to(cache_dtype)
+        tensors["vggt_depth_all_views_arbitrary"] = (
+            output.depth[0].permute(0, 3, 1, 2).to(cache_dtype)
+        )
+        tensors["vggt_depth_conf_all_views_unbounded"] = (
+            output.depth_conf[0].unsqueeze(1).to(cache_dtype)
+        )
     for name, tensor in tensors.items():
         if tensor.is_floating_point() and not bool(torch.isfinite(tensor).all().item()):
             raise ValueError(
@@ -564,11 +588,17 @@ def _parse_args() -> argparse.Namespace:
         default=PROJECT_ROOT / "third_party" / "vggt-omega",
     )
     parser.add_argument("--context-pairs", type=int, default=CONTEXT_PAIRS)
-    parser.add_argument("--causal", action="store_true", help="Required explicit contract flag")
-    parser.add_argument("--input-mode", choices=["balanced", "max_size"], default="balanced")
+    parser.add_argument(
+        "--causal", action="store_true", help="Required explicit contract flag"
+    )
+    parser.add_argument(
+        "--input-mode", choices=["balanced", "max_size"], default="balanced"
+    )
     parser.add_argument("--image-resolution", type=int, default=512)
     parser.add_argument("--patch-size", type=int, default=16)
-    parser.add_argument("--cache-dtype", choices=["float16", "float32"], default="float16")
+    parser.add_argument(
+        "--cache-dtype", choices=["float16", "float32"], default="float16"
+    )
     parser.add_argument(
         "--device",
         choices=["cpu", "cuda"],
@@ -611,12 +641,16 @@ def main() -> int:
         raise ValueError("image-resolution and patch-size must be positive")
     if args.image_resolution % args.patch_size:
         raise ValueError("image-resolution must be divisible by patch-size")
-    if args.output_grid is not None and any(int(value) <= 0 for value in args.output_grid):
+    if args.output_grid is not None and any(
+        int(value) <= 0 for value in args.output_grid
+    ):
         raise ValueError("output-grid dimensions must be positive")
     if not args.manifest.is_file():
         raise FileNotFoundError(f"manifest does not exist: {args.manifest}")
     if not args.checkpoint.is_file():
-        raise FileNotFoundError(f"VGGT-Omega checkpoint does not exist: {args.checkpoint}")
+        raise FileNotFoundError(
+            f"VGGT-Omega checkpoint does not exist: {args.checkpoint}"
+        )
     device = torch.device(args.device)
     if device.type == "cuda" and not torch.cuda.is_available():
         raise RuntimeError("requested CUDA VGGT-Omega cache device is unavailable")
@@ -644,7 +678,9 @@ def main() -> int:
         "image_resolution": args.image_resolution,
         "patch_size": args.patch_size,
         "cache_dtype": args.cache_dtype,
-        "dense_cache_scope": "all_views" if args.all_view_dense else "current_left_only",
+        "dense_cache_scope": (
+            "all_views" if args.all_view_dense else "current_left_only"
+        ),
         "current_left_view_index": CURRENT_LEFT_VIEW_INDEX,
         "inference_device": str(device),
         "cpu_upstream_autocast_compat": bool(device.type == "cpu"),
@@ -711,7 +747,8 @@ def main() -> int:
                     "frame_id": window.target.frame_id,
                     "timestamp": window.target.timestamp,
                     "cache_path": str(cache_path.resolve()),
-                    "status": "reused_identity_and_source_match",
+                    "cache_sha256": sha256_file(cache_path),
+                    "status": "reused",
                 }
             )
         else:
@@ -730,11 +767,16 @@ def main() -> int:
                 patch_size=args.patch_size,
                 context_pairs=CONTEXT_PAIRS,
             )
-            cache_dtype = torch.float16 if args.cache_dtype == "float16" else torch.float32
+            cache_dtype = (
+                torch.float16 if args.cache_dtype == "float16" else torch.float32
+            )
             with _inference_context(device):
-                for write_index, (window, cache_path, source, selection_index) in enumerate(
-                    prepared, start=1
-                ):
+                for write_index, (
+                    window,
+                    cache_path,
+                    source,
+                    selection_index,
+                ) in enumerate(prepared, start=1):
                     paths = window.ordered_image_paths(args.manifest)
                     calibrated_k = window.calibrated_intrinsics_ordered()
                     output = adapter(
@@ -761,7 +803,9 @@ def main() -> int:
                         },
                         "config": config,
                         "adapter": dict(output.metadata),
-                        "preprocessing": [item.as_dict() for item in output.preprocessing],
+                        "preprocessing": [
+                            item.as_dict() for item in output.preprocessing
+                        ],
                         "cache_tensor_semantics": {
                             "dense_grid": "VGGT model-input grid; use recorded transforms",
                             "depth": "positive camera-z in VGGT arbitrary scale; not metric yet",
@@ -787,6 +831,7 @@ def main() -> int:
                             "frame_id": window.target.frame_id,
                             "timestamp": window.target.timestamp,
                             "cache_path": str(cache_path.resolve()),
+                            "cache_sha256": sha256_file(cache_path),
                             "status": "written",
                         }
                     )
@@ -799,27 +844,30 @@ def main() -> int:
 
     index_rows.sort(key=lambda row: int(row["selection_index"]))
     elapsed_seconds = time.perf_counter() - started
-    run_receipt = {
-            "schema_version": 1,
-            "identity": identity.to_dict(),
-            "config": config,
-            "checkpoint": {
-                "path": str(args.checkpoint.resolve()),
-                "size_bytes": args.checkpoint.stat().st_size,
-                "sha256": checkpoint_sha256,
-            },
-            "upstream_repo": str(args.repo.resolve()),
-            "manifest": str(args.manifest.resolve()),
-            "manifest_sha256": manifest_sha256,
-            "available_windows": len(all_windows),
-            "selected_windows": len(selected),
-            "written_records": sum(row["status"] == "written" for row in index_rows),
-            "reused_records": sum(row["status"].startswith("reused") for row in index_rows),
-            "elapsed_seconds": elapsed_seconds,
-        }
     selection_end = args.start_window + len(selected) - 1
     selection_tag = f"windows_{args.start_window:06d}_{selection_end:06d}"
-    _atomic_jsonl(args.output / "runs" / f"{selection_tag}.jsonl", index_rows)
+    run_inventory_path = args.output / "runs" / f"{selection_tag}.jsonl"
+    _atomic_jsonl(run_inventory_path, index_rows)
+    run_receipt = {
+        "schema_version": 1,
+        "identity": identity.to_dict(),
+        "config": config,
+        "checkpoint": {
+            "path": str(args.checkpoint.resolve()),
+            "size_bytes": args.checkpoint.stat().st_size,
+            "sha256": checkpoint_sha256,
+        },
+        "upstream_repo": str(args.repo.resolve()),
+        "manifest": str(args.manifest.resolve()),
+        "manifest_sha256": manifest_sha256,
+        "cache_manifest": str(run_inventory_path.resolve()),
+        "cache_manifest_sha256": sha256_file(run_inventory_path),
+        "available_windows": len(all_windows),
+        "selected_windows": len(selected),
+        "written_records": sum(row["status"] == "written" for row in index_rows),
+            "reused_records": sum(row["status"] == "reused" for row in index_rows),
+        "elapsed_seconds": elapsed_seconds,
+    }
     _atomic_json(args.output / "runs" / f"{selection_tag}.json", run_receipt)
 
     # Keep the most complete same-identity run as the root-level canonical
@@ -830,7 +878,10 @@ def main() -> int:
         else 0
     )
     if len(selected) >= existing_selected:
-        _atomic_jsonl(args.output / "cache_manifest.jsonl", index_rows)
+        canonical_inventory_path = args.output / "cache_manifest.jsonl"
+        _atomic_jsonl(canonical_inventory_path, index_rows)
+        run_receipt["cache_manifest"] = str(canonical_inventory_path.resolve())
+        run_receipt["cache_manifest_sha256"] = sha256_file(canonical_inventory_path)
         _atomic_json(canonical_receipt_path, run_receipt)
     print(
         f"VGGT cache windows={len(index_rows)} written={len(prepared)} "

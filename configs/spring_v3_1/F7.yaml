@@ -1,0 +1,16 @@
+experiment: spring_v3_1_F7_stage_c_optional
+seed: 42
+arm: F7
+stage: optional_blocked
+
+depends_on: F6
+blocked_reason: >-
+  The current Stage-C unroll is the legacy v2 implementation and does not
+  implement the v3.1 half-pixel transport, LR-centre measurement ownership,
+  or current-conditioned candidate-fusion contract.
+required_contract:
+  lineage: v3.1
+  pixel_center_contract: align_corners_false_half_pixel_v3_1
+  measurement_ownership: lr_center_projection_bounded_subpixel_v3_1
+  temporal_candidate_fusion: current_conditioned_age_phase_diverse_v3_1
+

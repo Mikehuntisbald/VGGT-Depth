@@ -1,0 +1,27 @@
+experiment: spring_v3_1_F3_v2_k2_stage_a_control
+seed: 42
+defaults_from: configs/ablations/v2_strict_bilinear.yaml
+
+data:
+  source_dataset: Spring-v2
+  temporal_pose_source: gt
+  require_cache_inventory_lineage: true
+
+supervision:
+  enabled: true
+  protocol_version: spring_v2_real_disparity_ground_truth_v1
+  target_type: spring_v2_disp1_ground_truth
+  teacher_cache_component: spring-ground-truth
+  paper_ground_truth: true
+  synthetic_ground_truth: true
+
+temporal_history_v2:
+  top_k: 2
+
+model:
+  use_vggt_pose: false
+  use_vggt_depth: false
+
+train:
+  stage: spatial
+  steps_spatial: 5000

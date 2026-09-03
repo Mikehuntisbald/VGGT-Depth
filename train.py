@@ -40,6 +40,10 @@ from data.collate import (  # noqa: E402
     collate_training_samples,
 )
 from data.manifest import load_manifest  # noqa: E402
+from data.spring import (  # noqa: E402
+    SPRING_GT_COMPONENT,
+    SPRING_GT_TARGET_TYPE,
+)
 from data.stereo_calibration import (  # noqa: E402
     RectifiedCalibrationIndex,
     load_rectified_calibration_sidecar,
@@ -109,6 +113,9 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "derived_contract": "legacy_v1",
         "observation_cache_identity": None,
         "teacher_cache_identity": None,
+        "observation_cache_lineage": None,
+        "teacher_cache_lineage": None,
+        "require_cache_inventory_lineage": False,
         "derived_cache_lineage": None,
         "calibration_sidecar_lineage": None,
         "crop_mode": "random",
@@ -225,9 +232,7 @@ def temporal_pose_source_from_config(
         else None
     )
     model_value = (
-        model_section.get("pose_source")
-        if isinstance(model_section, Mapping)
-        else None
+        model_section.get("pose_source") if isinstance(model_section, Mapping) else None
     )
     values = [value for value in (data_value, model_value) if value is not None]
     if len(values) > 1 and str(values[0]).lower() != str(values[1]).lower():
@@ -271,17 +276,11 @@ def temporal_pose_inputs_from_batch(
         valid = batch.get("gt_temporal_pose_valid_sequence")
         if valid is None:
             if poses.ndim != 5:
-                raise ValueError(
-                    "GT temporal poses must have shape [B,T,10,3,4]"
-                )
-            valid = torch.ones(
-                poses.shape[:2], device=poses.device, dtype=torch.bool
-            )
+                raise ValueError("GT temporal poses must have shape [B,T,10,3,4]")
+            valid = torch.ones(poses.shape[:2], device=poses.device, dtype=torch.bool)
         quality = batch.get("gt_temporal_pose_quality_score_sequence")
         if quality is None:
-            quality = torch.ones(
-                valid.shape, device=poses.device, dtype=torch.float32
-            )
+            quality = torch.ones(valid.shape, device=poses.device, dtype=torch.float32)
     else:
         poses = batch.get("vggt_extrinsics_camera_from_world_metric_sequence")
         valid = batch.get("temporal_pose_valid_sequence")
@@ -300,8 +299,7 @@ def temporal_pose_inputs_from_batch(
         raise ValueError("temporal pose quality must be a floating Tensor")
     if poses.ndim != 5 or tuple(poses.shape[-3:]) != (10, 3, 4):
         raise ValueError(
-            "temporal poses must have shape [B,T,10,3,4], got "
-            f"{tuple(poses.shape)}"
+            "temporal poses must have shape [B,T,10,3,4], got " f"{tuple(poses.shape)}"
         )
     if tuple(valid.shape) != tuple(poses.shape[:2]) or tuple(quality.shape) != tuple(
         poses.shape[:2]
@@ -350,15 +348,62 @@ class PhysicalOutputV2:
 TEMPORAL_HISTORY_V2_PROTOCOL = "topk_z_aware_hidden_warp_v2"
 TEMPORAL_RESIDUAL_V2_PROTOCOL = "teacher_gt_temporal_residual_v2"
 CALIBRATION_CONDITIONING_V3_PROTOCOL = "dense_rays_factorized_pose_v3"
-ALIGN_CORNERS_FALSE_PIXEL_CENTER_CONTRACT = (
-    "align_corners_false_half_pixel_v3_1"
-)
-MEASUREMENT_OWNERSHIP_V31_PROTOCOL = (
-    "lr_center_projection_bounded_subpixel_v3_1"
-)
-TEMPORAL_CANDIDATE_FUSION_V31_PROTOCOL = (
-    "current_conditioned_age_phase_diverse_v3_1"
-)
+ALIGN_CORNERS_FALSE_PIXEL_CENTER_CONTRACT = "align_corners_false_half_pixel_v3_1"
+MEASUREMENT_OWNERSHIP_V31_PROTOCOL = "lr_center_projection_bounded_subpixel_v3_1"
+TEMPORAL_CANDIDATE_FUSION_V31_PROTOCOL = "current_conditioned_age_phase_diverse_v3_1"
+SPRING_SUPERVISION_PROTOCOL = "spring_v2_real_disparity_ground_truth_v1"
+
+
+@dataclass(frozen=True, slots=True)
+class SupervisionTarget:
+    """Cache and claim identity for training and evaluation targets."""
+
+    target_type: str = "trusted_hr_ffs_teacher_pseudo_gt"
+    cache_component: str = "ffs-teacher"
+    paper_ground_truth: bool = False
+    synthetic_ground_truth: bool = False
+
+
+def supervision_target_from_config(
+    config: Mapping[str, Any] | DictConfig,
+) -> SupervisionTarget:
+    """Resolve an explicit target lineage while preserving legacy configs."""
+
+    section = config.get("supervision")
+    if section is None:
+        return SupervisionTarget()
+    if not isinstance(section, (Mapping, DictConfig)):
+        raise ValueError("supervision must be a mapping")
+    required = {
+        "enabled",
+        "protocol_version",
+        "target_type",
+        "teacher_cache_component",
+        "paper_ground_truth",
+        "synthetic_ground_truth",
+    }
+    if set(section.keys()) != required:
+        raise ValueError(
+            "supervision fields differ: "
+            f"expected={sorted(required)}, got={sorted(section.keys())}"
+        )
+    if section["enabled"] is not True:
+        raise ValueError("an explicit supervision section must set enabled=true")
+    if section["protocol_version"] != SPRING_SUPERVISION_PROTOCOL:
+        raise ValueError("unsupported supervision protocol_version")
+    if (
+        section["target_type"] != SPRING_GT_TARGET_TYPE
+        or section["teacher_cache_component"] != SPRING_GT_COMPONENT
+        or section["paper_ground_truth"] is not True
+        or section["synthetic_ground_truth"] is not True
+    ):
+        raise ValueError("Spring supervision identity differs")
+    return SupervisionTarget(
+        target_type=SPRING_GT_TARGET_TYPE,
+        cache_component=SPRING_GT_COMPONENT,
+        paper_ground_truth=True,
+        synthetic_ground_truth=True,
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -449,12 +494,8 @@ def measurement_ownership_v3_1_from_config(
             )
         return float(value)
 
-    minimum = finite(
-        "minimum_subpixel_residual_hr_px", minimum=0.0, strict=False
-    )
-    maximum = finite(
-        "maximum_subpixel_residual_hr_px", minimum=0.0, strict=False
-    )
+    minimum = finite("minimum_subpixel_residual_hr_px", minimum=0.0, strict=False)
+    maximum = finite("maximum_subpixel_residual_hr_px", minimum=0.0, strict=False)
     if maximum < minimum:
         raise ValueError(
             "measurement_ownership_v3_1 maximum residual must be >= minimum"
@@ -523,9 +564,7 @@ def temporal_candidate_fusion_v3_1_from_config(
         per_age_quota=per_age_quota,
         surface_depth_gap_m=positive("surface_depth_gap_m"),
         surface_relative_depth_gap=positive("surface_relative_depth_gap"),
-        phase_redundancy_sigma_grid_px=positive(
-            "phase_redundancy_sigma_grid_px"
-        ),
+        phase_redundancy_sigma_grid_px=positive("phase_redundancy_sigma_grid_px"),
         phase_redundancy_penalty=float(phase_penalty),
     )
 
@@ -638,9 +677,7 @@ def temporal_history_v2_from_config(
         source_collision_penalty=float(collision_penalty),
         candidate_feature_channels=candidate_channels,
         collision_depth_gap_m=positive_float("collision_depth_gap_m"),
-        collision_relative_depth_gap=positive_float(
-            "collision_relative_depth_gap"
-        ),
+        collision_relative_depth_gap=positive_float("collision_relative_depth_gap"),
     )
 
 
@@ -749,23 +786,21 @@ def convex_initialization_from_config(
         return "uniform"
     value = model.get("convex_initialization")
     alias = model.get("convex_init")
-    if value is not None and alias is not None and str(value).strip().lower() != str(alias).strip().lower():
-        raise ValueError(
-            "model.convex_initialization and model.convex_init disagree"
-        )
+    if (
+        value is not None
+        and alias is not None
+        and str(value).strip().lower() != str(alias).strip().lower()
+    ):
+        raise ValueError("model.convex_initialization and model.convex_init disagree")
     if value is None:
         value = alias
     if value is None:
         return "uniform"
     if not isinstance(value, str):
-        raise ValueError(
-            "model.convex_initialization must be 'uniform' or 'bilinear'"
-        )
+        raise ValueError("model.convex_initialization must be 'uniform' or 'bilinear'")
     normalized = value.strip().lower()
     if normalized not in {"uniform", "bilinear"}:
-        raise ValueError(
-            "model.convex_initialization must be 'uniform' or 'bilinear'"
-        )
+        raise ValueError("model.convex_initialization must be 'uniform' or 'bilinear'")
     return normalized
 
 
@@ -810,7 +845,9 @@ def positivity_ablation_from_config(
         or raw_weight < 0
         or (lr_weight == 0 and raw_weight == 0)
     ):
-        raise ValueError("D-025 negative-penalty weights must be finite and at least one positive")
+        raise ValueError(
+            "D-025 negative-penalty weights must be finite and at least one positive"
+        )
     return PositivityAblation(
         enabled=True,
         sanitize_invalid_sources=True,
@@ -887,12 +924,18 @@ def _load_yaml_with_defaults(path: Path, seen: set[Path] | None = None) -> DictC
     candidate = Path(str(inherited_path)).expanduser()
     if not candidate.is_absolute():
         project_candidate = PROJECT_ROOT / candidate
-        candidate = project_candidate if project_candidate.exists() else resolved_path.parent / candidate
+        candidate = (
+            project_candidate
+            if project_candidate.exists()
+            else resolved_path.parent / candidate
+        )
     inherited = _load_yaml_with_defaults(candidate, seen)
     return OmegaConf.merge(inherited, loaded)
 
 
-def resolve_config(config_path: str | Path, overrides: Sequence[str] = ()) -> DictConfig:
+def resolve_config(
+    config_path: str | Path, overrides: Sequence[str] = ()
+) -> DictConfig:
     """Merge checked defaults, YAML inheritance, and struct-checked dotlist values."""
 
     defaults = OmegaConf.create(DEFAULT_CONFIG)
@@ -936,6 +979,7 @@ def loss_weights_from_config(config: Mapping[str, Any] | DictConfig) -> LossWeig
 
 
 def _validate_common_training_config(config: DictConfig, *, total_steps: int) -> None:
+    supervision_target_from_config(config)
     temporal_pose_source_from_config(config)
     physical_v2 = physical_output_v2_from_config(config)
     temporal_history = temporal_history_v2_from_config(config)
@@ -955,15 +999,21 @@ def _validate_common_training_config(config: DictConfig, *, total_steps: int) ->
     derived_contract = str(config.data.derived_contract)
     if calibration_v3.enabled:
         if not physical_v2.enabled or not temporal_history.enabled:
-            raise ValueError("calibration v3 must extend the complete architecture-v2 lineage")
+            raise ValueError(
+                "calibration v3 must extend the complete architecture-v2 lineage"
+            )
         if derived_contract != "calibrated_stereo_v2":
-            raise ValueError("calibration v3 requires data.derived_contract=calibrated_stereo_v2")
+            raise ValueError(
+                "calibration v3 requires data.derived_contract=calibrated_stereo_v2"
+            )
         sidecar = config.data.calibration_sidecar_path
         if sidecar is None or not str(sidecar).strip():
             raise ValueError("calibration v3 requires data.calibration_sidecar_path")
     else:
         if derived_contract != "legacy_v1":
-            raise ValueError("legacy/v2 configs require data.derived_contract=legacy_v1")
+            raise ValueError(
+                "legacy/v2 configs require data.derived_contract=legacy_v1"
+            )
     if measurement_v31.enabled:
         if not physical_v2.enabled or not calibration_v3.enabled:
             raise ValueError(
@@ -990,9 +1040,7 @@ def _validate_common_training_config(config: DictConfig, *, total_steps: int) ->
                 "temporal candidate fusion v3.1 requires top_k>=4 and two ages"
             )
         if candidate_v31.per_age_quota > temporal_history.top_k // 2:
-            raise ValueError(
-                "v3.1 per-age quota must not exceed floor(top_k/2)"
-            )
+            raise ValueError("v3.1 per-age quota must not exceed floor(top_k/2)")
     if int(config.data.scale) != 2 or int(config.model.convex_scale) != 2:
         raise ValueError("the first-round training pipeline is fixed to x2")
     if list(config.model.rgb_channels) != [32, 64, 96]:
@@ -1015,17 +1063,20 @@ def _validate_common_training_config(config: DictConfig, *, total_steps: int) ->
     _positive_int(config.train.checkpoint_interval, "checkpoint_interval")
     _positive_int(config.train.log_interval, "log_interval")
     _nonnegative_int(config.train.num_workers, "num_workers")
-    if not math.isfinite(float(config.train.learning_rate)) or float(
-        config.train.learning_rate
-    ) <= 0:
+    if (
+        not math.isfinite(float(config.train.learning_rate))
+        or float(config.train.learning_rate) <= 0
+    ):
         raise ValueError("learning_rate must be finite and positive")
-    if not math.isfinite(float(config.train.weight_decay)) or float(
-        config.train.weight_decay
-    ) < 0:
+    if (
+        not math.isfinite(float(config.train.weight_decay))
+        or float(config.train.weight_decay) < 0
+    ):
         raise ValueError("weight_decay must be finite and non-negative")
-    if not math.isfinite(float(config.train.gradient_clip)) or float(
-        config.train.gradient_clip
-    ) <= 0:
+    if (
+        not math.isfinite(float(config.train.gradient_clip))
+        or float(config.train.gradient_clip) <= 0
+    ):
         raise ValueError("gradient_clip must be finite and positive")
     crop = list(config.data.hr_crop)
     if len(crop) != 2 or any(
@@ -1049,7 +1100,9 @@ def validate_stage_a_config(config: DictConfig) -> None:
     if int(config.data.sequence_length) != 1:
         raise ValueError("Stage A is T=1: data.sequence_length must equal 1")
     if positivity_ablation_from_config(config).enabled:
-        raise ValueError("D-025 positivity ablation is restricted to a separate Stage-B run")
+        raise ValueError(
+            "D-025 positivity ablation is restricted to a separate Stage-B run"
+        )
     _validate_common_training_config(
         config, total_steps=int(config.train.steps_spatial)
     )
@@ -1069,8 +1122,7 @@ def validate_stage_b_config(config: DictConfig) -> None:
     pose_source = temporal_pose_source_from_config(config)
     if pose_source == "vggt" and not bool(config.model.use_vggt_pose):
         raise ValueError(
-            "Stage B with temporal_pose_source='vggt' requires "
-            "model.use_vggt_pose"
+            "Stage B with temporal_pose_source='vggt' requires " "model.use_vggt_pose"
         )
     if bool(config.model.epipolar_refinement):
         raise ValueError("HR epipolar refinement belongs to Stage C")
@@ -1160,7 +1212,9 @@ class DeterministicEpochSampler(Sampler[int]):
         return self.dataset_size
 
 
-def _identity_from_mapping(value: Mapping[str, Any], receipt_path: Path) -> CacheIdentity:
+def _identity_from_mapping(
+    value: Mapping[str, Any], receipt_path: Path
+) -> CacheIdentity:
     expected_fields = {
         "component",
         "upstream_commit",
@@ -1227,7 +1281,10 @@ def load_receipt_identity(
     selected = receipt.get("selected_records")
     written = receipt.get("written_records")
     reused = receipt.get("reused_records")
-    if any(isinstance(value, bool) or not isinstance(value, int) or value < 0 for value in (selected, written, reused)):
+    if any(
+        isinstance(value, bool) or not isinstance(value, int) or value < 0
+        for value in (selected, written, reused)
+    ):
         raise ValueError(f"cache receipt record counts are malformed: {receipt_path}")
     if selected != written + reused:
         raise ValueError(f"cache receipt record counts are incomplete: {receipt_path}")
@@ -1238,6 +1295,52 @@ def load_receipt_identity(
             f"{len(manifest_records)}: {receipt_path}"
         )
     return identity
+
+
+def load_cache_inventory_lineage(
+    cache_root: str | Path,
+    *,
+    expected_identity: CacheIdentity,
+    manifest_path: str | Path,
+) -> dict[str, Any]:
+    """Bind a cache identity to its canonical receipt and hashed inventory."""
+
+    root = Path(cache_root).expanduser().resolve()
+    receipt_path = root / "run_receipt.json"
+    try:
+        receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ValueError(f"cannot read cache receipt {receipt_path}: {exc}") from exc
+    if not isinstance(receipt, Mapping) or receipt.get("schema_version") != 1:
+        raise ValueError(f"unsupported cache receipt schema: {receipt_path}")
+    if receipt.get("identity") != expected_identity.to_dict():
+        raise ValueError(f"cache receipt identity differs: {receipt_path}")
+    manifest = Path(manifest_path).expanduser().resolve()
+    manifest_sha256 = sha256_file(manifest)
+    if (
+        Path(str(receipt.get("manifest", ""))).expanduser().resolve() != manifest
+        or receipt.get("manifest_sha256") != manifest_sha256
+    ):
+        raise ValueError(f"cache receipt manifest lineage differs: {receipt_path}")
+    inventory_path = root / "cache_manifest.jsonl"
+    if Path(
+        str(receipt.get("cache_manifest", ""))
+    ).expanduser().resolve() != inventory_path or receipt.get(
+        "cache_manifest_sha256"
+    ) != sha256_file(
+        inventory_path
+    ):
+        raise ValueError(f"cache receipt inventory lineage differs: {receipt_path}")
+    return {
+        "root": str(root),
+        "receipt_path": str(receipt_path),
+        "receipt_sha256": sha256_file(receipt_path),
+        "cache_manifest_path": str(inventory_path),
+        "cache_manifest_sha256": sha256_file(inventory_path),
+        "manifest_path": str(manifest),
+        "manifest_sha256": manifest_sha256,
+        "identity": expected_identity.to_dict(),
+    }
 
 
 def _require_explicit_path(config: DictConfig, name: str) -> Path:
@@ -1282,9 +1385,10 @@ def build_dataset_and_identities(
         expected_component="ffs-observation",
         manifest_path=manifest_path,
     )
+    supervision = supervision_target_from_config(config)
     teacher_identity = load_receipt_identity(
         teacher_root,
-        expected_component="ffs-teacher",
+        expected_component=supervision.cache_component,
         manifest_path=manifest_path,
     )
     calibration_index = _calibration_index_from_config(
@@ -1322,9 +1426,10 @@ def build_temporal_dataset_and_identities(
         expected_component="ffs-observation",
         manifest_path=manifest_path,
     )
+    supervision = supervision_target_from_config(config)
     teacher_identity = load_receipt_identity(
         teacher_root,
-        expected_component="ffs-teacher",
+        expected_component=supervision.cache_component,
         manifest_path=manifest_path,
     )
     calibration_index = _calibration_index_from_config(
@@ -1375,9 +1480,7 @@ def build_model(config: DictConfig) -> FFSOmegaTSR:
         physical_valid_threshold=physical_v2.valid_threshold,
         completion_threshold=physical_v2.completion_threshold,
         strict_threshold=physical_v2.strict_threshold,
-        trusted_ffs_confidence_threshold=(
-            physical_v2.trusted_ffs_confidence_threshold
-        ),
+        trusted_ffs_confidence_threshold=(physical_v2.trusted_ffs_confidence_threshold),
         convex_initialization=convex_initialization,
         temporal_history_top_k=(
             temporal_history_v2.top_k if temporal_history_v2.enabled else None
@@ -1399,9 +1502,7 @@ def build_model(config: DictConfig) -> FFSOmegaTSR:
         measurement_maximum_subpixel_residual_hr_px=(
             measurement_v31.maximum_subpixel_residual_hr_px
         ),
-        measurement_boundary_relative_scale=(
-            measurement_v31.boundary_relative_scale
-        ),
+        measurement_boundary_relative_scale=(measurement_v31.boundary_relative_scale),
         current_conditioned_history_v3_1=candidate_v31.enabled,
     )
     parameter_count = count_trainable_parameters(model)
@@ -1426,8 +1527,13 @@ def compute_stage_a_loss(
     target = batch.get("teacher_disparity_hr_px")
     target_confidence = batch.get("teacher_confidence")
     target_trusted = batch.get("teacher_trusted_mask")
-    if not all(isinstance(value, Tensor) for value in (target, target_confidence, target_trusted)):
-        raise ValueError("Stage A requires teacher disparity/confidence/trusted tensors")
+    if not all(
+        isinstance(value, Tensor)
+        for value in (target, target_confidence, target_trusted)
+    ):
+        raise ValueError(
+            "Stage A requires teacher disparity/confidence/trusted tensors"
+        )
     observation_lr_px = batch.get("observation_disparity_lr_px")
     observation_confidence = batch.get("observation_confidence")
     observation_trusted = batch.get("observation_trusted_mask")
@@ -1439,7 +1545,9 @@ def compute_stage_a_loss(
             observation_trusted,
         )
     ):
-        raise ValueError("Stage A requires observation disparity/confidence/trusted tensors")
+        raise ValueError(
+            "Stage A requires observation disparity/confidence/trusted tensors"
+        )
 
     disparity = disparity_loss(
         output.disparity_hr_px,
@@ -1447,9 +1555,7 @@ def compute_stage_a_loss(
         valid_mask=target_trusted,
         weights=target_confidence,
     )
-    gradient = gradient_loss(
-        output.disparity_hr_px, target, valid_mask=target_trusted
-    )
+    gradient = gradient_loss(output.disparity_hr_px, target, valid_mask=target_trusted)
     uncertainty_nll = laplace_uncertainty_nll(
         output.disparity_hr_px,
         target,
@@ -1482,9 +1588,7 @@ def compute_stage_a_loss(
         weights=weights,
     )
     if positivity_ablation.enabled:
-        baseline = _with_positivity_penalty(
-            baseline, output, positivity_ablation
-        )
+        baseline = _with_positivity_penalty(baseline, output, positivity_ablation)
     if physical_output_v2.enabled:
         baseline = _with_physical_output_v2_loss(
             baseline, output, batch, physical_output_v2
@@ -1567,11 +1671,10 @@ def _with_positivity_penalty(
     if pre_lr is None or pre_raw is None:
         raise ValueError("positivity ablation requires pre-lower-bound model taps")
     assert positivity_ablation.lower_bound_hr_px is not None
-    penalty = (
-        positivity_ablation.lr_negative_penalty_weight
-        * lower_bound_penalty(pre_lr, lower_bound_hr_px=positivity_ablation.lower_bound_hr_px)
-        + positivity_ablation.raw_negative_penalty_weight
-        * lower_bound_penalty(pre_raw, lower_bound_hr_px=positivity_ablation.lower_bound_hr_px)
+    penalty = positivity_ablation.lr_negative_penalty_weight * lower_bound_penalty(
+        pre_lr, lower_bound_hr_px=positivity_ablation.lower_bound_hr_px
+    ) + positivity_ablation.raw_negative_penalty_weight * lower_bound_penalty(
+        pre_raw, lower_bound_hr_px=positivity_ablation.lower_bound_hr_px
     )
     return replace(
         baseline,
@@ -1659,9 +1762,10 @@ def _rgb_photometric_residual_from_winners(
 
     height_hr, width_hr = warp.disparity_hr_px.shape[-2:]
     expected_hr = (height_hr, width_hr)
-    if previous_rgb_hr.shape != current_rgb_hr.shape or tuple(
-        previous_rgb_hr.shape[-2:]
-    ) != expected_hr:
+    if (
+        previous_rgb_hr.shape != current_rgb_hr.shape
+        or tuple(previous_rgb_hr.shape[-2:]) != expected_hr
+    ):
         raise ValueError("previous/current RGB must share the x2-aligned HR shape")
     previous_hr = previous_rgb_hr.detach()
     current_hr = current_rgb_hr.detach()
@@ -1771,9 +1875,7 @@ def build_temporal_transport(
         )
     fx_hr = intrinsics_current_hr[:, 0, 0].reshape(batch_size, 1, 1, 1)
     baseline_m = baseline_current_m.reshape(batch_size, 1, 1, 1)
-    valid_previous = (
-        torch.isfinite(previous_disparity_hr) & (previous_disparity_hr > 0)
-    )
+    valid_previous = torch.isfinite(previous_disparity_hr) & (previous_disparity_hr > 0)
     previous_depth_m = torch.where(
         valid_previous,
         fx_hr * baseline_m / previous_disparity_hr.clamp_min(1e-6),
@@ -1873,24 +1975,18 @@ def build_temporal_transport(
         confidence_history=_sample_hr_winner_grid_to_lr(
             confidence_history_hr, scale=scale
         ),
-        visibility_mask=_sample_hr_winner_grid_to_lr(
-            visibility_hr, scale=scale
-        ),
+        visibility_mask=_sample_hr_winner_grid_to_lr(visibility_hr, scale=scale),
         valid_history=_sample_hr_winner_grid_to_lr(
             effective_valid.detach(), scale=scale
         ),
-        collision_mask=_sample_hr_winner_grid_to_lr(
-            collision.detach(), scale=scale
-        ),
+        collision_mask=_sample_hr_winner_grid_to_lr(collision.detach(), scale=scale),
         photometric_residual=_sample_hr_winner_grid_to_lr(
             photometric_residual.detach(), scale=scale
         ),
         fractional_offset_px=_sample_hr_winner_grid_to_lr(
             fractional_offset_hr, scale=scale
         ),
-        static_mask=_sample_hr_winner_grid_to_lr(
-            static_mask.detach(), scale=scale
-        ),
+        static_mask=_sample_hr_winner_grid_to_lr(static_mask.detach(), scale=scale),
         geometry_consistent_mask=_sample_hr_winner_grid_to_lr(
             geometry_consistent.detach(), scale=scale
         ),
@@ -1945,9 +2041,10 @@ def validate_v2_temporal_calibration(
 ) -> None:
     """Validate explicit per-time source/target calibration for causal V2."""
 
-    if (
-        intrinsics_hr_sequence.ndim != 4
-        or intrinsics_hr_sequence.shape[1:] != (3, 3, 3)
+    if intrinsics_hr_sequence.ndim != 4 or intrinsics_hr_sequence.shape[1:] != (
+        3,
+        3,
+        3,
     ):
         raise ValueError("K_hr_sequence must have shape [B,3,3,3]")
     if baseline_m_sequence.shape != (intrinsics_hr_sequence.shape[0], 3):
@@ -1958,7 +2055,9 @@ def validate_v2_temporal_calibration(
         (
             (intrinsics_hr_sequence[:, :, 0, 0] > 0)
             & (intrinsics_hr_sequence[:, :, 1, 1] > 0)
-        ).all().item()
+        )
+        .all()
+        .item()
     ):
         raise ValueError("K_hr_sequence focal lengths must be positive")
     expected_last_row = intrinsics_hr_sequence.new_tensor((0.0, 0.0, 1.0))
@@ -1970,7 +2069,9 @@ def validate_v2_temporal_calibration(
             ),
             atol=1e-6,
             rtol=0.0,
-        ).all().item()
+        )
+        .all()
+        .item()
     ):
         raise ValueError("every K_hr_sequence matrix must end with [0,0,1]")
     if not bool(torch.isfinite(baseline_m_sequence).all().item()) or not bool(
@@ -2018,7 +2119,11 @@ def _vggt_pose_pair_for_age(
         or temporal_extrinsics_camera_from_world.shape[1:] != (10, 3, 4)
     ):
         raise ValueError("temporal extrinsics must have shape [B,10,3,4]")
-    if isinstance(age_frames, bool) or not isinstance(age_frames, int) or not 1 <= age_frames <= 4:
+    if (
+        isinstance(age_frames, bool)
+        or not isinstance(age_frames, int)
+        or not 1 <= age_frames <= 4
+    ):
         raise ValueError("age_frames must be an integer in [1,4]")
     batch_size = temporal_extrinsics_camera_from_world.shape[0]
     pose_valid = temporal_pose_valid.reshape(-1).to(dtype=torch.bool)
@@ -2128,8 +2233,10 @@ def _topk_photometric_residual(
     warped_rgb = result.weighted_hidden_feature
     if warped_rgb is None or warped_rgb.shape != current_rgb_hr.shape:
         raise ValueError("HR top-K transport must carry a warped RGB feature")
-    residual = (warped_rgb.detach().float() - current_rgb_hr.detach().float()).abs().mean(
-        dim=1, keepdim=True
+    residual = (
+        (warped_rgb.detach().float() - current_rgb_hr.detach().float())
+        .abs()
+        .mean(dim=1, keepdim=True)
     )
     return torch.where(
         valid_mask,
@@ -2188,9 +2295,7 @@ def _topk_context_prior_weights(
     if compute_dtype in {torch.float16, torch.bfloat16}:
         compute_dtype = torch.float32
     nearest = result.depth_m[:, :1].to(dtype=compute_dtype)
-    depth_delta = (
-        result.depth_m.to(dtype=compute_dtype) - nearest
-    ).clamp_min(0.0)
+    depth_delta = (result.depth_m.to(dtype=compute_dtype) - nearest).clamp_min(0.0)
     collision_factor = torch.where(
         result.source_collision_mask,
         torch.full_like(
@@ -2211,9 +2316,7 @@ def _topk_context_prior_weights(
         * collision_factor,
         torch.zeros_like(result.confidence, dtype=compute_dtype),
     )
-    unnormalized = torch.nan_to_num(
-        unnormalized, nan=0.0, posinf=0.0, neginf=0.0
-    )
+    unnormalized = torch.nan_to_num(unnormalized, nan=0.0, posinf=0.0, neginf=0.0)
     denominator = unnormalized.sum(dim=1, keepdim=True)
     return torch.where(
         denominator > 0,
@@ -2251,9 +2354,7 @@ def _topk_quality_masks(
         result.weighted_confidence,
         torch.zeros_like(result.weighted_confidence),
     )
-    photometric = _topk_photometric_residual(
-        result, current_rgb_hr, visibility
-    )
+    photometric = _topk_photometric_residual(result, current_rgb_hr, visibility)
     current_ffs_disparity_hr = functional.interpolate(
         current_ffs_disparity_hr_px,
         size=warped_disparity.shape[-2:],
@@ -2360,12 +2461,12 @@ def build_topk_temporal_transport(
         if (
             not isinstance(temporal_pose_quality_score, Tensor)
             or not temporal_pose_quality_score.is_floating_point()
-            or temporal_pose_quality_score.shape not in {
+            or temporal_pose_quality_score.shape
+            not in {
                 (batch_size,),
                 (batch_size, 1),
             }
-            or temporal_pose_quality_score.device
-            != current_ffs_disparity_hr_px.device
+            or temporal_pose_quality_score.device != current_ffs_disparity_hr_px.device
         ):
             raise ValueError(
                 "v3.1 temporal_pose_quality_score must be floating [B] on "
@@ -2392,9 +2493,7 @@ def build_topk_temporal_transport(
     intrinsics_current_lr = _lr_intrinsics_from_hr(
         intrinsics_current_hr,
         scale=scale,
-        align_corners_false_pixel_centers=(
-            align_corners_false_pixel_centers
-        ),
+        align_corners_false_pixel_centers=(align_corners_false_pixel_centers),
     )
     hr_results: list[TopKSplatResult] = []
     lr_hidden_results: list[TopKSplatResult] = []
@@ -2404,19 +2503,13 @@ def build_topk_temporal_transport(
 
     for entry, age in zip(selected, ages, strict=True):
         if entry.intrinsics_hr.shape != (batch_size, 3, 3):
-            raise ValueError(
-                "temporal memory intrinsics_hr must have shape [B,3,3]"
-            )
+            raise ValueError("temporal memory intrinsics_hr must have shape [B,3,3]")
         if entry.baseline_m.shape not in {(batch_size,), (batch_size, 1)}:
-            raise ValueError(
-                "temporal memory baseline_m must have shape [B] or [B,1]"
-            )
+            raise ValueError("temporal memory baseline_m must have shape [B] or [B,1]")
         intrinsics_previous_lr = _lr_intrinsics_from_hr(
             entry.intrinsics_hr,
             scale=scale,
-            align_corners_false_pixel_centers=(
-                align_corners_false_pixel_centers
-            ),
+            align_corners_false_pixel_centers=(align_corners_false_pixel_centers),
         )
         previous_pose, current_pose, pose_valid = _vggt_pose_pair_for_age(
             temporal_extrinsics_camera_from_world,
@@ -2427,8 +2520,8 @@ def build_topk_temporal_transport(
         previous_confidence_hr = torch.exp(
             -0.5 * entry.output.log_variance.detach()
         ).clamp(0.0, 1.0)
-        previous_valid_hr = (
-            torch.isfinite(previous_disparity_hr) & (previous_disparity_hr > 0)
+        previous_valid_hr = torch.isfinite(previous_disparity_hr) & (
+            previous_disparity_hr > 0
         )
         if entry.output.output_valid_mask is not None:
             previous_valid_hr &= entry.output.output_valid_mask.detach()
@@ -2468,9 +2561,7 @@ def build_topk_temporal_transport(
         # selector into the recurrent state.
         if age == 1 or align_corners_false_pixel_centers:
             if not entry.output.hidden_state:
-                raise ValueError(
-                    "top-K hidden warp requires a non-empty ConvGRU state"
-                )
+                raise ValueError("top-K hidden warp requires a non-empty ConvGRU state")
             if age == 1:
                 hidden_widths = tuple(
                     int(state.shape[1]) for state in entry.output.hidden_state
@@ -2483,23 +2574,17 @@ def build_topk_temporal_transport(
             previous_disparity_lr = _sample_hr_winner_grid_to_lr(
                 previous_disparity_hr,
                 scale=scale,
-                align_corners_false_pixel_centers=(
-                    align_corners_false_pixel_centers
-                ),
+                align_corners_false_pixel_centers=(align_corners_false_pixel_centers),
             )
             previous_confidence_lr = _sample_hr_winner_grid_to_lr(
                 previous_confidence_hr,
                 scale=scale,
-                align_corners_false_pixel_centers=(
-                    align_corners_false_pixel_centers
-                ),
+                align_corners_false_pixel_centers=(align_corners_false_pixel_centers),
             )
             previous_valid_lr = _sample_hr_winner_grid_to_lr(
                 previous_valid_hr,
                 scale=scale,
-                align_corners_false_pixel_centers=(
-                    align_corners_false_pixel_centers
-                ),
+                align_corners_false_pixel_centers=(align_corners_false_pixel_centers),
             )
             lr_result = _topk_splat_for_memory(
                 disparity_hr_px=previous_disparity_lr,
@@ -2629,14 +2714,10 @@ def build_topk_temporal_transport(
         return _sample_hr_winner_grid_to_lr(
             value,
             scale=scale,
-            align_corners_false_pixel_centers=(
-                align_corners_false_pixel_centers
-            ),
+            align_corners_false_pixel_centers=(align_corners_false_pixel_centers),
         )
 
-    effective_valid_lr = sample_hr_to_lr(
-        effective_valid_hr
-    )
+    effective_valid_lr = sample_hr_to_lr(effective_valid_hr)
     merged_hidden = merged_lr_hidden.weighted_hidden_feature
     if merged_hidden is None:
         raise RuntimeError("LR top-K transport did not return a hidden feature")
@@ -2689,9 +2770,7 @@ def build_topk_temporal_transport(
         candidate_weights_lr = (
             torch.where(
                 candidate_valid_lr,
-                _topk_context_prior_weights(
-                    merged_lr_candidates, contract
-                ),
+                _topk_context_prior_weights(merged_lr_candidates, contract),
                 torch.zeros_like(merged_lr_candidates.z_aware_weights),
             )
             if candidate_contract.enabled
@@ -2734,16 +2813,11 @@ def build_topk_temporal_transport(
                 ("warped_hidden_feature", merged_lr_candidates.warped_hidden_feature),
             ):
                 if value is None:
-                    raise RuntimeError(
-                        f"v3.1 candidate merge did not populate {name}"
-                    )
+                    raise RuntimeError(f"v3.1 candidate merge did not populate {name}")
             assert merged_lr_candidates.front_surface_mask is not None
             assert merged_lr_candidates.context_only_mask is not None
             assert merged_lr_candidates.depth_layer_index is not None
-            assert (
-                merged_lr_candidates.age2_depth_consistent_available_mask
-                is not None
-            )
+            assert merged_lr_candidates.age2_depth_consistent_available_mask is not None
             assert merged_lr_candidates.warped_hidden_feature is not None
             topk_depth_lr = torch.where(
                 candidate_valid_lr,
@@ -2751,11 +2825,10 @@ def build_topk_temporal_transport(
                 torch.zeros_like(merged_lr_candidates.depth_m),
             )
             assert quality_score is not None
-            topk_pose_quality_lr = (
-                quality_score.to(dtype=topk_depth_lr.dtype)
-                .reshape(batch_size, 1, 1, 1)
-                .expand_as(topk_depth_lr)
-                * candidate_valid_lr.to(dtype=topk_depth_lr.dtype)
+            topk_pose_quality_lr = quality_score.to(dtype=topk_depth_lr.dtype).reshape(
+                batch_size, 1, 1, 1
+            ).expand_as(topk_depth_lr) * candidate_valid_lr.to(
+                dtype=topk_depth_lr.dtype
             )
             topk_depth_layer_lr = torch.where(
                 candidate_valid_lr,
@@ -2763,12 +2836,10 @@ def build_topk_temporal_transport(
                 torch.full_like(merged_lr_candidates.depth_layer_index, -1),
             )
             topk_front_surface_lr = (
-                candidate_valid_lr
-                & merged_lr_candidates.front_surface_mask
+                candidate_valid_lr & merged_lr_candidates.front_surface_mask
             )
             topk_context_only_lr = (
-                candidate_valid_lr
-                & merged_lr_candidates.context_only_mask
+                candidate_valid_lr & merged_lr_candidates.context_only_mask
             )
             topk_age2_available_lr = (
                 merged_lr_candidates.age2_depth_consistent_available_mask
@@ -2810,14 +2881,11 @@ def build_topk_temporal_transport(
                 torch.zeros_like(merged_hr.confidence),
             )
         )
-        topk_fractional_lr = (
-            torch.where(
-                candidate_valid_hr.unsqueeze(2),
-                merged_hr.fractional_offset_grid_px,
-                torch.zeros_like(merged_hr.fractional_offset_grid_px),
-            )[..., ::scale, ::scale]
-            .contiguous()
-        )
+        topk_fractional_lr = torch.where(
+            candidate_valid_hr.unsqueeze(2),
+            merged_hr.fractional_offset_grid_px,
+            torch.zeros_like(merged_hr.fractional_offset_grid_px),
+        )[..., ::scale, ::scale].contiguous()
         topk_age_lr = sample_hr_to_lr(
             torch.where(
                 candidate_valid_hr,
@@ -2834,9 +2902,7 @@ def build_topk_temporal_transport(
         photometric_residual=sample_hr_to_lr(photometric_hr.detach()),
         fractional_offset_px=fractional_offset_lr.detach(),
         static_mask=sample_hr_to_lr(static_hr.detach()),
-        geometry_consistent_mask=sample_hr_to_lr(
-            geometry_consistent_hr.detach()
-        ),
+        geometry_consistent_mask=sample_hr_to_lr(geometry_consistent_hr.detach()),
         disparity_history_loss_hr_px=loss_disparity_hr,
         confidence_history_hr=loss_confidence_hr.detach(),
         visibility_mask_hr=loss_visibility_hr.detach(),
@@ -2851,9 +2917,7 @@ def build_topk_temporal_transport(
         topk_temporal_age_frames=topk_age_lr.detach(),
         topk_z_aware_weights=candidate_weights_lr.detach(),
         topk_metric_prior_weights=(
-            None
-            if topk_metric_prior_lr is None
-            else topk_metric_prior_lr.detach()
+            None if topk_metric_prior_lr is None else topk_metric_prior_lr.detach()
         ),
         topk_valid_mask=candidate_valid_lr.detach(),
         topk_depth_m=(None if topk_depth_lr is None else topk_depth_lr.detach()),
@@ -2945,10 +3009,10 @@ def build_reference_temporal_warp(
         prediction_candidate = prediction_flat[source_index]
         previous_reference_candidate = reference_flat[source_index]
         ratio = torch.where(
-            result.valid_mask & torch.isfinite(previous_reference_candidate)
+            result.valid_mask
+            & torch.isfinite(previous_reference_candidate)
             & (previous_reference_candidate > 0),
-            result.disparity_hr_px
-            / previous_reference_candidate.clamp_min(1e-6),
+            result.disparity_hr_px / previous_reference_candidate.clamp_min(1e-6),
             torch.zeros_like(result.disparity_hr_px),
         )
         transported_prediction_candidates = torch.where(
@@ -3035,9 +3099,7 @@ def compute_stage_b_step_loss(
             max_photometric_residual=max_photometric_residual,
             geometry_consistent_mask=transport.geometry_consistent_mask_hr,
             current_reference_valid_mask=current_reference_valid,
-            warped_previous_reference_valid_mask=(
-                reference_transport.valid_mask_hr
-            ),
+            warped_previous_reference_valid_mask=(reference_transport.valid_mask_hr),
             history_confidence=transport.confidence_history_hr,
         )
     else:
@@ -3082,8 +3144,7 @@ def compute_stage_b_step_loss(
         extra_total = extra_total + (
             physical_output_v2.valid_bce_weight * spatial.valid_bce
             + physical_output_v2.completion_bce_weight * spatial.completion_bce
-            + physical_output_v2.calibration_weight
-            * spatial.validity_calibration
+            + physical_output_v2.calibration_weight * spatial.validity_calibration
         )
     return replace(
         baseline,
@@ -3113,6 +3174,7 @@ def average_loss_breakdowns(
         return torch.stack(
             [value for value in optional_values if value is not None]
         ).mean()
+
     return LossBreakdown(
         total=mean("total"),
         disparity=mean("disparity"),
@@ -3129,9 +3191,15 @@ def average_loss_breakdowns(
     )
 
 
-def _move_training_batch(batch: Mapping[str, Any], device: torch.device) -> dict[str, Any]:
+def _move_training_batch(
+    batch: Mapping[str, Any], device: torch.device
+) -> dict[str, Any]:
     return {
-        key: value.to(device=device, non_blocking=True) if isinstance(value, Tensor) else value
+        key: (
+            value.to(device=device, non_blocking=True)
+            if isinstance(value, Tensor)
+            else value
+        )
         for key, value in batch.items()
     }
 
@@ -3165,7 +3233,9 @@ def _reset_hidden_where_pose_invalid(
     if hidden_state is None:
         return None
     selector = pose_valid.reshape(-1, 1, 1, 1).to(dtype=torch.bool)
-    return tuple(torch.where(selector, state, torch.zeros_like(state)) for state in hidden_state)
+    return tuple(
+        torch.where(selector, state, torch.zeros_like(state)) for state in hidden_state
+    )
 
 
 def calibration_model_kwargs_spatial(
@@ -3195,9 +3265,12 @@ def calibration_model_kwargs_spatial(
         if not isinstance(reference, Tensor):
             raise ValueError("calibration v3 spatial batch lacks rgb_hr")
         batch_size = reference.shape[0]
-        identity = torch.eye(
-            4, device=reference.device, dtype=torch.float32
-        ).reshape(1, 1, 4, 4).expand(batch_size, 2, -1, -1).clone()
+        identity = (
+            torch.eye(4, device=reference.device, dtype=torch.float32)
+            .reshape(1, 1, 4, 4)
+            .expand(batch_size, 2, -1, -1)
+            .clone()
+        )
         result["T_current_from_history_m"] = identity
         result["temporal_pose_valid"] = torch.zeros(
             batch_size, 2, device=reference.device, dtype=torch.bool
@@ -3223,7 +3296,9 @@ def calibration_model_kwargs_temporal(
         "T_right_rectified_from_left_rectified_m": (
             None
             if batch.get("T_right_rectified_from_left_rectified_m_sequence") is None
-            else batch["T_right_rectified_from_left_rectified_m_sequence"][:, time_index]
+            else batch["T_right_rectified_from_left_rectified_m_sequence"][
+                :, time_index
+            ]
         ),
     }
     result = calibration_model_kwargs_spatial(spatial_view, contract)
@@ -3325,13 +3400,9 @@ def _forward_temporal_loss(
                 )
                 hidden_state = transport.warped_hidden_state
                 previous_teacher = batch.get("teacher_disparity_hr_px_sequence")
-                previous_teacher_confidence = batch.get(
-                    "teacher_confidence_sequence"
-                )
+                previous_teacher_confidence = batch.get("teacher_confidence_sequence")
                 previous_teacher_valid = batch.get("teacher_valid_mask_sequence")
-                previous_teacher_trusted = batch.get(
-                    "teacher_trusted_mask_sequence"
-                )
+                previous_teacher_trusted = batch.get("teacher_trusted_mask_sequence")
                 if not all(
                     isinstance(value, Tensor)
                     for value in (
@@ -3355,7 +3426,9 @@ def _forward_temporal_loss(
                         previous_teacher_valid[:, time_index - 1]
                         & previous_teacher_trusted[:, time_index - 1]
                     ),
-                    previous_prediction_disparity_hr_px=memory[-1].output.disparity_hr_px,
+                    previous_prediction_disparity_hr_px=memory[
+                        -1
+                    ].output.disparity_hr_px,
                     intrinsics_previous_hr=memory[-1].intrinsics_hr,
                     baseline_previous_m=memory[-1].baseline_m,
                     intrinsics_current_hr=batch["K_hr_sequence"][:, time_index],
@@ -3368,7 +3441,9 @@ def _forward_temporal_loss(
                 )
             else:
                 assert previous_output is not None and previous_rgb_hr is not None
-                hidden_state = _reset_hidden_where_pose_invalid(hidden_state, pose_valid)
+                hidden_state = _reset_hidden_where_pose_invalid(
+                    hidden_state, pose_valid
+                )
                 transport = build_temporal_transport(
                     previous_output=previous_output,
                     previous_rgb_hr=previous_rgb_hr,
@@ -3397,9 +3472,9 @@ def _forward_temporal_loss(
         static_prior = batch["static_prior_valid_sequence"][:, time_index]
         use_vggt_depth = bool(config.model.get("use_vggt_depth", True))
         if use_vggt_depth:
-            valid_vggt = batch["valid_vggt_sequence"][:, time_index] & static_prior.reshape(
-                -1, 1, 1, 1
-            )
+            valid_vggt = batch["valid_vggt_sequence"][
+                :, time_index
+            ] & static_prior.reshape(-1, 1, 1, 1)
             vggt_disparity = batch["disparity_vggt_hr_px_sequence"][:, time_index]
             vggt_confidence = batch["confidence_vggt_sequence"][:, time_index]
         else:
@@ -3453,7 +3528,9 @@ def _forward_temporal_loss(
                     transport.topk_valid_mask,
                 )
                 if any(value is None for value in topk_values):
-                    raise RuntimeError("V2 transport did not populate top-K model inputs")
+                    raise RuntimeError(
+                        "V2 transport did not populate top-K model inputs"
+                    )
                 model_kwargs.update(
                     {
                         "history_topk_disparity_hr_px": topk_values[0],
@@ -3649,6 +3726,7 @@ def build_run_summary(
     if not checkpoint_path.is_file():
         raise FileNotFoundError(f"final checkpoint is missing: {checkpoint_path}")
     canonical_config = config_fingerprint(resolved_config)
+    supervision = supervision_target_from_config(resolved_config)
     is_cuda = device.type == "cuda"
     return {
         "stage": stage,
@@ -3664,6 +3742,12 @@ def build_run_summary(
             None if torch.version.cuda is None else str(torch.version.cuda)
         ),
         "git_hash": str(git_hash),
+        "target": {
+            "type": supervision.target_type,
+            "cache_component": supervision.cache_component,
+            "paper_ground_truth": supervision.paper_ground_truth,
+            "synthetic_ground_truth": supervision.synthetic_ground_truth,
+        },
         "config_fingerprint": hashlib.sha256(
             canonical_config.encode("utf-8")
         ).hexdigest(),
@@ -3715,7 +3799,9 @@ def _populate_temporal_initialization_config(
         path = args.init_from.expanduser().resolve()
         if not path.is_file():
             raise FileNotFoundError(f"initialization checkpoint is missing: {path}")
-        OmegaConf.update(config, "train.initialization_checkpoint", str(path), merge=False)
+        OmegaConf.update(
+            config, "train.initialization_checkpoint", str(path), merge=False
+        )
         OmegaConf.update(
             config,
             "train.initialization_checkpoint_sha256",
@@ -3728,7 +3814,9 @@ def _populate_temporal_initialization_config(
     resume_path = args.resume.expanduser().resolve()
     payload = torch.load(resume_path, map_location="cpu", weights_only=False)
     saved_config = payload.get("config") if isinstance(payload, Mapping) else None
-    saved_train = saved_config.get("train") if isinstance(saved_config, Mapping) else None
+    saved_train = (
+        saved_config.get("train") if isinstance(saved_config, Mapping) else None
+    )
     if not isinstance(saved_train, Mapping):
         raise ValueError("resume checkpoint has no temporal training config")
     initialization_path = saved_train.get("initialization_checkpoint")
@@ -3762,7 +3850,9 @@ def run(args: argparse.Namespace) -> int:
     }
     for key, value in cli_values.items():
         if value is not None:
-            OmegaConf.update(config, key, str(value.expanduser().resolve()), merge=False)
+            OmegaConf.update(
+                config, key, str(value.expanduser().resolve()), merge=False
+            )
     stage = training_stage(config)
     initialization_path: Path | None = None
     if stage == "temporal":
@@ -3770,6 +3860,7 @@ def run(args: argparse.Namespace) -> int:
     elif args.init_from is not None or args.derived_cache_root is not None:
         raise ValueError("--init-from and --derived-cache-root are Stage-B-only")
     validate_training_config(config)
+    supervision = supervision_target_from_config(config)
     seed_everything(int(config.seed), deterministic=True)
 
     if stage == "spatial":
@@ -3786,9 +3877,11 @@ def run(args: argparse.Namespace) -> int:
         collate_function = collate_temporal_training_samples
         total_steps = int(config.train.steps)
         derived_cache_lineage = dataset.cache_lineage_summary
-    calibration_index = dataset.spatial_dataset.rectified_calibration_index if isinstance(
-        dataset, CachedTemporalTrainingDataset
-    ) else dataset.rectified_calibration_index
+    calibration_index = (
+        dataset.spatial_dataset.rectified_calibration_index
+        if isinstance(dataset, CachedTemporalTrainingDataset)
+        else dataset.rectified_calibration_index
+    )
     calibration_sidecar_lineage = (
         None
         if calibration_index is None
@@ -3803,6 +3896,29 @@ def run(args: argparse.Namespace) -> int:
             "pixel_audit_sha256": calibration_index.pixel_audit_sha256,
         }
     )
+    require_cache_inventory_lineage = config.data.get(
+        "require_cache_inventory_lineage", False
+    )
+    if not isinstance(require_cache_inventory_lineage, bool):
+        raise ValueError("data.require_cache_inventory_lineage must be a bool")
+    observation_cache_lineage = (
+        load_cache_inventory_lineage(
+            config.data.observation_cache_root,
+            expected_identity=observation_identity,
+            manifest_path=config.data.manifest_path,
+        )
+        if require_cache_inventory_lineage
+        else None
+    )
+    teacher_cache_lineage = (
+        load_cache_inventory_lineage(
+            config.data.teacher_cache_root,
+            expected_identity=teacher_identity,
+            manifest_path=config.data.manifest_path,
+        )
+        if require_cache_inventory_lineage
+        else None
+    )
     OmegaConf.update(
         config,
         "data.observation_cache_identity",
@@ -3813,6 +3929,18 @@ def run(args: argparse.Namespace) -> int:
         config,
         "data.teacher_cache_identity",
         teacher_identity.to_dict(),
+        merge=False,
+    )
+    OmegaConf.update(
+        config,
+        "data.observation_cache_lineage",
+        observation_cache_lineage,
+        merge=False,
+    )
+    OmegaConf.update(
+        config,
+        "data.teacher_cache_lineage",
+        teacher_cache_lineage,
         merge=False,
     )
     OmegaConf.update(
@@ -3846,7 +3974,9 @@ def run(args: argparse.Namespace) -> int:
     )
     device = _resolve_device(args.device)
     if device.type == "cuda" and not torch.cuda.is_bf16_supported():
-        raise RuntimeError(f"BF16 is unavailable on {torch.cuda.get_device_name(device)}")
+        raise RuntimeError(
+            f"BF16 is unavailable on {torch.cuda.get_device_name(device)}"
+        )
     model = build_model(config).to(device)
     parameter_count = count_trainable_parameters(model)
     calibration_v3 = calibration_conditioning_v3_from_config(config)
@@ -3873,18 +4003,20 @@ def run(args: argparse.Namespace) -> int:
             if calibration_v3.enabled
             else None
         )
-        required_v31_sections = (
-            {
-                "measurement_ownership_v3_1": dict(
-                    config.measurement_ownership_v3_1
-                ),
-                "temporal_candidate_fusion_v3_1": dict(
-                    config.temporal_candidate_fusion_v3_1
-                ),
-            }
-            if calibration_v3.align_corners_false_pixel_centers
-            else None
-        )
+        required_initialization_sections: dict[str, Mapping[str, Any]] = {}
+        if calibration_v3.align_corners_false_pixel_centers:
+            required_initialization_sections.update(
+                {
+                    "measurement_ownership_v3_1": dict(
+                        config.measurement_ownership_v3_1
+                    ),
+                    "temporal_candidate_fusion_v3_1": dict(
+                        config.temporal_candidate_fusion_v3_1
+                    ),
+                }
+            )
+        if config.get("supervision") is not None:
+            required_initialization_sections["supervision"] = dict(config.supervision)
         initialization_lineage = load_model_initialization_checkpoint(
             initialization_path,
             model=model,
@@ -3892,11 +4024,10 @@ def run(args: argparse.Namespace) -> int:
             required_sequence_length=1,
             required_seed=int(config.seed) if calibration_v3.enabled else None,
             required_calibration_conditioning_v3=required_stage_a_v3,
-            required_config_sections=required_v31_sections,
+            required_config_sections=required_initialization_sections or None,
         )
-        if (
-            initialization_lineage["checkpoint_sha256"]
-            != str(config.train.initialization_checkpoint_sha256)
+        if initialization_lineage["checkpoint_sha256"] != str(
+            config.train.initialization_checkpoint_sha256
         ):
             raise ValueError("Stage-A checkpoint changed while the run was being built")
     weights = loss_weights_from_config(config)
@@ -3919,10 +4050,13 @@ def run(args: argparse.Namespace) -> int:
         batch_iterator = _infinite_batches(loader, dataset, sampler)
         model.eval()
         batch = _move_training_batch(next(batch_iterator), device)
-        with torch.no_grad(), torch.autocast(
-            device_type=device.type,
-            dtype=torch.bfloat16,
-            enabled=str(config.train.precision).lower() == "bf16",
+        with (
+            torch.no_grad(),
+            torch.autocast(
+                device_type=device.type,
+                dtype=torch.bfloat16,
+                enabled=str(config.train.precision).lower() == "bf16",
+            ),
         ):
             if stage == "spatial":
                 breakdown = _forward_loss(
@@ -3952,8 +4086,14 @@ def run(args: argparse.Namespace) -> int:
                     "device": str(device),
                     "parameter_count": parameter_count,
                     "dataset_windows": len(dataset),
+                    "target": {
+                        "type": supervision.target_type,
+                        "cache_component": supervision.cache_component,
+                        "paper_ground_truth": supervision.paper_ground_truth,
+                        "synthetic_ground_truth": supervision.synthetic_ground_truth,
+                    },
                     "observation_identity": observation_identity.to_dict(),
-                    "teacher_identity": teacher_identity.to_dict(),
+                    "target_cache_identity": teacher_identity.to_dict(),
                     "derived_cache_lineage": derived_cache_lineage,
                     "calibration_sidecar_lineage": calibration_sidecar_lineage,
                     "initialization_lineage": initialization_lineage,
@@ -4019,9 +4159,11 @@ def run(args: argparse.Namespace) -> int:
             for accumulation_index in range(accumulation):
                 batch = _move_training_batch(next(batch_iterator), device)
                 diagnostic_interval = int(config.train.finite_diagnostic_interval)
-                diagnostic = diagnostic_interval > 0 and (
-                    completed_step + 1
-                ) % diagnostic_interval == 0 and accumulation_index == 0
+                diagnostic = (
+                    diagnostic_interval > 0
+                    and (completed_step + 1) % diagnostic_interval == 0
+                    and accumulation_index == 0
+                )
                 with torch.autocast(
                     device_type=device.type,
                     dtype=torch.bfloat16,
@@ -4070,12 +4212,16 @@ def run(args: argparse.Namespace) -> int:
                         term_names.append(optional_name)
                 for name in term_names:
                     value = getattr(breakdown, name).detach()
-                    summed_terms[name] = summed_terms.get(name, value.new_zeros(())) + value
+                    summed_terms[name] = (
+                        summed_terms.get(name, value.new_zeros(())) + value
+                    )
                 if not should_optimizer_step(accumulation_index + 1, accumulation):
                     continue
 
             gradient_norm = nn.utils.clip_grad_norm_(
-                model.parameters(), float(config.train.gradient_clip), error_if_nonfinite=True
+                model.parameters(),
+                float(config.train.gradient_clip),
+                error_if_nonfinite=True,
             )
             optimizer.step()
             scheduler.step()
@@ -4160,18 +4306,15 @@ def run(args: argparse.Namespace) -> int:
             {
                 "status": "TRAINING_COMPLETE",
                 "stage": stage,
+                "target_type": supervision.target_type,
                 "step": completed_step,
                 "parameter_count": parameter_count,
                 "final_checkpoint": str(final_path),
                 "run_summary": str(summary_path),
                 "elapsed_seconds": summary["elapsed_seconds"],
                 "steps_per_second": summary["steps_per_second"],
-                "peak_cuda_allocated_bytes": summary[
-                    "peak_cuda_allocated_bytes"
-                ],
-                "peak_cuda_reserved_bytes": summary[
-                    "peak_cuda_reserved_bytes"
-                ],
+                "peak_cuda_allocated_bytes": summary["peak_cuda_allocated_bytes"],
+                "peak_cuda_reserved_bytes": summary["peak_cuda_reserved_bytes"],
             },
             sort_keys=True,
         )

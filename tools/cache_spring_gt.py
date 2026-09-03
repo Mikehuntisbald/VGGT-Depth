@@ -1,13 +1,9 @@
 #!/usr/bin/env python3
-"""Create a Spring ground-truth teacher cache for controlled arm screening.
+"""Create an independent Spring ground-truth supervision cache.
 
-The production project normally trains against a frozen FFS HR teacher.  Spring
-ships dense disparity, so the seven-arm screening can use the exact dataset GT
-as its supervision target while keeping the FFS observation (and its trusted
-measurement mask) independent.  The cache deliberately retains the canonical
-``ffs-teacher`` component name because the existing training dataset validates
-that interface; its receipt and metadata make the ``Spring_GT`` lineage
-explicit and prevent confusing it with a learned FFS teacher.
+The tensor keys retain the training dataset's historical ``teacher_*`` names,
+but the cache identity is ``spring-ground-truth`` and cannot be consumed by a
+legacy FFS pseudo-teacher configuration.
 """
 
 from __future__ import annotations
@@ -23,6 +19,7 @@ from typing import Any
 
 import numpy as np
 import torch
+from PIL import Image
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 import sys
@@ -37,7 +34,12 @@ from data.cache_dataset import (  # noqa: E402
     sha256_file,
 )
 from data.manifest import load_manifest  # noqa: E402
-from data.spring import load_spring_disparity  # noqa: E402
+from data.spring import (  # noqa: E402
+    SPRING_FLOW_LIBRARY_COMMIT,
+    SPRING_GT_COMPONENT,
+    SPRING_GT_TARGET_TYPE,
+    load_spring_disparity,
+)
 
 
 def _safe(value: Any) -> str:
@@ -92,7 +94,9 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--manifest", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
-    parser.add_argument("--cache-dtype", choices=["float16", "float32"], default="float16")
+    parser.add_argument(
+        "--cache-dtype", choices=["float16", "float32"], default="float32"
+    )
     parser.add_argument("--start-index", type=int, default=0)
     parser.add_argument("--limit", type=int)
     parser.add_argument("--overwrite", action="store_true")
@@ -119,15 +123,19 @@ def main() -> int:
     config = {
         "identity_version": 2,
         "dataset": "Spring",
-        "teacher_source": "Spring_GT",
+        "dataset_version": "2.0",
+        "supervision_source": "Spring_GT",
+        "target_type": SPRING_GT_TARGET_TYPE,
         "resolution": "image",
+        "sampling": "dsp5[::2,::2]",
+        "disparity_value_scaling": 1.0,
         "disparity_unit": "full_hd_pixels",
         "invalid_policy": "finite_and_positive_only",
         "cache_dtype": args.cache_dtype,
     }
     identity = CacheIdentity(
-        component="ffs-teacher",
-        upstream_commit="Spring_GT:cam_data+disp1_left",
+        component=SPRING_GT_COMPONENT,
+        upstream_commit=SPRING_FLOW_LIBRARY_COMMIT,
         checkpoint_sha256=canonical_json_sha256(
             # The dense Spring GT source is a dataset-level immutable
             # teacher, not a model trained separately for each split.  Keep
@@ -153,18 +161,37 @@ def main() -> int:
     receipt_path = root / "run_receipt.json"
     if receipt_path.is_file() and not args.overwrite:
         old = json.loads(receipt_path.read_text(encoding="utf-8"))
-        if old.get("identity") != identity.to_dict() or old.get("manifest_sha256") != manifest_sha:
-            raise RuntimeError(f"existing cache receipt identity differs: {receipt_path}")
+        if (
+            old.get("identity") != identity.to_dict()
+            or old.get("manifest_sha256") != manifest_sha
+        ):
+            raise RuntimeError(
+                f"existing cache receipt identity differs: {receipt_path}"
+            )
 
     dtype = torch.float16 if args.cache_dtype == "float16" else torch.float32
     rows: list[dict[str, Any]] = []
+    valid_pixel_count = 0
+    total_pixel_count = 0
+    maximum_disparity_hr_px = 0.0
     started = time.perf_counter()
     for selection_index, record in enumerate(selected, start=args.start_index):
         gt_path = _record_gt_path(record, manifest_directory)
         image_left = _resolve_manifest_path(record.left_path, manifest_directory)
         image_right = _resolve_manifest_path(record.right_path, manifest_directory)
         if not image_left.is_file() or not image_right.is_file():
-            raise FileNotFoundError(f"Spring stereo images are missing for {record.sequence_id}/{record.frame_id}")
+            raise FileNotFoundError(
+                f"Spring stereo images are missing for {record.sequence_id}/{record.frame_id}"
+            )
+        with (
+            Image.open(image_left) as left_image,
+            Image.open(image_right) as right_image,
+        ):
+            if left_image.size != right_image.size:
+                raise RuntimeError(
+                    f"Spring stereo image sizes differ: {image_left} vs {image_right}"
+                )
+            image_width, image_height = left_image.size
         path = root / _safe(record.sequence_id) / f"{_safe(record.frame_id)}.pt"
         left_hash, right_hash, gt_hash = (
             sha256_file(image_left),
@@ -174,14 +201,33 @@ def main() -> int:
         if path.is_file() and not args.overwrite:
             payload = load_cache_record(path, expected_identity=identity)
             source = payload["metadata"].get("source", {})
-            if source.get("left_sha256") != left_hash or source.get("right_sha256") != right_hash or source.get("gt_sha256") != gt_hash:
+            if (
+                source.get("left_sha256") != left_hash
+                or source.get("right_sha256") != right_hash
+                or source.get("gt_sha256") != gt_hash
+            ):
                 raise RuntimeError(f"cache source mismatch: {path}")
+            tensors = payload["tensors"]
+            cached_disparity = tensors.get("teacher_disparity_hr_px")
+            cached_valid = tensors.get("teacher_valid_mask")
+            if not isinstance(cached_disparity, torch.Tensor) or not isinstance(
+                cached_valid, torch.Tensor
+            ):
+                raise RuntimeError(f"malformed Spring GT cache tensors: {path}")
+            valid_values = cached_disparity[cached_valid.to(dtype=torch.bool)]
+            valid_pixel_count += int(valid_values.numel())
+            total_pixel_count += int(cached_disparity.numel())
+            if valid_values.numel():
+                maximum_disparity_hr_px = max(
+                    maximum_disparity_hr_px, float(valid_values.max().item())
+                )
             rows.append(
                 {
                     "selection_index": selection_index,
                     "sequence_id": record.sequence_id,
                     "frame_id": record.frame_id,
                     "cache_path": str(path),
+                    "cache_sha256": sha256_file(path),
                     "status": "reused",
                     "source": payload["metadata"].get("source"),
                 }
@@ -191,6 +237,12 @@ def main() -> int:
         disparity = load_spring_disparity(gt_path, resolution="image", sign="positive")
         if disparity.ndim != 2 or not np.isfinite(disparity).any():
             raise ValueError(f"invalid Spring GT disparity: {gt_path}")
+        if disparity.shape != (image_height, image_width):
+            raise ValueError(
+                "Spring GT/image shape mismatch for "
+                f"{record.sequence_id}/{record.frame_id}: "
+                f"GT={disparity.shape}, image={(image_height, image_width)}"
+            )
         valid = np.isfinite(disparity) & (disparity > 0)
         disparity = np.where(valid, disparity, 0.0).astype(np.float32, copy=False)
         disparity_t = torch.from_numpy(disparity).unsqueeze(0).to(dtype)
@@ -199,7 +251,9 @@ def main() -> int:
         tensors = {
             "teacher_disparity_hr_px": disparity_t,
             "teacher_confidence": confidence_t,
-            "teacher_entropy": torch.where(valid_t, torch.zeros_like(confidence_t), torch.ones_like(confidence_t)),
+            "teacher_entropy": torch.where(
+                valid_t, torch.zeros_like(confidence_t), torch.ones_like(confidence_t)
+            ),
             "teacher_last_update_magnitude_hr_px": torch.zeros_like(confidence_t),
             "teacher_valid_mask": valid_t,
             "teacher_trusted_mask": valid_t,
@@ -212,7 +266,12 @@ def main() -> int:
                 "right_sha256": right_hash,
                 "gt_path": str(gt_path),
                 "gt_sha256": gt_hash,
-                "hr_shape_bchw": [1, 3, int(disparity.shape[0]), int(disparity.shape[1])],
+                "hr_shape_bchw": [
+                    1,
+                    3,
+                    int(disparity.shape[0]),
+                    int(disparity.shape[1]),
+                ],
             },
             "checkpoint": {
                 "label": "Spring_GT",
@@ -220,6 +279,13 @@ def main() -> int:
                 "sha256": gt_hash,
             },
             "config": config,
+            "supervision": {
+                "target_type": SPRING_GT_TARGET_TYPE,
+                "cache_component": SPRING_GT_COMPONENT,
+                "paper_ground_truth": True,
+                "synthetic_ground_truth": True,
+                "sampling": "dsp5[::2,::2] without value scaling",
+            },
             "adapter": {
                 "frozen": True,
                 "inference_mode": True,
@@ -233,17 +299,28 @@ def main() -> int:
             },
         }
         save_cache_record(path, tensors=tensors, metadata=metadata, identity=identity)
-        rows.append({
-            "selection_index": selection_index,
-            "sequence_id": record.sequence_id,
-            "frame_id": record.frame_id,
-            "cache_path": str(path),
-            "status": "written",
-            "source": metadata["source"],
-        })
+        valid_values = disparity_t[valid_t]
+        valid_pixel_count += int(valid_values.numel())
+        total_pixel_count += int(disparity_t.numel())
+        if valid_values.numel():
+            maximum_disparity_hr_px = max(
+                maximum_disparity_hr_px, float(valid_values.max().item())
+            )
+        rows.append(
+            {
+                "selection_index": selection_index,
+                "sequence_id": record.sequence_id,
+                "frame_id": record.frame_id,
+                "cache_path": str(path),
+                "cache_sha256": sha256_file(path),
+                "status": "written",
+                "source": metadata["source"],
+            }
+        )
         print(f"[{len(rows)}/{len(selected)}] {path}", flush=True)
 
-    _atomic_jsonl(root / "cache_manifest.jsonl", rows)
+    cache_manifest_path = root / "cache_manifest.jsonl"
+    _atomic_jsonl(cache_manifest_path, rows)
     receipt = {
         "schema_version": 1,
         "identity_version": int(config["identity_version"]),
@@ -251,10 +328,26 @@ def main() -> int:
         "config": config,
         "manifest": str(manifest),
         "manifest_sha256": manifest_sha,
+        "cache_manifest": str(cache_manifest_path.resolve()),
+        "cache_manifest_sha256": sha256_file(cache_manifest_path),
         "selected_records": len(rows),
         "written_records": sum(row["status"] == "written" for row in rows),
         "reused_records": sum(row["status"] == "reused" for row in rows),
         "elapsed_seconds": time.perf_counter() - started,
+        "target_type": SPRING_GT_TARGET_TYPE,
+        "paper_ground_truth": True,
+        "synthetic_ground_truth": True,
+        "statistics": {
+            "valid_pixels": valid_pixel_count,
+            "invalid_pixels": total_pixel_count - valid_pixel_count,
+            "valid_fraction": (
+                float(valid_pixel_count) / float(total_pixel_count)
+                if total_pixel_count
+                else 0.0
+            ),
+            "maximum_disparity_hr_px": maximum_disparity_hr_px,
+            "maximum_disparity_lr_px_at_x2": maximum_disparity_hr_px / 2.0,
+        },
         "lineage_note": "Spring GT supervision; not an FFS pseudo-teacher",
     }
     _atomic_json(receipt_path, receipt)

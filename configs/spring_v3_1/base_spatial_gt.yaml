@@ -1,0 +1,13 @@
+experiment: spring_v3_1_spatial_gt_base
+defaults_from: configs/mvp_x2_v3_1.yaml
+
+data:
+  source_dataset: Spring-v2
+
+supervision:
+  enabled: true
+  protocol_version: spring_v2_real_disparity_ground_truth_v1
+  target_type: spring_v2_disp1_ground_truth
+  teacher_cache_component: spring-ground-truth
+  paper_ground_truth: true
+  synthetic_ground_truth: true

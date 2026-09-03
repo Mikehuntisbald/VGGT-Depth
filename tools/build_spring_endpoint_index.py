@@ -12,8 +12,13 @@ same manifest.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
+import os
+import shlex
 import sys
+import tempfile
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Sequence
 
@@ -32,6 +37,63 @@ from data.endpoint_selection import (  # noqa: E402
 )
 from data.manifest import load_manifest  # noqa: E402
 from data.training_dataset import build_causal_windows  # noqa: E402
+
+
+DEFAULT_SEQUENCE_WARMUP = 0
+
+
+def _sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _atomic_json(path: Path, payload: dict[str, object]) -> None:
+    """Write a small immutable receipt without exposing a partial JSON file."""
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    descriptor, temporary_name = tempfile.mkstemp(
+        prefix=f".{path.name}.", suffix=".tmp", dir=path.parent
+    )
+    temporary = Path(temporary_name)
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+            json.dump(payload, handle, indent=2, sort_keys=True, allow_nan=False)
+            handle.write("\n")
+            handle.flush()
+        temporary.replace(path)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def _sequence_warmup_indices(
+    records: Sequence[object], indices: Sequence[int], warmup: int
+) -> list[int]:
+    """Filter endpoint indices by *per-sequence* manifest position.
+
+    The manifest is the authority for sequence order.  We deliberately count
+    positions over all records, rather than over the already-filtered source
+    set, so ``--sequence-warmup 6`` always means “discard frames 1--6” even
+    when a caller intersects a prior endpoint list or a derived cache.
+    """
+
+    if isinstance(warmup, bool) or not isinstance(warmup, int) or warmup < 0:
+        raise ValueError("--sequence-warmup must be a non-negative integer")
+    positions: dict[str, int] = {}
+    allowed: set[int] = set()
+    for manifest_index, record in enumerate(records):
+        sequence_id = str(getattr(record, "sequence_id"))
+        position = positions.get(sequence_id, 0)
+        positions[sequence_id] = position + 1
+        if position >= warmup:
+            allowed.add(manifest_index)
+    return [index for index in indices if index in allowed]
+
+
+def _source_identity(path: Path) -> dict[str, object]:
+    return {"path": str(path.resolve()), "sha256": _sha256(path)}
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -63,8 +125,22 @@ def build_parser() -> argparse.ArgumentParser:
             "three student endpoint records have derived entries"
         ),
     )
+    parser.add_argument(
+        "--sequence-warmup",
+        type=int,
+        default=DEFAULT_SEQUENCE_WARMUP,
+        help=(
+            "discard this many leading manifest positions independently per "
+            "sequence (formal Spring common domain: 6)"
+        ),
+    )
     parser.add_argument("--start", type=int, default=0)
     parser.add_argument("--limit", type=int)
+    parser.add_argument(
+        "--receipt",
+        type=Path,
+        help="optional receipt path (default: OUTPUT.with_suffix('.receipt.json'))",
+    )
     return parser
 
 
@@ -181,12 +257,30 @@ def run(args: argparse.Namespace) -> int:
         raise ValueError("--start must be non-negative")
     if args.limit is not None and args.limit <= 0:
         raise ValueError("--limit must be positive")
+    if (
+        isinstance(args.sequence_warmup, bool)
+        or not isinstance(args.sequence_warmup, int)
+        or args.sequence_warmup < 0
+    ):
+        raise ValueError("--sequence-warmup must be a non-negative integer")
+    if not manifest.is_file():
+        raise FileNotFoundError(manifest)
     records = load_manifest(manifest)
+    if not records:
+        raise EndpointSelectionError("manifest is empty")
     source_sets: list[set[int]] = []
+    source_identities: list[dict[str, object]] = []
     if args.source:
         source_sets.append(_read_source_indices(args.source, manifest))
+        source_identities.extend(
+            _source_identity(path.expanduser().resolve()) for path in args.source
+        )
     if args.source_records:
         source_sets.append(_read_source_record_indices(args.source_records, manifest))
+        source_identities.extend(
+            _source_identity(path.expanduser().resolve())
+            for path in args.source_records
+        )
     if source_sets:
         indices_set = source_sets[0]
         for source_set in source_sets[1:]:
@@ -199,9 +293,17 @@ def run(args: argparse.Namespace) -> int:
                 records, student_sequence_length=3, vggt_context_pairs=5
             )
         ]
+    unfiltered_count = len(indices)
+    derived_identity: dict[str, object] | None = None
     if args.derived_cache_root is not None:
+        derived_root = args.derived_cache_root.expanduser().resolve()
+        derived_manifest = derived_root / "cache_manifest.jsonl"
         derived_indices = _read_derived_indices(args.derived_cache_root)
-        by_index = {index: records[index] for index in derived_indices if index < len(records)}
+        derived_identity = {
+            "root": str(derived_root),
+            "cache_manifest": _source_identity(derived_manifest),
+        }
+        by_index = {index for index in derived_indices if index < len(records)}
         indices = [
             window.endpoint_index
             for window in build_causal_windows(
@@ -209,9 +311,11 @@ def run(args: argparse.Namespace) -> int:
             )
             if all(index in by_index for index in window.student_indices)
         ]
-        if args.source:
-            source_indices = set(_read_source_indices(args.source, manifest))
+        if source_sets:
+            source_indices = set.intersection(*source_sets)
             indices = [index for index in indices if index in source_indices]
+    indices = _sequence_warmup_indices(records, indices, args.sequence_warmup)
+    warmup_filtered_count = len(indices)
     indices = indices[args.start :]
     if args.limit is not None:
         indices = indices[: args.limit]
@@ -222,6 +326,66 @@ def run(args: argparse.Namespace) -> int:
         manifest_path=manifest,
         manifest_indices=indices,
     )
+    output_path = args.output.expanduser().resolve()
+    receipt_path = (
+        output_path.with_suffix(".receipt.json")
+        if args.receipt is None
+        else args.receipt.expanduser().resolve()
+    )
+    positions: dict[str, int] = {}
+    sequence_counts: dict[str, int] = {}
+    sequence_first_last: dict[str, dict[str, int]] = {}
+    for record in records:
+        position = positions.get(record.sequence_id, 0)
+        positions[record.sequence_id] = position + 1
+    for index in indices:
+        record = records[index]
+        sequence_counts[record.sequence_id] = sequence_counts.get(record.sequence_id, 0) + 1
+        bounds = sequence_first_last.setdefault(
+            record.sequence_id,
+            {"first_manifest_index": index, "first_frame_id": int(record.frame_id)},
+        )
+        bounds["last_manifest_index"] = index
+        bounds["last_frame_id"] = int(record.frame_id)
+    receipt_payload: dict[str, object] = {
+        "schema_version": 1,
+        "component": "spring-common-endpoint-index-builder",
+        "status": "PASS",
+        "created_at_utc": datetime.now(timezone.utc).isoformat(),
+        "command": shlex.join([sys.executable, *sys.argv]),
+        "protocol": {
+            "kind": "spring_common_endpoint_index",
+            "endpoint_id_hash_algorithm": ENDPOINT_ID_HASH_ALGORITHM,
+            "student_sequence_length": 3,
+            "vggt_context_pairs": 5,
+            "sequence_warmup": int(args.sequence_warmup),
+            "warmup_policy": "per_sequence_manifest_position",
+            "timestamp_contract": "bound_to_source_manifest",
+        },
+        "input": {
+            "manifest": _source_identity(manifest),
+            "record_count": len(records),
+            "source_indices": source_identities,
+            "derived_cache": derived_identity,
+        },
+        "selection": {
+            "causal_candidates_before_filters": unfiltered_count,
+            "after_warmup": warmup_filtered_count,
+            "start": int(args.start),
+            "limit": args.limit,
+            "selected": selection.count,
+            "sequence_counts": sequence_counts,
+            "sequence_bounds": sequence_first_last,
+        },
+        "output": {
+            "path": str(output_path),
+            "file_sha256": selection.file_sha256,
+            "manifest_sha256": selection.manifest_sha256,
+            "endpoint_count": selection.count,
+            "endpoint_id_sha256": selection.entries_sha256,
+        },
+    }
+    _atomic_json(receipt_path, receipt_payload)
     print(
         json.dumps(
             {
@@ -232,6 +396,8 @@ def run(args: argparse.Namespace) -> int:
                 "endpoint_id_hash_algorithm": ENDPOINT_ID_HASH_ALGORITHM,
                 "endpoint_count": selection.count,
                 "file_sha256": selection.file_sha256,
+                "receipt": str(receipt_path),
+                "receipt_sha256": _sha256(receipt_path),
             },
             indent=2,
             sort_keys=True,

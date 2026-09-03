@@ -28,6 +28,11 @@ from torch import Tensor
 
 from .cache_dataset import CacheMismatchError, canonical_json_sha256, sha256_file
 from .manifest import ManifestRecord, iter_manifest
+from .spring import (
+    SPRING_BASELINE_M,
+    SPRING_FLOW_LIBRARY_COMMIT,
+    SPRING_INTRINSICS_FORMAT,
+)
 
 
 RECTIFIED_CALIBRATION_SIDECAR_SCHEMA_VERSION = 1
@@ -129,6 +134,47 @@ def _record_sha256(payload: Mapping[str, Any]) -> str:
     unsigned = dict(payload)
     unsigned.pop("calibration_record_sha256", None)
     return canonical_json_sha256(unsigned)
+
+
+def _spring_intrinsics_row(path: Path, row_index: int) -> np.ndarray:
+    """Read one exact ``fx fy cx cy`` row from an official Spring sidecar."""
+
+    if isinstance(row_index, bool) or not isinstance(row_index, int) or row_index < 0:
+        raise CacheMismatchError("Spring calibration metadata row is malformed")
+    rows: list[tuple[float, float, float, float]] = []
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except OSError as exc:
+        raise CacheMismatchError(f"cannot read Spring intrinsics metadata {path}") from exc
+    for line_number, raw_line in enumerate(lines, start=1):
+        tokens = raw_line.strip().split()
+        if len(tokens) != 4:
+            raise CacheMismatchError(
+                "Spring intrinsics row must contain exactly four values: "
+                f"{path}:{line_number}"
+            )
+        try:
+            values = tuple(float(token) for token in tokens)
+        except ValueError as exc:
+            raise CacheMismatchError(
+                f"Spring intrinsics row is not numeric: {path}:{line_number}"
+            ) from exc
+        if not all(math.isfinite(value) for value in values):
+            raise CacheMismatchError(
+                f"Spring intrinsics row is not finite: {path}:{line_number}"
+            )
+        rows.append(values)
+    if row_index >= len(rows):
+        raise CacheMismatchError(
+            f"Spring calibration metadata row {row_index} is out of range for {path}"
+        )
+    fx, fy, cx, cy = rows[row_index]
+    if fx <= 0.0 or fy <= 0.0:
+        raise CacheMismatchError("Spring calibration focal lengths must be positive")
+    return np.asarray(
+        [[fx, 0.0, cx], [0.0, fy, cy], [0.0, 0.0, 1.0]],
+        dtype=np.float64,
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -333,57 +379,108 @@ def _rectified_calibration_payload(
         raise CacheMismatchError(
             f"stereo metadata SHA-256 mismatch for {metadata_path}"
         )
-    try:
-        metadata = yaml.safe_load(metadata_path.read_text(encoding="utf-8"))
-    except (OSError, yaml.YAMLError) as exc:
-        raise CacheMismatchError(f"cannot parse stereo metadata {metadata_path}") from exc
-    if not isinstance(metadata, Mapping) or metadata.get("rectified") is not True:
-        raise CacheMismatchError("stereo metadata does not assert rectified=true")
-    try:
-        left_info = metadata["left_rect_camera_info"]
-        right_info = metadata["right_rect_camera_info"]
-        left_frame = str(metadata["left_frame_id"])
-        right_frame = str(metadata["right_frame_id"])
-    except (KeyError, TypeError) as exc:
-        raise CacheMismatchError("rectified metadata camera fields are missing") from exc
-    if not isinstance(left_info, Mapping) or not isinstance(right_info, Mapping):
-        raise CacheMismatchError("rectified camera info is malformed")
-    rotation_left = _flat_rotation(
-        left_info.get("r"), name="left rectification rotation"
-    )
-    rotation_right = _flat_rotation(
-        right_info.get("r"), name="right rectification rotation"
-    )
-    metadata_k_left = _flat_matrix(
-        left_info.get("k"), name="metadata left rectified K", rows=3, columns=3
-    )
-    metadata_k_right = _flat_matrix(
-        right_info.get("k"), name="metadata right rectified K", rows=3, columns=3
-    )
-    metadata_p_left = _flat_matrix(
-        left_info.get("p"), name="metadata left rectified P", rows=3, columns=4
-    )
-    metadata_p_right = _flat_matrix(
-        right_info.get("p"), name="metadata right rectified P", rows=3, columns=4
-    )
-    for name, metadata_value, manifest_value in (
-        ("left rectified K", metadata_k_left, k_left),
-        ("right rectified K", metadata_k_right, k_right),
-        ("left rectified P", metadata_p_left, p_left),
-        ("right rectified P", metadata_p_right, p_right),
-    ):
-        if not np.allclose(metadata_value, manifest_value, atol=1e-9, rtol=0.0):
-            raise CacheMismatchError(f"metadata/manifest {name} mismatch")
-    metadata_baseline = metadata.get("stereo_baseline_m")
-    if (
-        isinstance(metadata_baseline, bool)
-        or not isinstance(metadata_baseline, (int, float))
-        or not math.isfinite(float(metadata_baseline))
-        or not math.isclose(
-            float(metadata_baseline), baseline, abs_tol=1e-9, rel_tol=0.0
+    metadata_format = extras.get("calibration_metadata_format")
+    derivation_metadata: dict[str, Any]
+    if metadata_format == SPRING_INTRINSICS_FORMAT:
+        if str(extras.get("dataset", "")).lower() != "spring":
+            raise CacheMismatchError("Spring calibration format requires dataset=spring")
+        if extras.get("spring_flow_library_commit") != SPRING_FLOW_LIBRARY_COMMIT:
+            raise CacheMismatchError("Spring calibration source commit mismatch")
+        if not math.isclose(
+            baseline, SPRING_BASELINE_M, abs_tol=1e-12, rel_tol=0.0
+        ):
+            raise CacheMismatchError("Spring calibration baseline is not the official value")
+        row_index = extras.get("calibration_metadata_row")
+        if row_index != extras.get("intrinsics_row_index"):
+            raise CacheMismatchError("Spring calibration metadata row binding mismatch")
+        if row_index != record.frame_id - 1:
+            raise CacheMismatchError("Spring calibration row is not frame_id-1")
+        metadata_k = _spring_intrinsics_row(metadata_path, row_index)
+        for name, manifest_value in (
+            ("left rectified K", k_left),
+            ("right rectified K", k_right),
+        ):
+            if not np.allclose(metadata_k, manifest_value, atol=1e-9, rtol=0.0):
+                raise CacheMismatchError(f"metadata/manifest {name} mismatch")
+        metadata_baseline = extras.get("baseline_from_projection_m")
+        if (
+            isinstance(metadata_baseline, bool)
+            or not isinstance(metadata_baseline, (int, float))
+            or not math.isfinite(float(metadata_baseline))
+            or not math.isclose(
+                float(metadata_baseline), baseline, abs_tol=1e-12, rel_tol=0.0
+            )
+        ):
+            raise CacheMismatchError("Spring metadata/manifest stereo baseline mismatch")
+        rotation_left = np.eye(3, dtype=np.float64)
+        rotation_right = np.eye(3, dtype=np.float64)
+        left_frame = f"Spring/{record.sequence_id}/Camera_L"
+        right_frame = f"Spring/{record.sequence_id}/Camera_R"
+        derivation_metadata = {
+            "metadata_format": SPRING_INTRINSICS_FORMAT,
+            "metadata_row": row_index,
+            "official_flow_library_commit": SPRING_FLOW_LIBRARY_COMMIT,
+            "stereo_model": f"Spring_orthoparallel_baseline_{SPRING_BASELINE_M}m",
+        }
+    else:
+        if metadata_format is not None:
+            raise CacheMismatchError(
+                f"unsupported calibration metadata format: {metadata_format!r}"
+            )
+        try:
+            metadata = yaml.safe_load(metadata_path.read_text(encoding="utf-8"))
+        except (OSError, yaml.YAMLError) as exc:
+            raise CacheMismatchError(
+                f"cannot parse stereo metadata {metadata_path}"
+            ) from exc
+        if not isinstance(metadata, Mapping) or metadata.get("rectified") is not True:
+            raise CacheMismatchError("stereo metadata does not assert rectified=true")
+        try:
+            left_info = metadata["left_rect_camera_info"]
+            right_info = metadata["right_rect_camera_info"]
+            left_frame = str(metadata["left_frame_id"])
+            right_frame = str(metadata["right_frame_id"])
+        except (KeyError, TypeError) as exc:
+            raise CacheMismatchError("rectified metadata camera fields are missing") from exc
+        if not isinstance(left_info, Mapping) or not isinstance(right_info, Mapping):
+            raise CacheMismatchError("rectified camera info is malformed")
+        rotation_left = _flat_rotation(
+            left_info.get("r"), name="left rectification rotation"
         )
-    ):
-        raise CacheMismatchError("metadata/manifest stereo baseline mismatch")
+        rotation_right = _flat_rotation(
+            right_info.get("r"), name="right rectification rotation"
+        )
+        metadata_k_left = _flat_matrix(
+            left_info.get("k"), name="metadata left rectified K", rows=3, columns=3
+        )
+        metadata_k_right = _flat_matrix(
+            right_info.get("k"), name="metadata right rectified K", rows=3, columns=3
+        )
+        metadata_p_left = _flat_matrix(
+            left_info.get("p"), name="metadata left rectified P", rows=3, columns=4
+        )
+        metadata_p_right = _flat_matrix(
+            right_info.get("p"), name="metadata right rectified P", rows=3, columns=4
+        )
+        for name, metadata_value, manifest_value in (
+            ("left rectified K", metadata_k_left, k_left),
+            ("right rectified K", metadata_k_right, k_right),
+            ("left rectified P", metadata_p_left, p_left),
+            ("right rectified P", metadata_p_right, p_right),
+        ):
+            if not np.allclose(metadata_value, manifest_value, atol=1e-9, rtol=0.0):
+                raise CacheMismatchError(f"metadata/manifest {name} mismatch")
+        metadata_baseline = metadata.get("stereo_baseline_m")
+        if (
+            isinstance(metadata_baseline, bool)
+            or not isinstance(metadata_baseline, (int, float))
+            or not math.isfinite(float(metadata_baseline))
+            or not math.isclose(
+                float(metadata_baseline), baseline, abs_tol=1e-9, rel_tol=0.0
+            )
+        ):
+            raise CacheMismatchError("metadata/manifest stereo baseline mismatch")
+        derivation_metadata = {"metadata_format": "rectified_camera_info_yaml_v1"}
 
     transform_rectified = np.eye(4, dtype=np.float64)
     # Use the calibrated scalar after proving that projection factorisation is
@@ -421,6 +518,7 @@ def _rectified_calibration_payload(
             "P_left": p_left.tolist(),
             "P_right": p_right.tolist(),
             "baseline_m": baseline,
+            **derivation_metadata,
             "runtime_right_vertical_intrinsics_policy": (
                 "pixel audit owns rows; diagnostic K_right cy is not applied"
             ),

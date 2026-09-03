@@ -18,7 +18,7 @@ import os
 import tempfile
 import time
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any, Mapping, Sequence
 
 import numpy as np
 import torch
@@ -113,19 +113,58 @@ def _gt_context(records: list[Any], endpoint_index: int) -> torch.Tensor:
     return result
 
 
-def main() -> int:
+def _selected_records(
+    records: Sequence[Any], *, sequence_warmup: int
+) -> list[tuple[int, Any]]:
+    """Keep original manifest indices after a per-sequence positional warmup."""
+
+    if isinstance(sequence_warmup, bool) or not isinstance(sequence_warmup, int):
+        raise TypeError("sequence_warmup must be an integer")
+    if sequence_warmup < 0:
+        raise ValueError("sequence_warmup must be non-negative")
+    positions: dict[str, int] = defaultdict(int)
+    selected: list[tuple[int, Any]] = []
+    for manifest_index, record in enumerate(records):
+        sequence_id = str(record.sequence_id)
+        position = positions[sequence_id]
+        positions[sequence_id] += 1
+        if position >= sequence_warmup:
+            selected.append((manifest_index, record))
+    if not selected:
+        raise ValueError("sequence warmup removed every manifest record")
+    return selected
+
+
+def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser()
     parser.add_argument("--manifest", type=Path, required=True)
     parser.add_argument("--observation-root", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument(
+        "--sequence-warmup",
+        type=int,
+        default=0,
+        help=(
+            "skip this many leading records per sequence; F3 uses 4 so its "
+            "three-frame derived window has the same frame-7 endpoint floor "
+            "as calibrated VGGT geometry"
+        ),
+    )
     parser.add_argument("--overwrite", action="store_true")
-    args = parser.parse_args()
+    return parser
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    args = build_parser().parse_args(argv)
     manifest = args.manifest.expanduser().resolve()
     observation_root = args.observation_root.expanduser().resolve()
     output_root = args.output.expanduser().resolve()
     records = load_manifest(manifest)
     if not records:
         raise ValueError("manifest is empty")
+    selected_records = _selected_records(
+        records, sequence_warmup=args.sequence_warmup
+    )
     manifest_sha = sha256_file(manifest)
     config = {
         "schema_version": 1,
@@ -136,11 +175,13 @@ def main() -> int:
         "invalid_temporal_pose_policy": "zero-filled with false validity tensor",
         "pose_source": "Spring_GT_pose",
         "depth_prior_source": "disabled_zero_fill",
+        "sequence_warmup": args.sequence_warmup,
+        "selection_policy": "per_sequence_manifest_position",
     }
     started = time.perf_counter()
     rows: list[dict[str, Any]] = []
     counts = defaultdict(int)
-    for manifest_index, record in enumerate(records):
+    for selection_index, (manifest_index, record) in enumerate(selected_records):
         obs_path = (
             observation_root
             / _safe(record.sequence_id)
@@ -241,7 +282,7 @@ def main() -> int:
         counts["static_prior_rejected"] += 1
         rows.append(
             {
-                "selection_index": manifest_index,
+                "selection_index": selection_index,
                 "target_manifest_index": manifest_index,
                 "sequence_id": record.sequence_id,
                 "frame_id": record.frame_id,
@@ -254,7 +295,11 @@ def main() -> int:
                 "failure_reasons": [],
             }
         )
-        print(f"[{len(rows)}/{len(records)}] {record.sequence_id}/{record.frame_id} {status}", flush=True)
+        print(
+            f"[{len(rows)}/{len(selected_records)}] "
+            f"{record.sequence_id}/{record.frame_id} {status}",
+            flush=True,
+        )
 
     cache_manifest = output_root / "cache_manifest.jsonl"
     _atomic_jsonl(cache_manifest, rows)
@@ -281,7 +326,13 @@ def main() -> int:
             "cache_manifest": str(cache_manifest),
             "cache_manifest_sha256": sha256_file(cache_manifest),
         },
-        "selection": {"start_window": 0, "limit": None, "selected_windows": total},
+        "selection": {
+            "start_window": 0,
+            "limit": None,
+            "selected_windows": total,
+            "sequence_warmup": args.sequence_warmup,
+            "policy": "per_sequence_manifest_position",
+        },
         "counts": {
             "selected": total,
             "written": counts["written"],

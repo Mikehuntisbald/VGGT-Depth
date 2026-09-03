@@ -1,0 +1,28 @@
+experiment: spring_v3_1_F3_half_ffs_v2_k2_t3_gt_pose
+seed: 42
+arm: F3
+defaults_from: configs/ablations/temporal_x2_v2_strict_bilinear_gt_no_depth.yaml
+
+data:
+  source_dataset: Spring-v2
+  temporal_pose_source: gt
+  require_cache_inventory_lineage: true
+
+supervision:
+  enabled: true
+  protocol_version: spring_v2_real_disparity_ground_truth_v1
+  target_type: spring_v2_disp1_ground_truth
+  teacher_cache_component: spring-ground-truth
+  paper_ground_truth: true
+  synthetic_ground_truth: true
+
+temporal_history_v2:
+  top_k: 2
+
+model:
+  use_vggt_pose: false
+  use_vggt_depth: false
+
+train:
+  stage: temporal
+  steps: 15000

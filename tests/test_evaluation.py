@@ -1363,8 +1363,12 @@ def _formal_coverage_fixture(tmp_path: Path) -> SimpleNamespace:
     )
     derived_root = tmp_path / "derived"
     raw_root = tmp_path / "vggt"
+    observation_root = tmp_path / "observation"
     derived_root.mkdir()
     raw_root.mkdir()
+    observation_root.mkdir()
+    manifest_path = tmp_path / "manifest.jsonl"
+    manifest_path.write_text("{}\n", encoding="utf-8")
     raw_manifest = raw_root / "cache_manifest.jsonl"
     raw_manifest.write_text("{}\n", encoding="utf-8")
     derived_manifest = derived_root / "cache_manifest.jsonl"
@@ -1389,6 +1393,8 @@ def _formal_coverage_fixture(tmp_path: Path) -> SimpleNamespace:
     ]
     return SimpleNamespace(
         derived_cache_root=derived_root,
+        manifest_path=manifest_path,
+        observation_cache_root=observation_root,
         records=records,
         derived_entries={index: object() for index in expected_endpoint_indices},
         windows=emitted,
@@ -1410,6 +1416,69 @@ def test_formal_temporal_coverage_rejects_self_consistent_subset(tmp_path: Path)
     receipt["inputs"]["vggt_available_windows"] = 2
     receipt_path.write_text(json.dumps(receipt), encoding="utf-8")
     with pytest.raises(ValueError, match="coverage"):
+        eval_cli._validate_formal_temporal_coverage(dataset)
+
+
+def test_formal_temporal_coverage_accepts_gt_pose_without_vggt_manifest(
+    tmp_path: Path,
+) -> None:
+    dataset = _formal_coverage_fixture(tmp_path)
+    receipt_path = dataset.derived_cache_root / "run_receipt.json"
+    receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+    receipt.update(
+        {
+            "component": "vggt-ffs-derived-geometry-batch",
+            "manifest": str(dataset.manifest_path.resolve()),
+            "manifest_sha256": sha256_file(dataset.manifest_path),
+            "config": {
+                "pose_source": "Spring_GT_pose",
+                "depth_prior_source": "disabled_zero_fill",
+            },
+        }
+    )
+    receipt["inputs"] = {
+        "manifest": str(dataset.manifest_path.resolve()),
+        "manifest_sha256": sha256_file(dataset.manifest_path),
+        "observation_root": str(dataset.observation_cache_root.resolve()),
+        "pose_source": "Spring_GT_pose",
+        "vggt_root": None,
+    }
+    receipt_path.write_text(json.dumps(receipt), encoding="utf-8")
+
+    result = eval_cli._validate_formal_temporal_coverage(dataset)
+
+    assert result["pose_source"] == "gt"
+    assert result["raw_vggt_cache_manifest_path"] is None
+    assert result["raw_vggt_cache_manifest_sha256"] is None
+
+
+def test_formal_temporal_coverage_rejects_gt_pose_manifest_mismatch(
+    tmp_path: Path,
+) -> None:
+    dataset = _formal_coverage_fixture(tmp_path)
+    receipt_path = dataset.derived_cache_root / "run_receipt.json"
+    receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+    receipt.update(
+        {
+            "component": "vggt-ffs-derived-geometry-batch",
+            "manifest": str(dataset.manifest_path.resolve()),
+            "manifest_sha256": sha256_file(dataset.manifest_path),
+            "config": {
+                "pose_source": "Spring_GT_pose",
+                "depth_prior_source": "disabled_zero_fill",
+            },
+        }
+    )
+    receipt["inputs"] = {
+        "manifest": str(dataset.manifest_path.resolve()),
+        "manifest_sha256": "0" * 64,
+        "observation_root": str(dataset.observation_cache_root.resolve()),
+        "pose_source": "Spring_GT_pose",
+        "vggt_root": None,
+    }
+    receipt_path.write_text(json.dumps(receipt), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="GT-pose derived receipt lineage"):
         eval_cli._validate_formal_temporal_coverage(dataset)
 
 
@@ -1496,6 +1565,43 @@ def test_checkpoint_completion_separates_intermediate_and_canonical_final() -> N
     assert missing_final_stage_a["coverage_eligible"]
     assert not missing_final_stage_a["final_training_checkpoint"]
     assert not missing_final_stage_a["final_acceptance_eligible"]
+
+
+def test_full_selection_accepts_complete_explicit_endpoint_domain() -> None:
+    selection = SimpleNamespace(manifest_indices=(4, 5, 6), count=3)
+
+    assert eval_cli._is_full_selection(
+        endpoint_selection=selection,
+        endpoint_dataset_indices=(0, 1, 2),
+        dataset_length=7,
+        start_index=0,
+        sample_count=3,
+    )
+
+
+@pytest.mark.parametrize(
+    ("start_index", "sample_count", "dataset_indices"),
+    (
+        (0, 2, (0, 1, 2)),
+        (1, 3, (0, 1, 2)),
+        (0, 3, (0, 1)),
+        (0, 3, (0, 1, 1)),
+    ),
+)
+def test_full_selection_rejects_endpoint_subsets_or_mismatched_domain(
+    start_index: int,
+    sample_count: int,
+    dataset_indices: tuple[int, ...],
+) -> None:
+    selection = SimpleNamespace(manifest_indices=(4, 5, 6), count=3)
+
+    assert not eval_cli._is_full_selection(
+        endpoint_selection=selection,
+        endpoint_dataset_indices=dataset_indices,
+        dataset_length=7,
+        start_index=start_index,
+        sample_count=sample_count,
+    )
 
 
 def test_checkpoint_completion_rejects_missing_or_boolean_steps() -> None:

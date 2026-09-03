@@ -466,7 +466,7 @@ def adjacent_left_photometric_reprojection(
     )
     points_current = (
         torch.linalg.inv(k_current) @ pixels_current_h.transpose(0, 1)
-    ).transpose(0, 1) * depth[depth_valid, None]
+    ).transpose(0, 1) * depth[depth_valid][:, None]
     e_previous = _homogeneous_extrinsic(
         torch.as_tensor(extrinsic_previous_camera_from_world_metric)
     )
