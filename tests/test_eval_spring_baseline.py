@@ -55,7 +55,10 @@ def _cache(
         "role": "observation",
         "scale": spec.scale,
         "resolution_mode": spec.name,
-        "max_disp_hr_equivalent_px": 384,
+        "max_disp": spec.max_disp_input_grid_px,
+        "max_disp_input_grid_px": spec.max_disp_input_grid_px,
+        "max_disp_hr_equivalent_px": spec.max_disp_hr_equivalent_px,
+        "max_disp_policy": spec.max_disp_policy,
     }
     save_cache_record(
         root / "0001" / f"{frame_id}.pt",
@@ -225,6 +228,31 @@ def test_evaluator_rejects_full_mode_with_half_cache_receipt(tmp_path: Path) -> 
         disparity=torch.ones((1, 1, 4, 4)),
     )
     with pytest.raises(ValueError, match="component does not match"):
+        baseline._load_cache_lineage(
+            cache,
+            manifest_path=manifest,
+            mode=baseline.BASELINE_MODES["full"],
+        )
+
+
+def test_evaluator_rejects_noncanonical_full_search_range(tmp_path: Path) -> None:
+    manifest = _manifest(tmp_path, count=1)
+    cache = _cache(
+        tmp_path,
+        manifest,
+        mode="full",
+        frame_id=1,
+        disparity=torch.ones((1, 1, 8, 8)),
+    )
+    receipt_path = cache / "run_receipt.json"
+    receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+    receipt["config"]["max_disp"] = 384
+    receipt["config"]["max_disp_input_grid_px"] = 384
+    receipt["config"]["max_disp_hr_equivalent_px"] = 384
+    receipt["config"]["max_disp_policy"] = "matched_physical_search_range_384_hr_px"
+    receipt_path.write_text(json.dumps(receipt), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="search-range contract differs"):
         baseline._load_cache_lineage(
             cache,
             manifest_path=manifest,

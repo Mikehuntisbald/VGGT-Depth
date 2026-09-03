@@ -62,6 +62,9 @@ class BaselineMode:
     scale: int
     cache_component: str
     reconstruction: str
+    max_disp_input_grid_px: int
+    max_disp_hr_equivalent_px: int
+    max_disp_policy: str
 
 
 BASELINE_MODES = {
@@ -71,6 +74,9 @@ BASELINE_MODES = {
         scale=1,
         cache_component="ffs-observation-full-resolution",
         reconstruction="identity",
+        max_disp_input_grid_px=416,
+        max_disp_hr_equivalent_px=416,
+        max_disp_policy="checkpoint_native_416_hr_px",
     ),
     "half": BaselineMode(
         name="half",
@@ -78,6 +84,9 @@ BASELINE_MODES = {
         scale=2,
         cache_component="ffs-observation",
         reconstruction="bilinear_align_corners_false",
+        max_disp_input_grid_px=192,
+        max_disp_hr_equivalent_px=384,
+        max_disp_policy="matched_physical_search_range_384_hr_px",
     ),
 }
 
@@ -167,6 +176,21 @@ def _load_cache_lineage(
         raise ValueError(
             "observation cache role/scale does not match baseline mode: "
             f"expected observation/scale={mode.scale}"
+        )
+    expected_ffs = {
+        "max_disp": mode.max_disp_input_grid_px,
+        "max_disp_input_grid_px": mode.max_disp_input_grid_px,
+        "max_disp_hr_equivalent_px": mode.max_disp_hr_equivalent_px,
+        "max_disp_policy": mode.max_disp_policy,
+    }
+    differences = {
+        key: {"expected": expected, "actual": config.get(key)}
+        for key, expected in expected_ffs.items()
+        if config.get(key) != expected
+    }
+    if differences:
+        raise ValueError(
+            f"observation cache FFS search-range contract differs: {differences}"
         )
     declared_mode = config.get("resolution_mode")
     if declared_mode is not None and declared_mode != mode.name:

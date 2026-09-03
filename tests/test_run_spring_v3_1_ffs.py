@@ -15,14 +15,19 @@ from tools.run_spring_v3_1_ffs import (
     _eval_jobs,
     _geometry_jobs,
     _initializer_jobs,
+    _matrix_receipt,
+    _model_completion_evidence,
     _parse_arms,
     _parse_devices,
+    _primary_metric_evidence,
+    _runtime_evidence,
     _temporal_train_jobs,
     _validate_cache_inventory,
     _write_f7_blocked,
     build_parser,
     run,
 )
+from data.cache_dataset import sha256_file
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -86,9 +91,15 @@ def test_cache_plan_separates_full_and_half_ffs_domains(tmp_path: Path) -> None:
     assert len(jobs) == 7
     full = jobs["cache_validation_full_ffs"]
     half = jobs["cache_validation_half_ffs"]
-    assert "--scale" in full.command and full.command[full.command.index("--scale") + 1] == "1"
-    assert "--max-disp" in full.command and full.command[full.command.index("--max-disp") + 1] == "384"
-    assert full.expected_output.parent.name == "observation_full_resolution"
+    assert (
+        "--scale" in full.command
+        and full.command[full.command.index("--scale") + 1] == "1"
+    )
+    assert (
+        "--max-disp" in full.command
+        and full.command[full.command.index("--max-disp") + 1] == "416"
+    )
+    assert full.expected_output.parent.name == "observation_full_resolution_maxdisp416"
     assert half.command[half.command.index("--scale") + 1] == "2"
     assert half.command[half.command.index("--max-disp") + 1] == "192"
     assert half.expected_output.parent.name == "observation"
@@ -107,18 +118,22 @@ def test_geometry_and_training_dag_preserve_lineage_isolation(tmp_path: Path) ->
     temporal = _by_name(_temporal_train_jobs(paths, args, ARM_ORDER))
 
     assert len(geometry) == 4
-    assert "--rectified-calibration-sidecar" not in geometry[
-        "derive_train_legacy_v2_control"
-    ].command
-    assert geometry["derive_train_legacy_v2_control"].command[1].endswith(
-        "tools/build_spring_gt_geometry.py"
+    assert (
+        "--rectified-calibration-sidecar"
+        not in geometry["derive_train_legacy_v2_control"].command
+    )
+    assert (
+        geometry["derive_train_legacy_v2_control"]
+        .command[1]
+        .endswith("tools/build_spring_gt_geometry.py")
     )
     assert "--sequence-warmup" in geometry["derive_train_legacy_v2_control"].command
     assert paths.train_legacy_derived.name == "derived_f3_v2_gt_pose_no_depth"
     assert paths.train_calibrated_derived.name == "derived_v31_calibrated_vggt"
-    assert "--rectified-calibration-sidecar" in geometry[
-        "derive_train_calibrated_v3_1"
-    ].command
+    assert (
+        "--rectified-calibration-sidecar"
+        in geometry["derive_train_calibrated_v3_1"].command
+    )
 
     assert set(initializers) == {"train_F2", "train_F3_stage_a_control"}
     assert "configs/spring_v3_1/F2.yaml" in " ".join(initializers["train_F2"].command)
@@ -128,9 +143,12 @@ def test_geometry_and_training_dag_preserve_lineage_isolation(tmp_path: Path) ->
 
     f2 = str(paths.arm_train("F2") / "final.pt")
     f3_control = str(paths.f3_initializer_train / "final.pt")
-    assert temporal["train_F3"].command[
-        temporal["train_F3"].command.index("--init-from") + 1
-    ] == f3_control
+    assert (
+        temporal["train_F3"].command[
+            temporal["train_F3"].command.index("--init-from") + 1
+        ]
+        == f3_control
+    )
     for arm in ("F4", "F5", "F6"):
         job = temporal[f"train_{arm}"]
         assert job.command[job.command.index("--init-from") + 1] == f2
@@ -216,3 +234,113 @@ def test_cache_inventory_rejects_unlisted_pt_files(tmp_path: Path) -> None:
     stale.write_bytes(b"pre-warmup-stale")
     with pytest.raises(SpringV31Error, match="directory/inventory .pt set differs"):
         _validate_cache_inventory(root, manifest, sequence_warmup=4)
+
+
+def test_completion_claims_runtime_and_metrics_fail_closed() -> None:
+    claims = {
+        "paper_accuracy": False,
+        "paper_gt": True,
+        "epipolar_refinement": False,
+        "temporal_future_frames": False,
+        "formal_holdout": True,
+        "coverage_eligible": True,
+        "final_training_checkpoint": True,
+        "final_acceptance_eligible": True,
+        "acceptance_eligible": True,
+        "full_validation_selection": True,
+    }
+    runtime = {
+        "contract_version": "matched_candidate_forward_runtime_v1",
+        "timing_backend": "torch.cuda.Event",
+        "model_forward_calls": 1302,
+        "model_forward_latency_ms_mean": 2.0,
+        "model_forward_latency_ms_min": 1.0,
+        "model_forward_latency_ms_max": 3.0,
+        "cuda_allocated_at_start_bytes": 0,
+        "cuda_reserved_at_start_bytes": 0,
+        "cuda_peak_allocated_bytes": 1,
+        "cuda_peak_reserved_bytes": 1,
+    }
+    metric = {"value": 0.5, "numerator": 5.0, "count": 10, "valid": True}
+    report = {
+        "status": "FINAL_CHECKPOINT_EVALUATION_COMPLETE",
+        "claims": claims,
+        "device": "cuda",
+        "elapsed_seconds": 4.0,
+        "runtime_v3": runtime,
+        "methods": {"T3_VGGT": {"epe_px": metric, "bad_1": metric}},
+    }
+
+    _model_completion_evidence(report, "F6")
+    assert _runtime_evidence(report, "F6")["model_forward_calls"] == 1302
+    assert _primary_metric_evidence(report, "F6")["epe_px"]["count"] == 10
+
+    report["claims"]["final_acceptance_eligible"] = False
+    with pytest.raises(SpringV31Error, match="final-acceptance"):
+        _model_completion_evidence(report, "F6")
+    report["claims"]["final_acceptance_eligible"] = True
+    report["methods"]["T3_VGGT"]["epe_px"]["numerator"] = float("nan")
+    with pytest.raises(SpringV31Error, match="invalid numerator/count"):
+        _primary_metric_evidence(report, "F6")
+
+
+def _config_protocol_for_matrix(paths: Paths) -> dict[str, object]:
+    return {
+        arm: {
+            "path": str(
+                (paths.project_root / f"configs/spring_v3_1/{arm}.yaml").resolve()
+            ),
+            "sha256": sha256_file(
+                paths.project_root / f"configs/spring_v3_1/{arm}.yaml"
+            ),
+        }
+        for arm in ARM_ORDER
+    }
+
+
+def test_matrix_completion_requires_exact_full_arm_selection(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _, paths = _args(tmp_path)
+    for arm in ARM_ORDER[:-1]:
+        metrics = paths.arm_eval(arm) / "metrics.json"
+        metrics.parent.mkdir(parents=True, exist_ok=True)
+        metrics.write_text("{}\n", encoding="utf-8")
+    _write_f7_blocked(paths)
+
+    def verified(_paths: Paths, arm: str) -> dict[str, object]:
+        return {
+            "status": (
+                "SCREENING_ONLY"
+                if arm in {"F0", "F1"}
+                else "FINAL_CHECKPOINT_EVALUATION_COMPLETE"
+            ),
+            "primary_metrics": {
+                "method": arm,
+                "epe_px": {"value": 1.0, "numerator": 2.0, "count": 2},
+                "bad_1": {"value": 0.5, "numerator": 1.0, "count": 2},
+            },
+        }
+
+    monkeypatch.setattr("tools.run_spring_v3_1_ffs._verify_eval_result", verified)
+    monkeypatch.setattr(
+        "tools.run_spring_v3_1_ffs.repository_git_hash", lambda _path: "a" * 40
+    )
+    source = {"git_clean": True, "git_dirty_paths": [], "git_head": "a" * 40}
+    common = {
+        "source_snapshot": source,
+        "config_protocol": _config_protocol_for_matrix(paths),
+        "backbone_protocol": {},
+        "job_results": {},
+        "dry_run": False,
+    }
+    partial = _matrix_receipt(paths, arms=("F0",), **common)
+    assert partial["status"] == "PHASE_COMPLETE_EVIDENCE_PENDING"
+    assert partial["formal_completion"]["exact_arm_selection"] is False
+
+    complete = _matrix_receipt(paths, arms=ARM_ORDER, **common)
+    assert complete["status"] == "COMPLETE_WITH_OPTIONAL_F7_BLOCKED"
+    assert complete["arms"]["F0"]["status"] == "SCREENING_ONLY"
+    assert complete["arms"]["F2"]["status"] == ("FINAL_CHECKPOINT_EVALUATION_COMPLETE")
+    assert complete["arms"]["F7"]["status"] == "OPTIONAL_BLOCKED"
+    assert complete["results"][6]["epe_px"]["numerator"] == 2.0

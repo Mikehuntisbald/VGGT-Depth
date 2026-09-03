@@ -251,7 +251,7 @@ def test_f3_control_checkpoint_passes_strict_stage_b_initialization(
 
 def test_baseline_and_optional_configs_are_seed42_common_domain() -> None:
     for arm, scale, max_disp, prediction in (
-        ("F0", 1, 384, "direct_full_resolution_ffs"),
+        ("F0", 1, 416, "direct_full_resolution_ffs"),
         ("F1", 2, 192, "align_corners_false_bilinear"),
     ):
         config = OmegaConf.load(CONFIG_ROOT / f"{arm}.yaml")

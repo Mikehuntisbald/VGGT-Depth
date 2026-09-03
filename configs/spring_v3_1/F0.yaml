@@ -9,7 +9,7 @@ ffs:
   spatial_scale: 1
   checkpoint_label: 20-30-48
   iterations: 4
-  max_disp: 384
+  max_disp: 416
   right_left_check: true
 
 evaluation:

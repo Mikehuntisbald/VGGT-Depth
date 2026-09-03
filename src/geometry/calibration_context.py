@@ -112,6 +112,11 @@ def temporal_conditioning_transforms(
                 identity,
             )
             relative = current_h @ torch.linalg.inv(_homogeneous(history))
+            # FP32 inversion can leave a few-epsilon residue in this row for
+            # otherwise valid rigid poses. Keep the public transform contract
+            # exact before strict downstream validation.
+            relative = relative.clone()
+            relative[:, 3] = relative.new_tensor((0.0, 0.0, 0.0, 1.0))
             outputs.append(
                 torch.where(
                     slot_valid.reshape(batch_size, 1, 1),

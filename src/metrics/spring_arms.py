@@ -33,6 +33,85 @@ def _masked_mean(value: np.ndarray, mask: np.ndarray) -> float:
     return float(selected.mean()) if selected.size else float("nan")
 
 
+def _spring_boundary_mask(
+    ground_truth: np.ndarray,
+    *,
+    gradient_threshold_px: float = 1.0,
+    radius_px: int = 1,
+) -> np.ndarray:
+    """Derive a GT-only disparity boundary band on a NumPy image grid."""
+
+    gt = _array(ground_truth)
+    if gt.ndim != 2:
+        raise ValueError(f"ground_truth must be 2-D, got {gt.shape}")
+    if not math.isfinite(float(gradient_threshold_px)) or gradient_threshold_px < 0:
+        raise ValueError("gradient_threshold_px must be finite and >= 0")
+    if isinstance(radius_px, bool) or not isinstance(radius_px, int) or radius_px < 0:
+        raise ValueError("radius_px must be a non-negative integer")
+
+    valid = _valid_gt(gt)
+    boundary = np.zeros_like(valid, dtype=bool)
+    if gt.shape[1] > 1:
+        edge = (
+            (np.abs(gt[:, 1:] - gt[:, :-1]) >= float(gradient_threshold_px))
+            & valid[:, 1:]
+            & valid[:, :-1]
+        )
+        boundary[:, 1:] |= edge
+        boundary[:, :-1] |= edge
+    if gt.shape[0] > 1:
+        edge = (
+            (np.abs(gt[1:, :] - gt[:-1, :]) >= float(gradient_threshold_px))
+            & valid[1:, :]
+            & valid[:-1, :]
+        )
+        boundary[1:, :] |= edge
+        boundary[:-1, :] |= edge
+    if radius_px == 0 or not boundary.any():
+        return boundary
+
+    # Chebyshev dilation matches the max-pool implementation in
+    # metrics.boundary without adding Torch to this NumPy-only path.
+    dilated = np.zeros_like(boundary, dtype=bool)
+    height, width = boundary.shape
+    for dy in range(-radius_px, radius_px + 1):
+        src_y0 = max(0, -dy)
+        src_y1 = min(height, height - dy)
+        dst_y0 = max(0, dy)
+        dst_y1 = min(height, height + dy)
+        for dx in range(-radius_px, radius_px + 1):
+            src_x0 = max(0, -dx)
+            src_x1 = min(width, width - dx)
+            dst_x0 = max(0, dx)
+            dst_x1 = min(width, width + dx)
+            dilated[dst_y0:dst_y1, dst_x0:dst_x1] |= boundary[
+                src_y0:src_y1, src_x0:src_x1
+            ]
+    return dilated
+
+
+def _masked_stats(
+    value: np.ndarray,
+    mask: np.ndarray,
+    *,
+    event_threshold: float | None = None,
+) -> tuple[float, float, int]:
+    """Return ``(mean/rate, numerator, count)`` for one metric domain."""
+
+    selected = np.asarray(mask, dtype=bool).copy()
+    selected &= np.isfinite(value)
+    count = int(selected.sum())
+    if count == 0:
+        return float("nan"), float("nan"), 0
+    if event_threshold is None:
+        numerator = float(np.asarray(value, dtype=np.float64)[selected].sum())
+    else:
+        numerator = float(
+            (np.asarray(value, dtype=np.float64)[selected] > event_threshold).sum()
+        )
+    return numerator / count, numerator, count
+
+
 def disparity_metrics(
     prediction: Any,
     ground_truth: Any,
@@ -49,7 +128,9 @@ def disparity_metrics(
     pred = _array(prediction)
     gt = _array(ground_truth)
     if pred.shape != gt.shape:
-        raise ValueError(f"prediction/ground_truth shape mismatch: {pred.shape} vs {gt.shape}")
+        raise ValueError(
+            f"prediction/ground_truth shape mismatch: {pred.shape} vs {gt.shape}"
+        )
     # ``valid`` is the support used by EPE/bad-pixel metrics: a prediction
     # must be finite, while the GT must be a positive finite disparity.  Keep
     # the GT support separate below for completion metrics, because an
@@ -57,22 +138,44 @@ def disparity_metrics(
     # from the denominator.
     gt_support = _valid_gt(gt)
     if valid_mask is not None:
-        gt_support &= _array(valid_mask, dtype=bool)
+        valid_mask_array = _array(valid_mask, dtype=bool)
+        if valid_mask_array.shape != gt.shape:
+            raise ValueError(
+                f"valid_mask shape mismatch: {valid_mask_array.shape} vs {gt.shape}"
+            )
+        gt_support &= valid_mask_array
     valid = gt_support & np.isfinite(pred)
     error = np.abs(pred - gt)
-    detail = np.ones_like(valid, dtype=bool) if detail_mask is None else _array(detail_mask, dtype=bool)
-    matched = np.ones_like(valid, dtype=bool) if match_mask is None else _array(match_mask, dtype=bool)
+    detail = (
+        np.ones_like(valid, dtype=bool)
+        if detail_mask is None
+        else _array(detail_mask, dtype=bool)
+    )
+    matched = (
+        np.ones_like(valid, dtype=bool)
+        if match_mask is None
+        else _array(match_mask, dtype=bool)
+    )
+    if detail.shape != valid.shape:
+        raise ValueError(f"detail_mask shape mismatch: {detail.shape} vs {valid.shape}")
+    if matched.shape != valid.shape:
+        raise ValueError(f"match_mask shape mismatch: {matched.shape} vs {valid.shape}")
     unmatched = ~matched
-    boundary = np.zeros_like(valid, dtype=bool) if boundary_mask is None else _array(boundary_mask, dtype=bool)
+    boundary = (
+        np.zeros_like(valid, dtype=bool)
+        if boundary_mask is None
+        else _array(boundary_mask, dtype=bool)
+    )
+    if boundary.shape != valid.shape:
+        raise ValueError(
+            f"boundary_mask shape mismatch: {boundary.shape} vs {valid.shape}"
+        )
 
-    def epe(mask: np.ndarray) -> float:
-        return _masked_mean(error, valid & mask)
+    def epe_stats(mask: np.ndarray) -> tuple[float, float, int]:
+        return _masked_stats(error, valid & mask)
 
-    def bad(mask: np.ndarray, threshold: float) -> float:
-        selected = valid & mask
-        if not selected.any():
-            return float("nan")
-        return float((error[selected] > threshold).mean())
+    def bad_stats(mask: np.ndarray, threshold: float) -> tuple[float, float, int]:
+        return _masked_stats(error, valid & mask, event_threshold=threshold)
 
     # The unmatched domain is defined entirely by valid GT.  In particular,
     # zero, negative, NaN, and +/-Inf predictions remain in the denominator
@@ -83,24 +186,63 @@ def disparity_metrics(
     completion_error = np.abs(pred - gt)
     completion_count = int(completion_domain.sum())
 
-    def completion(threshold: float) -> float:
+    def completion_stats(threshold: float) -> tuple[float, float, int]:
         if completion_count == 0:
-            return float("nan")
+            return float("nan"), float("nan"), 0
         success = completion_valid & (completion_error <= threshold)
-        return float(success.sum() / completion_count)
+        numerator = float(success.sum())
+        return numerator / completion_count, numerator, completion_count
+
+    overall_epe, overall_epe_num, overall_epe_count = epe_stats(
+        np.ones_like(valid, dtype=bool)
+    )
+    overall_1px, overall_1px_num, overall_1px_count = bad_stats(
+        np.ones_like(valid, dtype=bool), 1.0
+    )
+    high_detail_epe, high_detail_epe_num, high_detail_epe_count = epe_stats(detail)
+    high_detail_1px, high_detail_1px_num, high_detail_1px_count = bad_stats(detail, 1.0)
+    low_detail_epe, low_detail_epe_num, low_detail_epe_count = epe_stats(~detail)
+    low_detail_1px, low_detail_1px_num, low_detail_1px_count = bad_stats(~detail, 1.0)
+    matched_epe, matched_epe_num, matched_epe_count = epe_stats(matched)
+    matched_1px, matched_1px_num, matched_1px_count = bad_stats(matched, 1.0)
+    unmatched_1px, unmatched_1px_num, unmatched_1px_count = completion_stats(1.0)
+    unmatched_2px, unmatched_2px_num, unmatched_2px_count = completion_stats(2.0)
+    boundary_epe_value, boundary_epe_num, boundary_epe_count = epe_stats(boundary)
 
     out: dict[str, float | int] = {
-        "overall_epe": epe(np.ones_like(valid, dtype=bool)),
-        "overall_1px": bad(np.ones_like(valid, dtype=bool), 1.0),
-        "high_detail_epe": epe(detail),
-        "high_detail_1px": bad(detail, 1.0),
-        "low_detail_epe": epe(~detail),
-        "low_detail_1px": bad(~detail, 1.0),
-        "matched_epe": epe(matched),
-        "matched_1px": bad(matched, 1.0),
-        "unmatched_completion_1px": completion(1.0),
-        "unmatched_completion_2px": completion(2.0),
-        "boundary_epe": epe(boundary) if boundary.any() else float("nan"),
+        "overall_epe": overall_epe,
+        "overall_epe_numerator": overall_epe_num,
+        "overall_epe_count": overall_epe_count,
+        "overall_1px": overall_1px,
+        "overall_1px_numerator": overall_1px_num,
+        "overall_1px_count": overall_1px_count,
+        "high_detail_epe": high_detail_epe,
+        "high_detail_epe_numerator": high_detail_epe_num,
+        "high_detail_epe_count": high_detail_epe_count,
+        "high_detail_1px": high_detail_1px,
+        "high_detail_1px_numerator": high_detail_1px_num,
+        "high_detail_1px_count": high_detail_1px_count,
+        "low_detail_epe": low_detail_epe,
+        "low_detail_epe_numerator": low_detail_epe_num,
+        "low_detail_epe_count": low_detail_epe_count,
+        "low_detail_1px": low_detail_1px,
+        "low_detail_1px_numerator": low_detail_1px_num,
+        "low_detail_1px_count": low_detail_1px_count,
+        "matched_epe": matched_epe,
+        "matched_epe_numerator": matched_epe_num,
+        "matched_epe_count": matched_epe_count,
+        "matched_1px": matched_1px,
+        "matched_1px_numerator": matched_1px_num,
+        "matched_1px_count": matched_1px_count,
+        "unmatched_completion_1px": unmatched_1px,
+        "unmatched_completion_1px_numerator": unmatched_1px_num,
+        "unmatched_completion_1px_count": unmatched_1px_count,
+        "unmatched_completion_2px": unmatched_2px,
+        "unmatched_completion_2px_numerator": unmatched_2px_num,
+        "unmatched_completion_2px_count": unmatched_2px_count,
+        "boundary_epe": boundary_epe_value,
+        "boundary_epe_numerator": boundary_epe_num,
+        "boundary_epe_count": boundary_epe_count,
         "valid_count": int(valid.sum()),
         "unmatched_count": completion_count,
     }
@@ -109,16 +251,43 @@ def disparity_metrics(
         # FFS trusted-measurement error evaluates the frozen observation on
         # its own support; it must not disappear merely because the student
         # prediction at that pixel is NaN.
-        trusted = gt_support & _array(ffs_trusted_mask, dtype=bool) & np.isfinite(ffs)
-        out["ffs_trusted_measurement_error"] = _masked_mean(np.abs(ffs - gt), trusted)
-        out["ffs_trusted_count"] = int(trusted.sum())
+        trusted_mask = _array(ffs_trusted_mask, dtype=bool)
+        if trusted_mask.shape != gt.shape:
+            raise ValueError(
+                "ffs_trusted_mask shape mismatch: "
+                f"{trusted_mask.shape} vs {gt.shape}"
+            )
+        if ffs.shape != gt.shape:
+            raise ValueError(
+                f"ffs_prediction shape mismatch: {ffs.shape} vs {gt.shape}"
+            )
+        trusted = gt_support & trusted_mask & np.isfinite(ffs)
+        trusted_value, trusted_num, trusted_count = _masked_stats(
+            np.abs(ffs - gt), trusted
+        )
+        out["ffs_trusted_measurement_error"] = trusted_value
+        out["ffs_trusted_measurement_error_numerator"] = trusted_num
+        out["ffs_trusted_measurement_error_count"] = trusted_count
+        out["ffs_trusted_count"] = trusted_count
     else:
         out["ffs_trusted_measurement_error"] = float("nan")
+        out["ffs_trusted_measurement_error_numerator"] = float("nan")
+        out["ffs_trusted_measurement_error_count"] = 0
         out["ffs_trusted_count"] = 0
     finite = np.isfinite(pred)
-    out["negative_rate"] = float((finite & (pred < 0)).mean())
-    out["zero_rate"] = float((finite & (pred == 0)).mean())
-    out["invalid_rate"] = float((~finite).mean())
+    output_count = int(pred.size)
+    negative_num = float((finite & (pred < 0)).sum())
+    zero_num = float((finite & (pred == 0)).sum())
+    invalid_num = float((~finite).sum())
+    out["negative_rate"] = negative_num / output_count if output_count else float("nan")
+    out["negative_rate_numerator"] = negative_num
+    out["negative_rate_count"] = output_count
+    out["zero_rate"] = zero_num / output_count if output_count else float("nan")
+    out["zero_rate_numerator"] = zero_num
+    out["zero_rate_count"] = output_count
+    out["invalid_rate"] = invalid_num / output_count if output_count else float("nan")
+    out["invalid_rate_numerator"] = invalid_num
+    out["invalid_rate_count"] = output_count
     return out
 
 
@@ -133,12 +302,29 @@ def temporal_residual_metrics(
 
     pred = _array(prediction_residual)
     ref = _array(reference_residual)
-    mask = _array(valid_mask, dtype=bool) & np.isfinite(pred) & np.isfinite(ref)
+    if pred.shape != ref.shape:
+        raise ValueError("temporal residual prediction/reference shapes must match")
+    valid_array = _array(valid_mask, dtype=bool)
+    if valid_array.shape != pred.shape:
+        raise ValueError("temporal residual valid_mask shape must match inputs")
+    rigid = (
+        np.ones_like(pred, dtype=bool)
+        if rigid_mask is None
+        else _array(rigid_mask, dtype=bool)
+    )
+    if rigid.shape != pred.shape:
+        raise ValueError("temporal residual rigid_mask shape must match inputs")
+    mask = valid_array & np.isfinite(pred) & np.isfinite(ref)
     error = np.abs(pred - ref)
-    rigid = np.ones_like(mask, dtype=bool) if rigid_mask is None else _array(rigid_mask, dtype=bool)
+    rigid_value, rigid_num, rigid_count = _masked_stats(error, mask & rigid)
+    nonrigid_value, nonrigid_num, nonrigid_count = _masked_stats(error, mask & ~rigid)
     return {
-        "rigid_temporal_residual_error": _masked_mean(error, mask & rigid),
-        "non_rigid_temporal_residual_error": _masked_mean(error, mask & ~rigid),
+        "rigid_temporal_residual_error": rigid_value,
+        "rigid_temporal_residual_error_numerator": rigid_num,
+        "rigid_temporal_residual_error_count": rigid_count,
+        "non_rigid_temporal_residual_error": nonrigid_value,
+        "non_rigid_temporal_residual_error_numerator": nonrigid_num,
+        "non_rigid_temporal_residual_error_count": nonrigid_count,
         "temporal_residual_valid_count": int(mask.sum()),
     }
 
@@ -225,9 +411,7 @@ def topk_diagnostics(
                 if age2_domain.shape == vm.shape:
                     age2_domain = age2_domain.any(axis=0)
                 else:
-                    raise ValueError(
-                        "age2_available must have [H,W] or [K,H,W] shape"
-                    )
+                    raise ValueError("age2_available must have [H,W] or [K,H,W] shape")
 
         # Count distinct temporal ages (not merely the number of populated
         # slots).  Two candidates from the same age are not evidence of
@@ -291,7 +475,8 @@ def topk_diagnostics(
                 0.0,
             )
             phase_variances.append(
-                1.0 - np.sqrt(np.clip(mean_cos * mean_cos + mean_sin * mean_sin, 0.0, 1.0))
+                1.0
+                - np.sqrt(np.clip(mean_cos * mean_cos + mean_sin * mean_sin, 0.0, 1.0))
             )
             phase_domains.append(count > 0)
         phase_stack = np.stack(phase_variances, axis=0)
@@ -310,7 +495,9 @@ def topk_diagnostics(
                 float(age2[age2_domain].mean()) if age2_domain.any() else float("nan")
             ),
             "unique_age_fraction": (
-                float(unique_age[pixel_valid].mean()) if pixel_valid.any() else float("nan")
+                float(unique_age[pixel_valid].mean())
+                if pixel_valid.any()
+                else float("nan")
             ),
             "phase_variance": (
                 float(phase_stack[phase_domain_stack].mean())
@@ -329,7 +516,9 @@ def topk_diagnostics(
             ),
             "topk_valid_count": int(finite.sum()),
         }
-    result["gain_by_fractional_phase_bucket"] = _bucket_mean(fractional_phase_bucket_gain)
+    result["gain_by_fractional_phase_bucket"] = _bucket_mean(
+        fractional_phase_bucket_gain
+    )
     result["gain_by_camera_motion_bucket"] = _bucket_mean(camera_motion_bucket_gain)
     return result
 
@@ -351,7 +540,9 @@ def aggregate_metric_rows(rows: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
 
     if not rows:
         raise ValueError("cannot aggregate an empty metric row sequence")
-    keys = sorted({key for row in rows for key in row if isinstance(row[key], (int, float))})
+    keys = sorted(
+        {key for row in rows for key in row if isinstance(row[key], (int, float))}
+    )
     result: dict[str, Any] = {"frames": len(rows)}
     for key in keys:
         values = np.asarray([float(row[key]) for row in rows], dtype=np.float64)
@@ -438,7 +629,9 @@ def _spring_map_path(
     try:
         frame_id = int(_spring_record_value(record, "frame_id"))
     except (TypeError, ValueError) as exc:
-        raise SpringNativeMapError("Spring manifest record has invalid frame_id") from exc
+        raise SpringNativeMapError(
+            "Spring manifest record has invalid frame_id"
+        ) from exc
     return sequence_root / "maps" / name / f"{name}_{frame_id:04d}.png"
 
 
@@ -539,7 +732,9 @@ def spring_map_bundle(
             kind="rigid",
         )
     elif require_rigid:
-        raise SpringNativeMapError(f"required Spring rigid map is missing: {rigid_path}")
+        raise SpringNativeMapError(
+            f"required Spring rigid map is missing: {rigid_path}"
+        )
     else:
         rigid = None
     return {
@@ -563,8 +758,23 @@ def spring_disparity_row(
     ffs_trusted_mask: Any,
     ffs_prediction: Any,
     boundary_epe: float | None = None,
-) -> dict[str, float | int]:
-    """Compute one native Spring row using the shared metric contract."""
+    boundary_mask: Any | None = None,
+    boundary_gradient_threshold_px: float = 1.0,
+    boundary_radius_px: int = 1,
+) -> dict[str, Any]:
+    """Compute one native Spring row using the native-GT metric contract.
+
+    If no mask is supplied, the boundary domain is derived directly from the
+    Spring ground truth. ``boundary_epe`` remains a compatibility argument,
+    but cannot override the GT-derived metric.
+    """
+
+    if boundary_mask is None:
+        boundary_mask = _spring_boundary_mask(
+            _array(ground_truth),
+            gradient_threshold_px=boundary_gradient_threshold_px,
+            radius_px=boundary_radius_px,
+        )
 
     result = disparity_metrics(
         prediction,
@@ -573,22 +783,82 @@ def spring_disparity_row(
         match_mask=match_mask,
         ffs_trusted_mask=ffs_trusted_mask,
         ffs_prediction=ffs_prediction,
+        boundary_mask=boundary_mask,
     )
-    if boundary_epe is not None and math.isfinite(float(boundary_epe)):
-        result["boundary_epe"] = float(boundary_epe)
+    result["boundary_source"] = "spring_gt_disparity_boundary_mask"
+    if boundary_epe is not None:
+        result["boundary_override_ignored"] = True
     return result
 
 
 def aggregate_spring_rows(rows: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
-    """Reduce native rows without inventing values."""
+    """Reduce native rows by global numerator/count where available."""
 
     if not rows:
         raise ValueError("cannot aggregate an empty Spring metric row sequence")
     result: dict[str, Any] = {
         "frames": len(rows),
-        "aggregation": "frame_mean_except_output_health_rates_pixel_weighted",
+        "aggregation": (
+            "global_numerator_count_pixel_weighted_with_legacy_frame_mean_fallback"
+        ),
     }
+    used_fallback = False
     for name in SPRING_NATIVE_FIELDS:
+        numerator_name = f"{name}_numerator"
+        count_name = f"{name}_count"
+        numerator = 0.0
+        count = 0
+        pair_available = False
+        pair_invalid = False
+        missing_pair = False
+        for row in rows:
+            raw_num = row.get(numerator_name)
+            raw_count = row.get(count_name)
+            if raw_num is None and raw_count is None:
+                missing_pair = True
+                continue
+            pair_available = True
+            # An empty metric domain contributes nothing. A positive count
+            # with a malformed numerator remains fail-closed.
+            if (
+                isinstance(raw_count, int)
+                and not isinstance(raw_count, bool)
+                and raw_count == 0
+                and (
+                    raw_num is None
+                    or (
+                        isinstance(raw_num, (int, float))
+                        and not isinstance(raw_num, bool)
+                        and (not math.isfinite(float(raw_num)) or float(raw_num) == 0.0)
+                    )
+                )
+            ):
+                continue
+            if (
+                isinstance(raw_num, (int, float))
+                and not isinstance(raw_num, bool)
+                and math.isfinite(float(raw_num))
+                and isinstance(raw_count, int)
+                and not isinstance(raw_count, bool)
+                and raw_count > 0
+            ):
+                numerator += float(raw_num)
+                count += int(raw_count)
+            else:
+                pair_invalid = True
+        if pair_available and not missing_pair:
+            if pair_invalid or count <= 0:
+                result[name] = None
+                result[numerator_name] = None
+                result[count_name] = count
+            else:
+                result[name] = numerator / count
+                result[numerator_name] = numerator
+                result[count_name] = count
+            continue
+
+        # Old sidecars remain readable, but the receipt exposes that their
+        # per-frame means could not be reduced by a global pixel domain.
         values = []
         for row in rows:
             value = row.get(name)
@@ -597,15 +867,52 @@ def aggregate_spring_rows(rows: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
                 if math.isfinite(value):
                     values.append(value)
         result[name] = None if not values else float(np.mean(values))
+        if values:
+            used_fallback = True
+        result[numerator_name] = None
+        result[count_name] = 0
     pixels = sum(int(row.get("image_pixel_count", 0) or 0) for row in rows)
-    if pixels:
-        for name in ("negative_rate", "zero_rate", "invalid_rate"):
-            result[name] = sum(
-                float(row.get(name, 0.0) or 0.0)
-                * int(row.get("image_pixel_count", 0) or 0)
-                for row in rows
-                if isinstance(row.get(name), (int, float))
-            ) / pixels
+    result["image_pixel_count"] = pixels
+    for name in ("negative_rate", "zero_rate", "invalid_rate"):
+        numerator = 0.0
+        count = 0
+        used_rate_fallback = False
+        for row in rows:
+            raw_num = row.get(f"{name}_numerator")
+            raw_count = row.get(f"{name}_count")
+            if (
+                isinstance(raw_num, (int, float))
+                and not isinstance(raw_num, bool)
+                and math.isfinite(float(raw_num))
+                and isinstance(raw_count, int)
+                and not isinstance(raw_count, bool)
+                and raw_count > 0
+            ):
+                numerator += float(raw_num)
+                count += int(raw_count)
+                continue
+            pixels_for_row = int(row.get("image_pixel_count", 0) or 0)
+            value = row.get(name)
+            if (
+                pixels_for_row > 0
+                and isinstance(value, (int, float))
+                and not isinstance(value, bool)
+                and math.isfinite(float(value))
+            ):
+                numerator += float(value) * pixels_for_row
+                count += pixels_for_row
+                used_rate_fallback = True
+        if count > 0:
+            result[name] = numerator / count
+            result[f"{name}_numerator"] = numerator
+            result[f"{name}_count"] = count
+            if used_rate_fallback:
+                used_fallback = True
+        else:
+            result[name] = None
+            result[f"{name}_numerator"] = None
+            result[f"{name}_count"] = 0
+    result["aggregation_fallback_used"] = used_fallback
     for name in ("valid_count", "unmatched_count", "ffs_trusted_count"):
         result[name] = int(sum(int(row.get(name, 0) or 0) for row in rows))
     return result

@@ -3,12 +3,15 @@ from __future__ import annotations
 from pathlib import Path
 
 import numpy as np
+import pytest
 from PIL import Image
 
 from metrics.spring_arms import (
     aggregate_spring_rows,
+    disparity_metrics,
     spring_disparity_row,
     spring_map_bundle,
+    temporal_residual_metrics,
 )
 from tools.compose_spring_screening_report import (
     _protocol_training,
@@ -34,7 +37,9 @@ def _write_map(root: Path, name: str, frame_id: int, array: np.ndarray) -> None:
     Image.fromarray(array).save(path / f"{name}_{frame_id:04d}.png")
 
 
-def test_spring_map_bundle_applies_official_rigid_downsample_and_crop(tmp_path: Path) -> None:
+def test_spring_map_bundle_applies_official_rigid_downsample_and_crop(
+    tmp_path: Path,
+) -> None:
     frame_id = 2
     maps_root = tmp_path / "spring" / "train" / "0001" / "maps"
     detail = np.zeros((4, 6), dtype=np.uint8)
@@ -75,15 +80,195 @@ def test_spring_native_rows_keep_invalid_unmatched_denominator() -> None:
     assert row["unmatched_completion_1px"] == 1 / 3
 
 
+@pytest.mark.parametrize(
+    ("keyword", "value", "message"),
+    [
+        ("valid_mask", np.ones((2, 1), dtype=bool), "valid_mask shape mismatch"),
+        ("detail_mask", np.ones((2, 1), dtype=bool), "detail_mask shape mismatch"),
+        ("match_mask", np.ones((2, 1), dtype=bool), "match_mask shape mismatch"),
+        (
+            "boundary_mask",
+            np.ones((2, 1), dtype=bool),
+            "boundary_mask shape mismatch",
+        ),
+    ],
+)
+def test_spring_disparity_metrics_reject_mismatched_masks(
+    keyword: str, value: np.ndarray, message: str
+) -> None:
+    with pytest.raises(ValueError, match=message):
+        disparity_metrics(
+            np.ones((1, 2)),
+            np.ones((1, 2)),
+            **{keyword: value},
+        )
+
+
+def test_spring_disparity_metrics_reject_mismatched_ffs_inputs() -> None:
+    shape = (1, 2)
+    with pytest.raises(ValueError, match="ffs_trusted_mask shape mismatch"):
+        disparity_metrics(
+            np.ones(shape),
+            np.ones(shape),
+            ffs_trusted_mask=np.ones((2, 1), dtype=bool),
+            ffs_prediction=np.ones(shape),
+        )
+    with pytest.raises(ValueError, match="ffs_prediction shape mismatch"):
+        disparity_metrics(
+            np.ones(shape),
+            np.ones(shape),
+            ffs_trusted_mask=np.ones(shape, dtype=bool),
+            ffs_prediction=np.ones((2, 1)),
+        )
+
+
+@pytest.mark.parametrize(
+    ("reference", "valid_mask", "rigid_mask", "message"),
+    [
+        (
+            np.ones((2, 1)),
+            np.ones((1, 2), dtype=bool),
+            None,
+            "prediction/reference shapes must match",
+        ),
+        (
+            np.ones((1, 2)),
+            np.ones((2, 1), dtype=bool),
+            None,
+            "valid_mask shape must match inputs",
+        ),
+        (
+            np.ones((1, 2)),
+            np.ones((1, 2), dtype=bool),
+            np.ones((2, 1), dtype=bool),
+            "rigid_mask shape must match inputs",
+        ),
+    ],
+)
+def test_temporal_residual_metrics_reject_mismatched_shapes(
+    reference: np.ndarray,
+    valid_mask: np.ndarray,
+    rigid_mask: np.ndarray | None,
+    message: str,
+) -> None:
+    with pytest.raises(ValueError, match=message):
+        temporal_residual_metrics(
+            np.ones((1, 2)),
+            reference,
+            valid_mask=valid_mask,
+            rigid_mask=rigid_mask,
+        )
+
+
+def test_spring_metrics_emit_numerators_and_counts() -> None:
+    gt = np.full((1, 3), 2.0)
+    pred = np.array([[2.25, 0.0, np.nan]])
+    out = disparity_metrics(
+        pred,
+        gt,
+        detail_mask=np.ones_like(gt, dtype=bool),
+        match_mask=np.zeros_like(gt, dtype=bool),
+        ffs_trusted_mask=np.ones_like(gt, dtype=bool),
+        ffs_prediction=pred,
+        boundary_mask=np.ones_like(gt, dtype=bool),
+    )
+    names = (
+        "overall_epe",
+        "overall_1px",
+        "high_detail_epe",
+        "high_detail_1px",
+        "low_detail_epe",
+        "low_detail_1px",
+        "matched_epe",
+        "matched_1px",
+        "unmatched_completion_1px",
+        "unmatched_completion_2px",
+        "boundary_epe",
+        "ffs_trusted_measurement_error",
+        "negative_rate",
+        "zero_rate",
+        "invalid_rate",
+    )
+    for name in names:
+        assert f"{name}_numerator" in out
+        assert f"{name}_count" in out
+    assert out["unmatched_completion_1px_numerator"] == 1
+    assert out["unmatched_completion_1px_count"] == 3
+
+    temporal = temporal_residual_metrics(
+        np.array([[1.0, 3.0]]),
+        np.array([[0.0, 1.0]]),
+        valid_mask=np.ones((1, 2), dtype=bool),
+        rigid_mask=np.array([[True, False]]),
+    )
+    assert temporal["rigid_temporal_residual_error_numerator"] == 1
+    assert temporal["rigid_temporal_residual_error_count"] == 1
+    assert temporal["non_rigid_temporal_residual_error_numerator"] == 2
+    assert temporal["non_rigid_temporal_residual_error_count"] == 1
+
+
 def test_aggregate_spring_rows_pixel_weights_output_health_rates() -> None:
     rows = [
-        {"overall_epe": 1.0, "negative_rate": 0.0, "zero_rate": 0.0, "invalid_rate": 0.0, "image_pixel_count": 1},
-        {"overall_epe": 3.0, "negative_rate": 1.0, "zero_rate": 0.0, "invalid_rate": 1.0, "image_pixel_count": 3},
+        {
+            "overall_epe": 1.0,
+            "negative_rate": 0.0,
+            "zero_rate": 0.0,
+            "invalid_rate": 0.0,
+            "image_pixel_count": 1,
+        },
+        {
+            "overall_epe": 3.0,
+            "negative_rate": 1.0,
+            "zero_rate": 0.0,
+            "invalid_rate": 1.0,
+            "image_pixel_count": 3,
+        },
     ]
     aggregate = aggregate_spring_rows(rows)
     assert aggregate["overall_epe"] == 2.0
     assert aggregate["negative_rate"] == 0.75
     assert aggregate["invalid_rate"] == 0.75
+
+
+def test_aggregate_spring_rows_uses_global_metric_numerators_and_counts() -> None:
+    rows = [
+        {
+            "overall_epe": 1.0,
+            "overall_epe_numerator": 1.0,
+            "overall_epe_count": 1,
+            "image_pixel_count": 1,
+        },
+        {
+            "overall_epe": 3.0,
+            "overall_epe_numerator": 9.0,
+            "overall_epe_count": 3,
+            "image_pixel_count": 3,
+        },
+    ]
+    aggregate = aggregate_spring_rows(rows)
+    assert aggregate["overall_epe"] == 2.5
+    assert aggregate["overall_epe_numerator"] == 10.0
+    assert aggregate["overall_epe_count"] == 4
+    assert aggregate["aggregation_fallback_used"] is False
+
+
+def test_native_boundary_uses_spring_gt_and_ignores_legacy_override() -> None:
+    gt = np.asarray([[1.0, 1.0, 4.0, 4.0]])
+    prediction = np.asarray([[1.0, 1.0, 3.0, 4.0]])
+    mask = np.ones_like(gt, dtype=bool)
+    row = spring_disparity_row(
+        prediction,
+        gt,
+        detail_mask=mask,
+        match_mask=mask,
+        ffs_trusted_mask=mask,
+        ffs_prediction=prediction,
+        boundary_epe=999.0,
+    )
+    assert row["boundary_source"] == "spring_gt_disparity_boundary_mask"
+    assert row["boundary_override_ignored"] is True
+    assert row["boundary_epe"] != 999.0
+    assert row["boundary_epe_count"] > 0
 
 
 def test_composer_prefers_complete_native_side_channel_and_keeps_buckets() -> None:

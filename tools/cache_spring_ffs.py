@@ -90,11 +90,10 @@ def _cache_variant(role: str, scale: int | None = None) -> CacheVariant:
                 scale=1,
                 resolution_mode="full",
                 component="ffs-observation-full-resolution",
-                output_directory="observation_full_resolution",
+                output_directory="observation_full_resolution_maxdisp416",
                 default_iterations=4,
-                # Match F1's physical search domain: 192 LR px * scale 2.
-                default_max_disp=384,
-                max_disp_policy="matched_physical_search_range_384_hr_px",
+                default_max_disp=416,
+                max_disp_policy="checkpoint_native_416_hr_px",
             )
         raise ValueError("Spring FFS observation scale must be 1 (F0) or 2 (F1)")
     if role == "teacher":
@@ -321,6 +320,14 @@ def main(argv: list[str] | None = None) -> int:
         raise ValueError("iterations must be positive")
     if max_disp <= 0 or max_disp % 16:
         raise ValueError("max-disp must be positive and divisible by 16")
+    if (
+        variant.role == "observation"
+        and variant.scale == 1
+        and max_disp != variant.default_max_disp
+    ):
+        raise ValueError(
+            "full-resolution F0 is frozen to the checkpoint-native max-disp=416"
+        )
     manifest_path = args.manifest.expanduser().resolve()
     default_checkpoint = (
         PROJECT_ROOT

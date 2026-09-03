@@ -37,7 +37,7 @@ if str(PROJECT_ROOT) not in sys.path:
 if str(SRC_ROOT) not in sys.path:
     sys.path.insert(0, str(SRC_ROOT))
 
-from data.cache_dataset import sha256_file  # noqa: E402
+from data.cache_dataset import canonical_json_sha256, sha256_file  # noqa: E402
 from data.endpoint_selection import load_endpoint_index  # noqa: E402
 from data.manifest import load_manifest  # noqa: E402
 from data.spring import SPRING_GT_COMPONENT, SPRING_GT_TARGET_TYPE  # noqa: E402
@@ -91,6 +91,8 @@ CACHE_IDENTITY_FIELDS = frozenset(
         "config_sha256",
     }
 )
+_INVENTORY_VALIDATION_LOCK = threading.Lock()
+_INVENTORY_VALIDATION_CACHE: set[tuple[str, ...]] = set()
 SPRING_TARGET = {
     "type": SPRING_GT_TARGET_TYPE,
     "cache_component": SPRING_GT_COMPONENT,
@@ -130,9 +132,7 @@ ARM_PRIMARY_METHODS = {
     "F7": None,
 }
 
-ARM_CONFIGS = {
-    arm: f"configs/spring_v3_1/{arm}.yaml" for arm in ARM_ORDER
-}
+ARM_CONFIGS = {arm: f"configs/spring_v3_1/{arm}.yaml" for arm in ARM_ORDER}
 F3_INITIALIZER_CONFIG = "configs/spring_v3_1/F3_stage_a_control.yaml"
 
 TRAINING_CONFIG_CONTRACTS: dict[str, dict[str, Any]] = {
@@ -250,7 +250,7 @@ class Paths:
             train_half_observation=cache / "train" / "observation",
             validation_half_observation=cache / "validation" / "observation",
             validation_full_observation=(
-                cache / "validation" / "observation_full_resolution"
+                cache / "validation" / "observation_full_resolution_maxdisp416"
             ),
             train_ground_truth=cache / "train" / "teacher",
             validation_ground_truth=cache / "validation" / "teacher",
@@ -260,9 +260,7 @@ class Paths:
             validation_legacy_derived=(
                 cache / "validation" / "derived_f3_v2_gt_pose_no_depth"
             ),
-            train_calibrated_derived=(
-                cache / "train" / "derived_v31_calibrated_vggt"
-            ),
+            train_calibrated_derived=(cache / "train" / "derived_v31_calibrated_vggt"),
             validation_calibrated_derived=(
                 cache / "validation" / "derived_v31_calibrated_vggt"
             ),
@@ -384,6 +382,302 @@ def _metric_evidence(value: object, name: str) -> dict[str, Any]:
     }
 
 
+def _baseline_metric_evidence(
+    metrics: object, source_name: str, output_name: str
+) -> dict[str, Any]:
+    if not isinstance(metrics, Mapping):
+        raise SpringV31Error("baseline metrics are missing or malformed")
+    numerators = metrics.get("numerators")
+    denominators = metrics.get("denominators")
+    if not isinstance(numerators, Mapping) or not isinstance(denominators, Mapping):
+        raise SpringV31Error("baseline metric numerator/count evidence is missing")
+    return _metric_evidence(
+        {
+            "value": metrics.get(source_name),
+            "numerator": numerators.get(source_name),
+            "count": denominators.get(source_name),
+            "valid": True,
+        },
+        output_name,
+    )
+
+
+def _primary_metric_evidence(report: Mapping[str, Any], arm: str) -> dict[str, Any]:
+    method_name = ARM_PRIMARY_METHODS[arm]
+    if arm in {"F0", "F1"}:
+        return {
+            "method": method_name,
+            "epe_px": _baseline_metric_evidence(
+                report.get("metrics"), "overall_epe", "epe_px"
+            ),
+            "bad_1": _baseline_metric_evidence(
+                report.get("metrics"), "overall_1px", "bad_1"
+            ),
+        }
+    methods = report.get("methods")
+    method = methods.get(method_name) if isinstance(methods, Mapping) else None
+    if not isinstance(method, Mapping):
+        raise SpringV31Error(f"{arm} primary method {method_name!r} is missing")
+    return {
+        "method": method_name,
+        "epe_px": _metric_evidence(method.get("epe_px"), "epe_px"),
+        "bad_1": _metric_evidence(method.get("bad_1"), "bad_1"),
+    }
+
+
+def _endpoint_row_evidence(
+    paths: Paths, rows: Sequence[Mapping[str, Any]], arm: str
+) -> dict[str, Any]:
+    selection = load_endpoint_index(
+        paths.endpoint_index, manifest_path=paths.validation_manifest
+    )
+    if len(rows) != EXPECTED_ENDPOINT_COUNT or len(rows) != selection.count:
+        raise SpringV31Error(f"{arm} per-record endpoint count differs")
+    for index, (row, expected) in enumerate(zip(rows, selection.entries, strict=True)):
+        if (
+            not isinstance(row, Mapping)
+            or row.get("record_id") != f"{expected.sequence_id}/{expected.frame_id}"
+            or row.get("sequence_id") != expected.sequence_id
+            or row.get("manifest_index") != expected.manifest_index
+            or row.get("frame_id") != expected.frame_id
+            or not _is_finite_number(row.get("timestamp"))
+            or float(row["timestamp"]) != float(expected.timestamp)
+        ):
+            raise SpringV31Error(
+                f"{arm} per-record endpoint identity differs at row {index}"
+            )
+    return {
+        "records": len(rows),
+        "endpoint_id_sha256": selection.entries_sha256,
+        "ordered_identity_match": True,
+    }
+
+
+def _model_completion_evidence(report: Mapping[str, Any], arm: str) -> None:
+    claims = report.get("claims")
+    expected_claims = {
+        "paper_accuracy": False,
+        "paper_gt": True,
+        "epipolar_refinement": False,
+        "temporal_future_frames": False,
+        "coverage_eligible": True,
+        "final_training_checkpoint": True,
+        "final_acceptance_eligible": True,
+        "acceptance_eligible": True,
+        "full_validation_selection": True,
+    }
+    if report.get("status") != "FINAL_CHECKPOINT_EVALUATION_COMPLETE":
+        raise SpringV31Error(f"{arm} is not a final-checkpoint evaluation")
+    if not isinstance(claims, Mapping) or any(
+        claims.get(name) is not expected for name, expected in expected_claims.items()
+    ):
+        raise SpringV31Error(f"{arm} final-acceptance claims differ")
+    if arm == "F2":
+        expected_formal_holdout = None
+    else:
+        expected_formal_holdout = True
+    if claims.get("formal_holdout") is not expected_formal_holdout:
+        raise SpringV31Error(f"{arm} formal-holdout claim differs")
+
+
+def _runtime_evidence(report: Mapping[str, Any], arm: str) -> dict[str, Any]:
+    elapsed = report.get("elapsed_seconds")
+    runtime = report.get("runtime_v3")
+    if (
+        report.get("device") != "cuda"
+        or not _is_finite_number(elapsed, positive=True)
+        or not isinstance(runtime, Mapping)
+        or runtime.get("contract_version") != "matched_candidate_forward_runtime_v1"
+        or runtime.get("timing_backend") != "torch.cuda.Event"
+        or not _is_positive_int(runtime.get("model_forward_calls"))
+    ):
+        raise SpringV31Error(f"{arm} device/runtime evidence is malformed")
+    for name in (
+        "model_forward_latency_ms_mean",
+        "model_forward_latency_ms_min",
+        "model_forward_latency_ms_max",
+    ):
+        if not _is_finite_number(runtime.get(name), positive=True):
+            raise SpringV31Error(f"{arm} runtime metric {name} is malformed")
+    for name in (
+        "cuda_allocated_at_start_bytes",
+        "cuda_reserved_at_start_bytes",
+        "cuda_peak_allocated_bytes",
+        "cuda_peak_reserved_bytes",
+    ):
+        if not _is_nonnegative_int(runtime.get(name)):
+            raise SpringV31Error(f"{arm} runtime counter {name} is malformed")
+    return {
+        "device": "cuda",
+        "elapsed_seconds": float(elapsed),
+        "model_forward_calls": int(runtime["model_forward_calls"]),
+        "model_forward_latency_ms_mean": float(
+            runtime["model_forward_latency_ms_mean"]
+        ),
+    }
+
+
+def _cache_receipt_lineage(
+    root: Path, manifest: Path, *, component: str
+) -> dict[str, Any]:
+    root = root.resolve()
+    manifest = manifest.resolve()
+    receipt_path = root / "run_receipt.json"
+    inventory_path = root / "cache_manifest.jsonl"
+    receipt = _strict_json(receipt_path, f"{component} cache receipt")
+    identity = receipt.get("identity")
+    config = receipt.get("config")
+    if not isinstance(identity, Mapping) or not isinstance(config, Mapping):
+        raise SpringV31Error(f"{component} cache identity/config is missing")
+    _validate_cache_identity(
+        identity,
+        component,
+        component=component,
+        expected_commit=(
+            FFS_UPSTREAM_COMMIT if component.startswith("ffs-observation") else None
+        ),
+        expected_checkpoint=(
+            FFS_CHECKPOINT_SHA256 if component.startswith("ffs-observation") else None
+        ),
+    )
+    selected = receipt.get("selected_records")
+    written = receipt.get("written_records")
+    reused = receipt.get("reused_records")
+    expected_records = len(load_manifest(manifest))
+    if (
+        receipt.get("schema_version") != 1
+        or not _same_resolved_path(receipt.get("manifest"), manifest)
+        or receipt.get("manifest_sha256") != sha256_file(manifest)
+        or not _same_resolved_path(receipt.get("cache_manifest"), inventory_path)
+        or receipt.get("cache_manifest_sha256") != sha256_file(inventory_path)
+        or identity.get("config_sha256") != canonical_json_sha256(config)
+        or selected != expected_records
+        or not _is_nonnegative_int(written)
+        or not _is_nonnegative_int(reused)
+        or written + reused != selected
+    ):
+        raise SpringV31Error(f"{component} cache receipt/inventory lineage differs")
+    _validate_full_inventory_once(
+        root,
+        manifest,
+        sequence_warmup=0,
+        expected_identity=identity,
+        payload_kind="raw",
+        receipt_sha256=sha256_file(receipt_path),
+        inventory_sha256=sha256_file(inventory_path),
+    )
+    return {
+        "root": str(root),
+        "receipt_path": str(receipt_path),
+        "receipt_sha256": sha256_file(receipt_path),
+        "cache_manifest_path": str(inventory_path),
+        "cache_manifest_sha256": sha256_file(inventory_path),
+        "manifest_path": str(manifest),
+        "manifest_sha256": sha256_file(manifest),
+        "identity": dict(identity),
+    }
+
+
+def _calibration_lineage(paths: Paths, sidecar: Path, manifest: Path) -> dict[str, Any]:
+    sidecar = sidecar.resolve()
+    manifest = manifest.resolve()
+    receipt_path = sidecar.with_suffix(".receipt.json")
+    receipt = _strict_json(receipt_path, "calibration receipt")
+    source = receipt.get("source")
+    output = receipt.get("output")
+    if (
+        receipt.get("schema_version") != 1
+        or receipt.get("status") != "PASS"
+        or receipt.get("component") != "rectified-stereo-calibration-receipt"
+        or receipt.get("contract_version") != "stored_rectified_virtual_cameras_v1"
+        or not isinstance(source, Mapping)
+        or not isinstance(output, Mapping)
+        or not _same_resolved_path(source.get("manifest_path"), manifest)
+        or source.get("manifest_sha256") != sha256_file(manifest)
+        or not _same_resolved_path(source.get("pixel_audit_path"), paths.pixel_audit)
+        or source.get("pixel_audit_sha256") != sha256_file(paths.pixel_audit)
+        or not _same_resolved_path(output.get("sidecar_path"), sidecar)
+        or output.get("sidecar_sha256") != sha256_file(sidecar)
+    ):
+        raise SpringV31Error("calibration sidecar/receipt lineage differs")
+    return {
+        "component": "rectified-stereo-calibration",
+        "contract_version": "stored_rectified_virtual_cameras_v1",
+        "sidecar_path": str(sidecar),
+        "sidecar_sha256": sha256_file(sidecar),
+        "receipt_path": str(receipt_path),
+        "receipt_sha256": sha256_file(receipt_path),
+        "source_manifest_sha256": sha256_file(manifest),
+        "pixel_audit_sha256": sha256_file(paths.pixel_audit),
+    }
+
+
+def _derived_receipt_lineage(
+    root: Path, manifest: Path, *, calibrated: bool
+) -> dict[str, Any]:
+    root = root.resolve()
+    manifest = manifest.resolve()
+    receipt_path = root / "run_receipt.json"
+    inventory_path = root / "cache_manifest.jsonl"
+    receipt = _strict_json(receipt_path, "derived geometry receipt")
+    config = receipt.get("config")
+    output = receipt.get("output")
+    counts = receipt.get("counts")
+    selection = receipt.get("selection")
+    expected_component = (
+        "vggt-ffs-derived-geometry-calibrated-stereo-v2-batch"
+        if calibrated
+        else "vggt-ffs-derived-geometry-batch"
+    )
+    expected_records = len(_expected_cache_records(manifest, sequence_warmup=4))
+    if (
+        receipt.get("schema_version") != (2 if calibrated else 1)
+        or receipt.get("component") != expected_component
+        or receipt.get("manifest_sha256") != sha256_file(manifest)
+        or not isinstance(config, Mapping)
+        or not isinstance(output, Mapping)
+        or not isinstance(counts, Mapping)
+        or not isinstance(selection, Mapping)
+        or not _same_resolved_path(output.get("root"), root)
+        or not _same_resolved_path(output.get("cache_manifest"), inventory_path)
+        or output.get("cache_manifest_sha256") != sha256_file(inventory_path)
+        or counts.get("selected") != expected_records
+        or selection.get("selected_windows") != expected_records
+    ):
+        raise SpringV31Error("derived geometry receipt/inventory lineage differs")
+    if calibrated:
+        if not isinstance(config.get("rectified_stereo_calibration"), Mapping):
+            raise SpringV31Error("calibrated geometry lacks calibration lineage")
+    elif (
+        config.get("pose_source") != "Spring_GT_pose"
+        or config.get("depth_prior_source") != "disabled_zero_fill"
+    ):
+        raise SpringV31Error("F3 geometry is not GT-pose/no-depth control")
+    _validate_full_inventory_once(
+        root,
+        manifest,
+        sequence_warmup=4,
+        expected_identity=None,
+        payload_kind=(
+            "vggt-ffs-derived-geometry-calibrated-stereo-v2"
+            if calibrated
+            else "vggt-ffs-derived-geometry"
+        ),
+        receipt_sha256=sha256_file(receipt_path),
+        inventory_sha256=sha256_file(inventory_path),
+    )
+    return {
+        "component": expected_component,
+        "derived_cache_root": str(root),
+        "run_receipt_path": str(receipt_path),
+        "run_receipt_sha256": sha256_file(receipt_path),
+        "cache_manifest_path": str(inventory_path),
+        "cache_manifest_sha256": sha256_file(inventory_path),
+        "selected_records": expected_records,
+        "config": dict(config),
+    }
+
+
 def _validate_cache_identity(
     identity: Mapping[str, Any],
     name: str,
@@ -398,17 +692,21 @@ def _validate_cache_identity(
         value = identity.get(field)
         if field.endswith("_sha256") and not _is_sha256(value):
             raise SpringV31Error(f"{name} cache identity {field} is malformed")
-        if field == "upstream_commit" and (
-            not isinstance(value, str) or not value
-        ):
+        if field == "upstream_commit" and (not isinstance(value, str) or not value):
             raise SpringV31Error(f"{name} cache identity upstream_commit is malformed")
     if identity.get("component") != component:
         raise SpringV31Error(
             f"{name} cache component differs: {identity.get('component')!r}"
         )
-    if expected_commit is not None and identity.get("upstream_commit") != expected_commit:
+    if (
+        expected_commit is not None
+        and identity.get("upstream_commit") != expected_commit
+    ):
         raise SpringV31Error(f"{name} cache upstream commit differs")
-    if expected_checkpoint is not None and identity.get("checkpoint_sha256") != expected_checkpoint:
+    if (
+        expected_checkpoint is not None
+        and identity.get("checkpoint_sha256") != expected_checkpoint
+    ):
         raise SpringV31Error(f"{name} cache checkpoint SHA differs")
 
 
@@ -455,7 +753,9 @@ def _path_identity(path: Path) -> dict[str, Any]:
         "exists": path.exists(),
     }
     if path.is_file():
-        identity.update({"size_bytes": path.stat().st_size, "sha256": sha256_file(path)})
+        identity.update(
+            {"size_bytes": path.stat().st_size, "sha256": sha256_file(path)}
+        )
     return identity
 
 
@@ -493,7 +793,9 @@ def _git_checkout_state(path: Path, name: str) -> dict[str, Any]:
     return {"path": str(path.resolve()), "commit": head, "dirty_paths": dirty}
 
 
-def _backbone_protocol(paths: Paths, args: argparse.Namespace, arms: Sequence[str]) -> dict[str, Any]:
+def _backbone_protocol(
+    paths: Paths, args: argparse.Namespace, arms: Sequence[str]
+) -> dict[str, Any]:
     result: dict[str, Any] = {}
     if any(arm in RUNNABLE_ARMS for arm in arms):
         checkpoint = args.ffs_checkpoint.resolve()
@@ -554,7 +856,9 @@ def _config_protocol(paths: Paths) -> dict[str, Any]:
 
     result: dict[str, Any] = {}
     for name, expected in TRAINING_CONFIG_CONTRACTS.items():
-        relative = F3_INITIALIZER_CONFIG if name == "F3_stage_a_control" else ARM_CONFIGS[name]
+        relative = (
+            F3_INITIALIZER_CONFIG if name == "F3_stage_a_control" else ARM_CONFIGS[name]
+        )
         path = (paths.project_root / relative).resolve()
         config = resolve_config(path)
         stage = training_stage(config)
@@ -615,7 +919,9 @@ def _config_protocol(paths: Paths) -> dict[str, Any]:
                     "actual": str(v31_contracts),
                 }
         if differences:
-            raise SpringV31Error(f"{name} config differs from the frozen arm: {differences}")
+            raise SpringV31Error(
+                f"{name} config differs from the frozen arm: {differences}"
+            )
         result[name] = {"path": str(path), "sha256": sha256_file(path), **observed}
 
     # F0/F1 are consumed by the baseline evaluator, not train.py. Their YAMLs
@@ -649,7 +955,7 @@ def _config_protocol(paths: Paths) -> dict[str, Any]:
             "scale": scale,
             "component": component,
             "iterations": 4,
-            "max_disp": 384 if scale == 1 else 192,
+            "max_disp": 416 if scale == 1 else 192,
             "right_left_check": True,
             "prediction": prediction,
             "endpoint_protocol": PROTOCOL,
@@ -662,7 +968,9 @@ def _config_protocol(paths: Paths) -> dict[str, Any]:
             if observed.get(key) != value
         }
         if differences:
-            raise SpringV31Error(f"{name} config differs from the frozen arm: {differences}")
+            raise SpringV31Error(
+                f"{name} config differs from the frozen arm: {differences}"
+            )
         result[name] = {"path": str(path), "sha256": sha256_file(path), **observed}
     f7_path = (paths.project_root / ARM_CONFIGS["F7"]).resolve()
     f7 = OmegaConf.load(f7_path)
@@ -718,9 +1026,13 @@ def _source_snapshot(paths: Paths) -> dict[str, Any]:
         *ARM_CONFIGS.values(),
         F3_INITIALIZER_CONFIG,
     }
-    for directory in (paths.project_root / "src/models", paths.project_root / "src/geometry"):
+    for directory in (
+        paths.project_root / "src/models",
+        paths.project_root / "src/geometry",
+    ):
         relative_files.update(
-            str(path.relative_to(paths.project_root)) for path in directory.rglob("*.py")
+            str(path.relative_to(paths.project_root))
+            for path in directory.rglob("*.py")
         )
     pending_configs = [value for value in relative_files if value.endswith(".yaml")]
     while pending_configs:
@@ -807,7 +1119,9 @@ def _manifest_protocol(paths: Paths) -> dict[str, Any]:
         if record.sequence_id in set(VALIDATION_SEQUENCES)
     ]
     if [record.to_dict() for record in train_records] != expected_train:
-        raise SpringV31Error("train manifest is not the exact sequence partition of all.jsonl")
+        raise SpringV31Error(
+            "train manifest is not the exact sequence partition of all.jsonl"
+        )
     if [record.to_dict() for record in validation_records] != expected_validation:
         raise SpringV31Error(
             "validation manifest is not the exact sequence partition of all.jsonl"
@@ -893,7 +1207,9 @@ def _endpoint_protocol(paths: Paths) -> dict[str, Any]:
         if position >= ENDPOINT_WARMUP_FRAMES:
             expected.append(index)
     if tuple(expected) != selection.manifest_indices or selected != set(expected):
-        raise SpringV31Error("endpoint index is not the exact per-sequence warmup=6 domain")
+        raise SpringV31Error(
+            "endpoint index is not the exact per-sequence warmup=6 domain"
+        )
     receipt_path = paths.endpoint_index.with_suffix(".receipt.json")
     receipt = _strict_json(receipt_path, "endpoint receipt")
     protocol = receipt.get("protocol")
@@ -935,10 +1251,11 @@ def _audit_protocol(paths: Paths) -> dict[str, Any]:
         audit.get("schema_version") != 1
         or audit.get("component") != "pixel-level-epipolar-rectification-audit"
         or audit.get("status") != "PASS"
-        or audit.get("published_contract")
-        != "audited_same_row_rectified_pixels_v1"
+        or audit.get("published_contract") != "audited_same_row_rectified_pixels_v1"
     ):
-        raise SpringV31Error("pixel rectification audit did not publish the required contract")
+        raise SpringV31Error(
+            "pixel rectification audit did not publish the required contract"
+        )
     manifests = audit.get("manifests")
     if not isinstance(manifests, Mapping):
         raise SpringV31Error("pixel audit manifest bindings are missing")
@@ -975,13 +1292,19 @@ def _audit_protocol(paths: Paths) -> dict[str, Any]:
         "max_abs_median_dy_px": 1.25,
         "max_p95_abs_dy_px": 3.0,
     }
-    if audit.get("config") != expected_config or audit.get("thresholds") != expected_thresholds:
+    if (
+        audit.get("config") != expected_config
+        or audit.get("thresholds") != expected_thresholds
+    ):
         raise SpringV31Error("pixel audit sampling/configuration thresholds differ")
     checks = audit.get("threshold_checks")
     if (
         not isinstance(checks, list)
         or not checks
-        or any(not isinstance(check, Mapping) or check.get("passed") is not True for check in checks)
+        or any(
+            not isinstance(check, Mapping) or check.get("passed") is not True
+            for check in checks
+        )
     ):
         raise SpringV31Error("pixel audit contains a missing or failed threshold check")
     global_checks = {
@@ -1020,7 +1343,9 @@ def _calibration_protocol(paths: Paths) -> dict[str, Any]:
         if len(index.records) != len(load_manifest(manifest)):
             raise SpringV31Error(f"{name} calibration sidecar has incomplete coverage")
         if index.pixel_audit_path != paths.pixel_audit.resolve():
-            raise SpringV31Error(f"{name} calibration sidecar uses a different pixel audit")
+            raise SpringV31Error(
+                f"{name} calibration sidecar uses a different pixel audit"
+            )
         result[name] = {
             "sidecar": _path_identity(sidecar),
             "receipt": _path_identity(sidecar.with_suffix(".receipt.json")),
@@ -1218,7 +1543,9 @@ def prepare(paths: Paths, args: argparse.Namespace) -> dict[str, Any]:
     return records
 
 
-def _cache_jobs(paths: Paths, args: argparse.Namespace, arms: Sequence[str]) -> list[Job]:
+def _cache_jobs(
+    paths: Paths, args: argparse.Namespace, arms: Sequence[str]
+) -> list[Job]:
     python = str(args.python)
     device = _device_argument(args.devices)
     jobs: list[Job] = []
@@ -1259,7 +1586,7 @@ def _cache_jobs(paths: Paths, args: argparse.Namespace, arms: Sequence[str]) -> 
                         "--iterations",
                         "4",
                         "--max-disp",
-                        "384",
+                        "416",
                     ]
                 ),
                 paths.validation_full_observation / "run_receipt.json",
@@ -1365,7 +1692,9 @@ def _cache_jobs(paths: Paths, args: argparse.Namespace, arms: Sequence[str]) -> 
     return jobs
 
 
-def _geometry_jobs(paths: Paths, args: argparse.Namespace, arms: Sequence[str]) -> list[Job]:
+def _geometry_jobs(
+    paths: Paths, args: argparse.Namespace, arms: Sequence[str]
+) -> list[Job]:
     python = str(args.python)
     jobs: list[Job] = []
     need_legacy = "F3" in arms
@@ -1496,7 +1825,9 @@ def _train_job(
     return Job(name, tuple(command), output / "final.pt", "train")
 
 
-def _initializer_jobs(paths: Paths, args: argparse.Namespace, arms: Sequence[str]) -> list[Job]:
+def _initializer_jobs(
+    paths: Paths, args: argparse.Namespace, arms: Sequence[str]
+) -> list[Job]:
     jobs: list[Job] = []
     if any(arm in arms for arm in ("F2", "F4", "F5", "F6")):
         jobs.append(
@@ -1649,7 +1980,9 @@ def _model_eval_job(paths: Paths, args: argparse.Namespace, arm: str) -> Job:
     return Job(f"eval_{arm}", tuple(command), output / "metrics.json", "eval")
 
 
-def _eval_jobs(paths: Paths, args: argparse.Namespace, arms: Sequence[str]) -> list[Job]:
+def _eval_jobs(
+    paths: Paths, args: argparse.Namespace, arms: Sequence[str]
+) -> list[Job]:
     jobs: list[Job] = []
     for arm in RUNNABLE_ARMS:
         if arm not in arms:
@@ -1729,7 +2062,9 @@ def _validate_cache_inventory(
     expected_identity_dict = (
         None if expected_identity is None else dict(expected_identity)
     )
-    for selection_index, (row, expected_key) in enumerate(zip(rows, expected, strict=True)):
+    for selection_index, (row, expected_key) in enumerate(
+        zip(rows, expected, strict=True)
+    ):
         manifest_index, sequence_id, frame_id = expected_key
         has_target_manifest_index = "target_manifest_index" in row
         row_manifest_index = row.get(
@@ -1758,9 +2093,11 @@ def _validate_cache_inventory(
         actual_key = (
             int(row_manifest_index),
             str(row.get("sequence_id", "")),
-            int(row.get("frame_id"))
-            if _is_nonnegative_int(row.get("frame_id"))
-            else -1,
+            (
+                int(row.get("frame_id"))
+                if _is_nonnegative_int(row.get("frame_id"))
+                else -1
+            ),
         )
         if actual_key != expected_key:
             raise SpringV31Error(
@@ -1769,7 +2106,9 @@ def _validate_cache_inventory(
             )
         raw_path = row.get("cache_path", row.get("vggt_cache_path"))
         if not isinstance(raw_path, str):
-            raise SpringV31Error(f"cache inventory path is missing at row {selection_index}")
+            raise SpringV31Error(
+                f"cache inventory path is missing at row {selection_index}"
+            )
         cache_path = Path(raw_path).expanduser().resolve()
         canonical_path = (root / sequence_id / f"{frame_id}.pt").resolve()
         if cache_path != canonical_path or not cache_path.is_file():
@@ -1820,7 +2159,9 @@ def _validate_cache_inventory(
                 raise SpringV31Error(f"cache payload identity is missing: {cache_path}")
             if payload_kind == "raw":
                 if set(payload_identity) != CACHE_IDENTITY_FIELDS:
-                    raise SpringV31Error(f"cache payload identity fields differ: {cache_path}")
+                    raise SpringV31Error(
+                        f"cache payload identity fields differ: {cache_path}"
+                    )
                 for key, value in payload_identity.items():
                     if key.endswith("_sha256") and not _is_sha256(value):
                         raise SpringV31Error(
@@ -1830,18 +2171,30 @@ def _validate_cache_inventory(
                         raise SpringV31Error(
                             f"cache payload upstream commit is malformed: {cache_path}"
                         )
-            if expected_identity_dict is not None and dict(payload_identity) != expected_identity_dict:
+            elif payload_identity.get("component") != payload_kind:
+                raise SpringV31Error(
+                    f"cache payload component differs at {cache_path}: "
+                    f"expected {payload_kind!r}"
+                )
+            if (
+                expected_identity_dict is not None
+                and dict(payload_identity) != expected_identity_dict
+            ):
                 raise SpringV31Error(
                     f"cache payload identity differs from receipt: {cache_path}"
                 )
             if not isinstance(payload.get("metadata"), Mapping) or not isinstance(
                 payload.get("tensors"), Mapping
             ):
-                raise SpringV31Error(f"cache payload metadata/tensors are malformed: {cache_path}")
+                raise SpringV31Error(
+                    f"cache payload metadata/tensors are malformed: {cache_path}"
+                )
         actual_keys.append(actual_key)
         declared_paths.append(cache_path)
     actual_paths = sorted(path.resolve() for path in root.rglob("*.pt"))
-    if set(actual_paths) != set(declared_paths) or len(actual_paths) != len(declared_paths):
+    if set(actual_paths) != set(declared_paths) or len(actual_paths) != len(
+        declared_paths
+    ):
         extra = sorted(str(path) for path in set(actual_paths) - set(declared_paths))
         missing = sorted(str(path) for path in set(declared_paths) - set(actual_paths))
         raise SpringV31Error(
@@ -1861,6 +2214,42 @@ def _validate_cache_inventory(
     }
 
 
+def _validate_full_inventory_once(
+    root: Path,
+    manifest: Path,
+    *,
+    sequence_warmup: int,
+    expected_identity: Mapping[str, Any] | None,
+    payload_kind: str,
+    receipt_sha256: str,
+    inventory_sha256: str,
+) -> None:
+    """Hash and safely load each immutable cache payload once per runner."""
+
+    key = (
+        str(root.resolve()),
+        str(manifest.resolve()),
+        str(sequence_warmup),
+        payload_kind,
+        receipt_sha256,
+        inventory_sha256,
+    )
+    with _INVENTORY_VALIDATION_LOCK:
+        if key in _INVENTORY_VALIDATION_CACHE:
+            return
+        _validate_cache_inventory(
+            root,
+            manifest,
+            sequence_warmup=sequence_warmup,
+            expected_identity=expected_identity,
+            require_record_sha=True,
+            validate_payloads=True,
+            strict_rows=True,
+            payload_kind=payload_kind,
+        )
+        _INVENTORY_VALIDATION_CACHE.add(key)
+
+
 def _validate_cache_job(job: Job) -> dict[str, Any]:
     root = job.expected_output.parent.resolve()
     manifest_value = _command_option(job.command, "--manifest")
@@ -1878,6 +2267,8 @@ def _validate_cache_job(job: Job) -> dict[str, Any]:
         raise SpringV31Error(f"{job.name} receipt manifest/schema lineage differs")
     if not isinstance(identity, Mapping) or not isinstance(config, Mapping):
         raise SpringV31Error(f"{job.name} receipt lacks cache identity/config")
+    if identity.get("config_sha256") != canonical_json_sha256(config):
+        raise SpringV31Error(f"{job.name} cache config SHA-256 differs")
     warmup = 4 if job.name.startswith("cache_") and job.name.endswith("_vggt") else 0
     expected = _expected_cache_records(manifest, sequence_warmup=warmup)
     count_field = "selected_windows" if warmup else "selected_records"
@@ -1896,7 +2287,7 @@ def _validate_cache_job(job: Job) -> dict[str, Any]:
     if "half_ffs" in job.name:
         required = ("ffs-observation", 2, "half", 4, 192)
     elif "full_ffs" in job.name:
-        required = ("ffs-observation-full-resolution", 1, "full", 4, 384)
+        required = ("ffs-observation-full-resolution", 1, "full", 4, 416)
     elif "spring_gt" in job.name:
         required = ("spring-ground-truth", None, None, None, None)
     elif job.name.endswith("_vggt"):
@@ -1934,15 +2325,21 @@ def _validate_cache_job(job: Job) -> dict[str, Any]:
     ):
         raise SpringV31Error(f"{job.name} FFS inference config differs")
     if component.startswith("ffs-observation"):
+        max_disp_hr = max_disp * scale
+        max_disp_policy = (
+            "checkpoint_native_416_hr_px"
+            if resolution == "full"
+            else "matched_physical_search_range_384_hr_px"
+        )
         expected_config = {
             "role": "observation",
             "scale": scale,
             "resolution_mode": resolution,
             "iterations": iterations,
             "max_disp": max_disp,
-            "max_disp_hr_equivalent_px": 384,
+            "max_disp_hr_equivalent_px": max_disp_hr,
             "max_disp_input_grid_px": max_disp,
-            "max_disp_policy": "matched_physical_search_range_384_hr_px",
+            "max_disp_policy": max_disp_policy,
             "right_left_check": True,
             "missing_normalize": "error",
             "cache_dtype": "float16",
@@ -1951,9 +2348,7 @@ def _validate_cache_job(job: Job) -> dict[str, Any]:
         }
         for key, expected_value in expected_config.items():
             if config.get(key) != expected_value:
-                raise SpringV31Error(
-                    f"{job.name} FFS config field {key} differs"
-                )
+                raise SpringV31Error(f"{job.name} FFS config field {key} differs")
     elif component == "vggt-omega":
         expected_view_order = [
             label
@@ -1972,9 +2367,7 @@ def _validate_cache_job(job: Job) -> dict[str, Any]:
         }
         for key, expected_value in expected_config.items():
             if config.get(key) != expected_value:
-                raise SpringV31Error(
-                    f"{job.name} VGGT config field {key} differs"
-                )
+                raise SpringV31Error(f"{job.name} VGGT config field {key} differs")
         if (
             not _is_nonnegative_int(receipt.get("available_windows"))
             or receipt.get("available_windows") != selected
@@ -1994,13 +2387,14 @@ def _validate_cache_job(job: Job) -> dict[str, Any]:
             or receipt.get("synthetic_ground_truth") is not True
         ):
             raise SpringV31Error(f"{job.name} Spring GT target/config differs")
-    if (
-        receipt.get("cache_manifest")
-        != str((root / "cache_manifest.jsonl").resolve())
-        or receipt.get("cache_manifest_sha256")
-        != sha256_file(root / "cache_manifest.jsonl")
+    if receipt.get("cache_manifest") != str(
+        (root / "cache_manifest.jsonl").resolve()
+    ) or receipt.get("cache_manifest_sha256") != sha256_file(
+        root / "cache_manifest.jsonl"
     ):
-        raise SpringV31Error(f"{job.name} receipt is not bound to its canonical inventory")
+        raise SpringV31Error(
+            f"{job.name} receipt is not bound to its canonical inventory"
+        )
     inventory_evidence = _validate_cache_inventory(
         root,
         manifest,
@@ -2049,9 +2443,12 @@ def _validate_geometry_job(job: Job) -> dict[str, Any]:
     ):
         raise SpringV31Error(f"{job.name} derived receipt lineage is malformed")
     expected = _expected_cache_records(manifest, sequence_warmup=4)
-    if counts.get("selected") != len(expected) or selection.get("selected_windows") != len(expected):
+    if counts.get("selected") != len(expected) or selection.get(
+        "selected_windows"
+    ) != len(expected):
         raise SpringV31Error(f"{job.name} derived cache has incomplete coverage")
-    if "legacy_v2_control" in job.name:
+    legacy_control = "legacy_v2_control" in job.name
+    if legacy_control:
         if (
             receipt.get("schema_version") != 1
             or receipt.get("component") != "vggt-ffs-derived-geometry-batch"
@@ -2076,7 +2473,19 @@ def _validate_geometry_job(job: Job) -> dict[str, Any]:
             raise SpringV31Error(f"{job.name} calibrated geometry lineage differs")
     return {
         "receipt": _path_identity(job.expected_output),
-        "inventory": _validate_cache_inventory(root, manifest, sequence_warmup=4),
+        "inventory": _validate_cache_inventory(
+            root,
+            manifest,
+            sequence_warmup=4,
+            require_record_sha=True,
+            validate_payloads=True,
+            strict_rows=True,
+            payload_kind=(
+                "vggt-ffs-derived-geometry"
+                if legacy_control
+                else "vggt-ffs-derived-geometry-calibrated-stereo-v2"
+            ),
+        ),
     }
 
 
@@ -2087,7 +2496,11 @@ def _validate_training_job(job: Job) -> dict[str, Any]:
         raise SpringV31Error(f"training checkpoint is missing: {checkpoint}")
     summary = _strict_json(summary_path, f"{job.name} training summary")
     final = summary.get("final_checkpoint")
-    expected_stage = "temporal" if job.name in {"train_F3", "train_F4", "train_F5", "train_F6"} else "spatial"
+    expected_stage = (
+        "temporal"
+        if job.name in {"train_F3", "train_F4", "train_F5", "train_F6"}
+        else "spatial"
+    )
     if (
         summary.get("status") != "TRAINING_COMPLETE"
         or summary.get("stage") != expected_stage
@@ -2103,9 +2516,13 @@ def _validate_training_job(job: Job) -> dict[str, Any]:
     saved_config = payload.get("config") if isinstance(payload, Mapping) else None
     if not isinstance(saved_config, Mapping):
         raise SpringV31Error(f"{job.name} checkpoint lacks its resolved config")
-    config_sha = hashlib.sha256(config_fingerprint(saved_config).encode("utf-8")).hexdigest()
+    config_sha = hashlib.sha256(
+        config_fingerprint(saved_config).encode("utf-8")
+    ).hexdigest()
     if config_sha != summary.get("config_fingerprint"):
-        raise SpringV31Error(f"{job.name} summary/checkpoint config fingerprint differs")
+        raise SpringV31Error(
+            f"{job.name} summary/checkpoint config fingerprint differs"
+        )
     data = saved_config.get("data")
     model = saved_config.get("model")
     train = saved_config.get("train")
@@ -2115,21 +2532,33 @@ def _validate_training_job(job: Job) -> dict[str, Any]:
     contract = TRAINING_CONFIG_CONTRACTS[config_name]
     expected_paths = {
         "manifest_path": _command_option(job.command, "--manifest"),
-        "observation_cache_root": _command_option(job.command, "--observation-cache-root"),
+        "observation_cache_root": _command_option(
+            job.command, "--observation-cache-root"
+        ),
         "teacher_cache_root": _command_option(job.command, "--teacher-cache-root"),
-        "derived_geometry_cache_root": _command_option(job.command, "--derived-cache-root"),
-        "calibration_sidecar_path": _command_option(job.command, "--calibration-sidecar"),
+        "derived_geometry_cache_root": _command_option(
+            job.command, "--derived-cache-root"
+        ),
+        "calibration_sidecar_path": _command_option(
+            job.command, "--calibration-sidecar"
+        ),
     }
     for key, value in expected_paths.items():
         actual = data.get(key)
         if value is None:
             if actual is not None:
-                raise SpringV31Error(f"{job.name} checkpoint unexpectedly binds data.{key}")
-        elif Path(str(actual)).expanduser().resolve() != Path(value).expanduser().resolve():
+                raise SpringV31Error(
+                    f"{job.name} checkpoint unexpectedly binds data.{key}"
+                )
+        elif (
+            Path(str(actual)).expanduser().resolve()
+            != Path(value).expanduser().resolve()
+        ):
             raise SpringV31Error(f"{job.name} checkpoint data.{key} path differs")
     if (
         saved_config.get("seed") != SEED
-        or saved_config.get("arm") != (None if config_name == "F3_stage_a_control" else config_name)
+        or saved_config.get("arm")
+        != (None if config_name == "F3_stage_a_control" else config_name)
         or data.get("temporal_pose_source") != contract["pose_source"]
         or model.get("use_vggt_pose") is not contract["use_vggt_pose"]
         or model.get("use_vggt_depth") is not contract["use_vggt_depth"]
@@ -2349,11 +2778,15 @@ def _assert_training_dependencies(paths: Paths, arms: Sequence[str]) -> None:
     if any(arm in arms for arm in ("F4", "F5", "F6")):
         checkpoint = paths.arm_train("F2") / "final.pt"
         if not checkpoint.is_file():
-            raise SpringV31Error(f"F4--F6 require the unique F2 initializer: {checkpoint}")
+            raise SpringV31Error(
+                f"F4--F6 require the unique F2 initializer: {checkpoint}"
+            )
     if "F3" in arms:
         checkpoint = paths.f3_initializer_train / "final.pt"
         if not checkpoint.is_file():
-            raise SpringV31Error(f"F3 requires its v2/K=2 Stage-A initializer: {checkpoint}")
+            raise SpringV31Error(
+                f"F3 requires its v2/K=2 Stage-A initializer: {checkpoint}"
+            )
 
 
 def _verify_eval_result(paths: Paths, arm: str) -> dict[str, Any]:
@@ -2362,19 +2795,17 @@ def _verify_eval_result(paths: Paths, arm: str) -> dict[str, Any]:
     target = report.get("target")
     if not isinstance(target, Mapping):
         raise SpringV31Error(f"{arm} metrics do not identify their target")
+    runtime_evidence: dict[str, Any]
+    per_record_evidence: dict[str, Any]
     if arm in ("F0", "F1"):
         import torch
 
         mode = "full" if arm == "F0" else "half"
         scale = 1 if arm == "F0" else 2
         cache_component = (
-            "ffs-observation-full-resolution"
-            if arm == "F0"
-            else "ffs-observation"
+            "ffs-observation-full-resolution" if arm == "F0" else "ffs-observation"
         )
-        reconstruction = (
-            "identity" if arm == "F0" else "bilinear_align_corners_false"
-        )
+        reconstruction = "identity" if arm == "F0" else "bilinear_align_corners_false"
         expected_target = {
             "type": SPRING_GT_TARGET_TYPE,
             "component": SPRING_GT_COMPONENT,
@@ -2388,7 +2819,7 @@ def _verify_eval_result(paths: Paths, arm: str) -> dict[str, Any]:
             "scale": scale,
             "cache_component": cache_component,
             "reconstruction": reconstruction,
-            "max_disp_hr_equivalent_px": 384,
+            "max_disp_hr_equivalent_px": 416 if arm == "F0" else 384,
         }
         expected_evaluator = {
             "git_hash": repository_git_hash(paths.project_root),
@@ -2458,10 +2889,24 @@ def _verify_eval_result(paths: Paths, arm: str) -> dict[str, Any]:
             or observation_config.get("role") != "observation"
             or observation_config.get("scale") != scale
             or observation_config.get("resolution_mode") != mode
-            or observation_config.get("max_disp_hr_equivalent_px") != 384
+            or observation_config.get("max_disp_hr_equivalent_px")
+            != (416 if arm == "F0" else 384)
             or observation_lineage != expected_observation_lineage
         ):
             raise SpringV31Error(f"{arm} observation cache lineage differs")
+        canonical_observation = _cache_receipt_lineage(
+            observation_root,
+            paths.validation_manifest,
+            component=cache_component,
+        )
+        if canonical_observation["identity"] != dict(observation_identity):
+            raise SpringV31Error(f"{arm} canonical cache identity differs")
+        per_record = report.get("per_record")
+        if not isinstance(per_record, list) or not all(
+            isinstance(row, Mapping) for row in per_record
+        ):
+            raise SpringV31Error(f"{arm} per-record metrics are malformed")
+        per_record_evidence = _endpoint_row_evidence(paths, per_record, arm)
         manifest = report.get("manifest")
         if (
             not isinstance(manifest, Mapping)
@@ -2476,11 +2921,15 @@ def _verify_eval_result(paths: Paths, arm: str) -> dict[str, Any]:
             if isinstance(selection, Mapping)
             else None
         )
-        crop_mode = selection.get("crop_mode") if isinstance(selection, Mapping) else None
+        crop_mode = (
+            selection.get("crop_mode") if isinstance(selection, Mapping) else None
+        )
         crop_origin = (
             selection.get("crop_origin_xy") if isinstance(selection, Mapping) else None
         )
-        crop_size = selection.get("crop_size_hw") if isinstance(selection, Mapping) else None
+        crop_size = (
+            selection.get("crop_size_hw") if isinstance(selection, Mapping) else None
+        )
         expected_evaluation_lineage = {
             "manifest_sha256": sha256_file(paths.validation_manifest),
             "endpoint_id_sha256": EXPECTED_ENDPOINT_ID_SHA256,
@@ -2495,32 +2944,62 @@ def _verify_eval_result(paths: Paths, arm: str) -> dict[str, Any]:
             "baseline_mode": mode,
             "cache_identity": dict(observation_identity),
         }
-        if (
-            report.get("evaluation_lineage") != expected_evaluation_lineage
-            or report.get("evaluation_lineage_sha256")
-            != _canonical_sha256(expected_evaluation_lineage)
+        if report.get(
+            "evaluation_lineage"
+        ) != expected_evaluation_lineage or report.get(
+            "evaluation_lineage_sha256"
+        ) != _canonical_sha256(
+            expected_evaluation_lineage
         ):
             raise SpringV31Error(f"{arm} evaluation lineage differs")
+        runtime_evidence = {
+            "device": "cpu",
+            "elapsed_seconds": float(elapsed_seconds),
+        }
     else:
         contract = TRAINING_CONFIG_CONTRACTS[arm]
+        _model_completion_evidence(report, arm)
         resolved = report.get("resolved_config")
         data = resolved.get("data") if isinstance(resolved, Mapping) else None
         model = resolved.get("model") if isinstance(resolved, Mapping) else None
         eval_config = resolved.get("eval") if isinstance(resolved, Mapping) else None
+        supervision = (
+            resolved.get("supervision") if isinstance(resolved, Mapping) else None
+        )
+        expected_target = {
+            "type": SPRING_GT_TARGET_TYPE,
+            "paper_accuracy": False,
+            "paper_gt": True,
+            "synthetic_ground_truth": True,
+            "cache_component": SPRING_GT_COMPONENT,
+        }
+        observed_target = {name: target.get(name) for name in expected_target}
         if (
             report.get("schema_version") != 1
-            or target.get("paper_gt") is not True
-            or target.get("cache_component") != "spring-ground-truth"
+            or report.get("stage")
+            != ("T1_SPATIAL_ONLY" if arm == "F2" else "T3_CAUSAL_STAGE_B")
+            or observed_target != expected_target
             or not isinstance(resolved, Mapping)
             or resolved.get("arm") != arm
             or resolved.get("seed") != SEED
             or not isinstance(data, Mapping)
+            or data.get("source_dataset") != "Spring-v2"
+            or data.get("sequence_length") != contract["sequence_length"]
+            or data.get("derived_contract") != contract["derived_contract"]
             or data.get("temporal_pose_source") != contract["pose_source"]
+            or data.get("require_cache_inventory_lineage") is not True
             or not isinstance(model, Mapping)
             or model.get("use_vggt_pose") is not contract["use_vggt_pose"]
             or model.get("use_vggt_depth") is not contract["use_vggt_depth"]
+            or not isinstance(supervision, Mapping)
+            or supervision.get("target_type") != SPRING_GT_TARGET_TYPE
+            or supervision.get("teacher_cache_component") != SPRING_GT_COMPONENT
+            or supervision.get("paper_ground_truth") is not True
+            or supervision.get("synthetic_ground_truth") is not True
         ):
-            raise SpringV31Error(f"{arm} resolved evaluation config differs from its arm")
+            raise SpringV31Error(
+                f"{arm} resolved evaluation config differs from its arm"
+            )
         if (
             Path(str(report.get("manifest_path", ""))).expanduser().resolve()
             != paths.validation_manifest.resolve()
@@ -2536,13 +3015,205 @@ def _verify_eval_result(paths: Paths, arm: str) -> dict[str, Any]:
         crop_size = report.get("hr_crop")
         checkpoint = report.get("checkpoint")
         expected_checkpoint = paths.arm_train(arm) / "final.pt"
+        repository_hash = repository_git_hash(paths.project_root)
         if (
             not isinstance(checkpoint, Mapping)
             or Path(str(checkpoint.get("path", ""))).expanduser().resolve()
             != expected_checkpoint.resolve()
             or checkpoint.get("checkpoint_sha256") != sha256_file(expected_checkpoint)
+            or checkpoint.get("step") != contract["steps"]
+            or checkpoint.get("git_hash") != repository_hash
+            or not _is_git_hash(repository_hash)
         ):
             raise SpringV31Error(f"{arm} metrics do not bind the requested checkpoint")
+        checkpoint_config = checkpoint.get("training_config")
+        checkpoint_data = (
+            checkpoint_config.get("data")
+            if isinstance(checkpoint_config, Mapping)
+            else None
+        )
+        checkpoint_model = (
+            checkpoint_config.get("model")
+            if isinstance(checkpoint_config, Mapping)
+            else None
+        )
+        checkpoint_train = (
+            checkpoint_config.get("train")
+            if isinstance(checkpoint_config, Mapping)
+            else None
+        )
+        if (
+            not isinstance(checkpoint_config, Mapping)
+            or checkpoint_config.get("arm") != arm
+            or checkpoint_config.get("seed") != SEED
+            or not isinstance(checkpoint_data, Mapping)
+            or checkpoint_data.get("temporal_pose_source") != contract["pose_source"]
+            or not isinstance(checkpoint_model, Mapping)
+            or checkpoint_model.get("use_vggt_pose") is not contract["use_vggt_pose"]
+            or checkpoint_model.get("use_vggt_depth") is not contract["use_vggt_depth"]
+            or not isinstance(checkpoint_train, Mapping)
+        ):
+            raise SpringV31Error(f"{arm} checkpoint training config is missing")
+        train_observation = _cache_receipt_lineage(
+            paths.train_half_observation,
+            paths.train_manifest,
+            component="ffs-observation",
+        )
+        train_teacher = _cache_receipt_lineage(
+            paths.train_ground_truth,
+            paths.train_manifest,
+            component=SPRING_GT_COMPONENT,
+        )
+        validation_observation = _cache_receipt_lineage(
+            paths.validation_half_observation,
+            paths.validation_manifest,
+            component="ffs-observation",
+        )
+        validation_teacher = _cache_receipt_lineage(
+            paths.validation_ground_truth,
+            paths.validation_manifest,
+            component=SPRING_GT_COMPONENT,
+        )
+        cache_identities = report.get("cache_identities")
+        if (
+            checkpoint_data.get("observation_cache_lineage") != train_observation
+            or checkpoint_data.get("teacher_cache_lineage") != train_teacher
+            or not isinstance(cache_identities, Mapping)
+            or cache_identities.get("observation") != validation_observation["identity"]
+            or cache_identities.get("teacher") != validation_teacher["identity"]
+        ):
+            raise SpringV31Error(f"{arm} cache receipt/inventory lineage differs")
+        if arm == "F3":
+            train_derived = _derived_receipt_lineage(
+                paths.train_legacy_derived, paths.train_manifest, calibrated=False
+            )
+            validation_derived = _derived_receipt_lineage(
+                paths.validation_legacy_derived,
+                paths.validation_manifest,
+                calibrated=False,
+            )
+            expected_train_calibration = None
+            expected_validation_calibration = None
+        elif arm == "F2":
+            train_derived = None
+            validation_derived = None
+            expected_train_calibration = _calibration_lineage(
+                paths, paths.train_calibration, paths.train_manifest
+            )
+            expected_validation_calibration = _calibration_lineage(
+                paths, paths.validation_calibration, paths.validation_manifest
+            )
+        else:
+            train_derived = _derived_receipt_lineage(
+                paths.train_calibrated_derived,
+                paths.train_manifest,
+                calibrated=True,
+            )
+            validation_derived = _derived_receipt_lineage(
+                paths.validation_calibrated_derived,
+                paths.validation_manifest,
+                calibrated=True,
+            )
+            expected_train_calibration = _calibration_lineage(
+                paths, paths.train_calibration, paths.train_manifest
+            )
+            expected_validation_calibration = _calibration_lineage(
+                paths, paths.validation_calibration, paths.validation_manifest
+            )
+        if (
+            checkpoint_data.get("derived_cache_lineage") != train_derived
+            or report.get("derived_cache_lineage") != validation_derived
+            or checkpoint_data.get("calibration_sidecar_lineage")
+            != expected_train_calibration
+            or report.get("calibration_sidecar_lineage")
+            != expected_validation_calibration
+        ):
+            raise SpringV31Error(f"{arm} geometry/calibration lineage differs")
+        if arm != "F2":
+            expected_spatial = (
+                paths.f3_initializer_train / "final.pt"
+                if arm == "F3"
+                else paths.arm_train("F2") / "final.pt"
+            )
+            spatial_checkpoint = report.get("spatial_checkpoint")
+            spatial_completion = report.get("spatial_checkpoint_training_completion")
+            if (
+                not isinstance(spatial_checkpoint, Mapping)
+                or not _same_resolved_path(
+                    spatial_checkpoint.get("path"), expected_spatial
+                )
+                or spatial_checkpoint.get("checkpoint_sha256")
+                != sha256_file(expected_spatial)
+                or spatial_checkpoint.get("git_hash") != repository_hash
+                or spatial_checkpoint.get("step") != 5_000
+                or not _same_resolved_path(
+                    checkpoint_train.get("initialization_checkpoint"),
+                    expected_spatial,
+                )
+                or checkpoint_train.get("initialization_checkpoint_sha256")
+                != sha256_file(expected_spatial)
+                or not isinstance(spatial_completion, Mapping)
+                or spatial_completion.get("actual_step") != 5_000
+                or spatial_completion.get("canonical_steps") != 5_000
+                or spatial_completion.get("final_training_checkpoint") is not True
+            ):
+                raise SpringV31Error(f"{arm} Stage-A checkpoint lineage differs")
+        expected_completion = report.get("checkpoint_training_completion")
+        if (
+            not isinstance(expected_completion, Mapping)
+            or expected_completion.get("actual_step") != contract["steps"]
+            or expected_completion.get("canonical_steps") != contract["steps"]
+            or expected_completion.get("execution_complete") is not True
+            or expected_completion.get("canonical_schedule") is not True
+            or expected_completion.get("final_training_checkpoint") is not True
+        ):
+            raise SpringV31Error(f"{arm} checkpoint completion evidence differs")
+        evaluator = report.get("evaluator")
+        expected_evaluator = {
+            "git_hash": repository_hash,
+            "eval_py_sha256": sha256_file(paths.project_root / "eval.py"),
+            "evaluation_module_sha256": sha256_file(
+                paths.project_root / "src/evaluation.py"
+            ),
+            "torch_version": __import__("torch").__version__,
+            "cuda_version": __import__("torch").version.cuda,
+        }
+        if evaluator != expected_evaluator:
+            raise SpringV31Error(f"{arm} evaluator source/runtime lineage differs")
+        summary_path = expected_checkpoint.parent / "run_summary.json"
+        summary = _strict_json(summary_path, f"{arm} training summary")
+        summary_final = summary.get("final_checkpoint")
+        if (
+            summary.get("status") != "TRAINING_COMPLETE"
+            or summary.get("stage") != contract["stage"]
+            or summary.get("steps") != contract["steps"]
+            or summary.get("git_hash") != repository_hash
+            or summary.get("config_fingerprint") != _canonical_sha256(checkpoint_config)
+            or summary.get("device") != "cuda"
+            or not isinstance(summary.get("device_name"), str)
+            or not summary.get("device_name")
+            or not _is_finite_number(summary.get("elapsed_seconds"), positive=True)
+            or not _is_finite_number(summary.get("steps_per_second"), positive=True)
+            or not isinstance(summary_final, Mapping)
+            or not _same_resolved_path(summary_final.get("path"), expected_checkpoint)
+            or summary_final.get("sha256") != sha256_file(expected_checkpoint)
+        ):
+            raise SpringV31Error(f"{arm} training summary lineage differs")
+        per_record = report.get("per_record_metrics")
+        per_record_path = paths.arm_eval(arm) / "per_record_metrics.jsonl"
+        if (
+            not isinstance(per_record, Mapping)
+            or not _same_resolved_path(per_record.get("path"), per_record_path)
+            or per_record.get("sha256") != sha256_file(per_record_path)
+            or per_record.get("records") != EXPECTED_ENDPOINT_COUNT
+        ):
+            raise SpringV31Error(f"{arm} per-record metric lineage differs")
+        per_record_rows = _strict_jsonl(per_record_path, f"{arm} per-record metrics")
+        per_record_evidence = {
+            **_endpoint_row_evidence(paths, per_record_rows, arm),
+            "artifact": _path_identity(per_record_path),
+        }
+        runtime_evidence = _runtime_evidence(report, arm)
     if not isinstance(endpoint, Mapping):
         raise SpringV31Error(f"{arm} metrics lack endpoint lineage")
     if (
@@ -2571,10 +3242,21 @@ def _verify_eval_result(paths: Paths, arm: str) -> dict[str, Any]:
         or list(crop_size or ()) != list(CROP_SIZE_HW)
     ):
         raise SpringV31Error(f"{arm} metrics use a different fixed crop")
-    evaluated = report.get("records_evaluated", report.get("selection", {}).get("records"))
+    evaluated = report.get(
+        "records_evaluated", report.get("selection", {}).get("records")
+    )
     if evaluated != EXPECTED_ENDPOINT_COUNT:
         raise SpringV31Error(f"{arm} report record count differs: {evaluated!r}")
-    return _path_identity(metrics_path)
+    return {
+        "status": report.get("status"),
+        "metrics_artifact": _path_identity(metrics_path),
+        "config_artifact": _path_identity(
+            (paths.project_root / ARM_CONFIGS[arm]).resolve()
+        ),
+        "primary_metrics": _primary_metric_evidence(report, arm),
+        "per_record_evidence": per_record_evidence,
+        "runtime": runtime_evidence,
+    }
 
 
 def _matrix_receipt(
@@ -2596,7 +3278,10 @@ def _matrix_receipt(
             "model": "half-resolution FFS + v2/K=2 T3 control, GT pose",
             "initializer": str(paths.f3_initializer_train / "final.pt"),
         },
-        "F4": {"model": "half-resolution FFS + v3.1 T3, GT pose", "initializer": initializer},
+        "F4": {
+            "model": "half-resolution FFS + v3.1 T3, GT pose",
+            "initializer": initializer,
+        },
         "F5": {"model": "F4 + VGGT depth prior, GT pose", "initializer": initializer},
         "F6": {"model": "F5 + VGGT pose", "initializer": initializer},
         "F7": {
@@ -2605,14 +3290,54 @@ def _matrix_receipt(
             "status": "OPTIONAL_BLOCKED",
         },
     }
-    runnable_complete = True
+    completion_errors: list[str] = []
+    exact_selection = tuple(arms) == ARM_ORDER
+    if not exact_selection:
+        completion_errors.append("formal completion requires exactly F0--F7")
+    current_git = repository_git_hash(paths.project_root)
+    if (
+        source_snapshot.get("git_clean") is not True
+        or source_snapshot.get("git_dirty_paths") != []
+        or source_snapshot.get("git_head") != current_git
+        or not _is_git_hash(current_git)
+    ):
+        completion_errors.append(
+            "formal completion requires the current clean Git commit"
+        )
+    for arm in ARM_ORDER:
+        config_path = (paths.project_root / ARM_CONFIGS[arm]).resolve()
+        config_entry = config_protocol.get(arm)
+        if (
+            not isinstance(config_entry, Mapping)
+            or not _same_resolved_path(config_entry.get("path"), config_path)
+            or config_entry.get("sha256") != sha256_file(config_path)
+        ):
+            completion_errors.append(f"{arm} config SHA lineage differs")
+    runnable_complete = not completion_errors
     for arm, row in rows.items():
         row["selected"] = arm in arms
-        row["config"] = str((paths.project_root / ARM_CONFIGS[arm]).resolve())
+        row["config"] = _path_identity(
+            (paths.project_root / ARM_CONFIGS[arm]).resolve()
+        )
         if arm not in arms:
             row["status"] = "NOT_SELECTED"
             continue
         if arm == "F7":
+            status_path = paths.output_root / "arms/F7/status.json"
+            blocked = _strict_json(status_path, "F7 optional-blocked status")
+            if (
+                blocked.get("schema_version") != SCHEMA_VERSION
+                or blocked.get("component") != "spring-v3.1-ffs-arm-status"
+                or blocked.get("status") != "OPTIONAL_BLOCKED"
+                or blocked.get("arm") != "F7"
+                or blocked.get("optional") is not True
+                or blocked.get("depends_on") != "F6"
+            ):
+                row["status"] = "INVALID_ARTIFACT"
+                row["reason"] = "F7 optional-blocked receipt differs"
+                runnable_complete = False
+            else:
+                row["status_artifact"] = _path_identity(status_path)
             continue
         metrics = paths.arm_eval(arm) / "metrics.json"
         if dry_run:
@@ -2620,7 +3345,7 @@ def _matrix_receipt(
         elif metrics.is_file():
             try:
                 row["evaluation"] = _verify_eval_result(paths, arm)
-                row["status"] = "COMPLETE"
+                row["status"] = row["evaluation"]["status"]
             except SpringV31Error as exc:
                 row["status"] = "INVALID_ARTIFACT"
                 row["reason"] = str(exc)
@@ -2631,11 +3356,33 @@ def _matrix_receipt(
     if dry_run:
         matrix_status = "PLANNED"
     elif runnable_complete:
-        matrix_status = (
-            "COMPLETE_WITH_OPTIONAL_F7_BLOCKED" if "F7" in arms else "COMPLETE"
-        )
+        matrix_status = "COMPLETE_WITH_OPTIONAL_F7_BLOCKED"
     else:
         matrix_status = "PHASE_COMPLETE_EVIDENCE_PENDING"
+    results_table = []
+    for arm in RUNNABLE_ARMS:
+        row = rows[arm]
+        evaluation = row.get("evaluation")
+        primary = (
+            evaluation.get("primary_metrics")
+            if isinstance(evaluation, Mapping)
+            else None
+        )
+        results_table.append(
+            {
+                "arm": arm,
+                "status": row["status"],
+                "method": (
+                    primary.get("method") if isinstance(primary, Mapping) else None
+                ),
+                "epe_px": (
+                    primary.get("epe_px") if isinstance(primary, Mapping) else None
+                ),
+                "bad_1": (
+                    primary.get("bad_1") if isinstance(primary, Mapping) else None
+                ),
+            }
+        )
     payload = {
         "schema_version": SCHEMA_VERSION,
         "component": COMPONENT,
@@ -2643,6 +3390,11 @@ def _matrix_receipt(
         "seed": SEED,
         "protocol": PROTOCOL,
         "selected_arms": list(arms),
+        "formal_completion": {
+            "exact_arm_selection": exact_selection,
+            "required_arms": list(ARM_ORDER),
+            "errors": completion_errors,
+        },
         "source_snapshot": dict(source_snapshot),
         "config_protocol": dict(config_protocol),
         "backbone_protocol": dict(backbone_protocol),
@@ -2652,6 +3404,7 @@ def _matrix_receipt(
             "validation": str(paths.validation_calibrated_derived),
         },
         "arms": rows,
+        "results": results_table,
         "jobs": dict(job_results),
         "finished_at": _utc_now(),
     }
@@ -2659,7 +3412,9 @@ def _matrix_receipt(
     return payload
 
 
-def _plan(paths: Paths, args: argparse.Namespace, arms: Sequence[str]) -> dict[str, Any]:
+def _plan(
+    paths: Paths, args: argparse.Namespace, arms: Sequence[str]
+) -> dict[str, Any]:
     def record(job: Job) -> dict[str, Any]:
         return {
             "name": job.name,
@@ -2703,7 +3458,11 @@ def run(args: argparse.Namespace) -> int:
             raise SpringV31Error(f"another runner holds {lock_path}") from exc
         config_protocol = _config_protocol(paths)
         source_snapshot = _source_snapshot(paths)
-        if args.phase in {"train", "all"} and not args.dry_run and not source_snapshot["git_clean"]:
+        if (
+            args.phase in {"train", "all"}
+            and not args.dry_run
+            and not source_snapshot["git_clean"]
+        ):
             raise SpringV31Error(
                 "formal training requires a clean committed source tree; dirty paths: "
                 f"{source_snapshot['git_dirty_paths'][:20]}"
@@ -2751,7 +3510,11 @@ def run(args: argparse.Namespace) -> int:
                 job_results=results,
                 dry_run=True,
             )
-            print(json.dumps({"status": receipt["status"], "output": str(paths.output_root)}))
+            print(
+                json.dumps(
+                    {"status": receipt["status"], "output": str(paths.output_root)}
+                )
+            )
             return 0
         if "cache" in phases:
             results["cache"] = _run_parallel(
@@ -2798,7 +3561,9 @@ def run(args: argparse.Namespace) -> int:
             job_results=results,
             dry_run=False,
         )
-        print(json.dumps({"status": receipt["status"], "output": str(paths.output_root)}))
+        print(
+            json.dumps({"status": receipt["status"], "output": str(paths.output_root)})
+        )
     return 0
 
 

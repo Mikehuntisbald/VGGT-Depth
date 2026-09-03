@@ -70,10 +70,11 @@ def test_spring_observation_variants_have_separate_identity_and_output_roots() -
     assert half.default_hr_equivalent_max_disp == 384
 
     assert full.component == "ffs-observation-full-resolution"
-    assert full.output_directory == "observation_full_resolution"
+    assert full.output_directory == "observation_full_resolution_maxdisp416"
     assert full.default_iterations == 4
-    assert full.default_max_disp == 384
-    assert full.default_hr_equivalent_max_disp == 384
+    assert full.default_max_disp == 416
+    assert full.default_hr_equivalent_max_disp == 416
+    assert full.max_disp_policy == "checkpoint_native_416_hr_px"
     assert full.component != half.component
     assert full.output_directory != half.output_directory
 
@@ -94,6 +95,12 @@ def test_spring_cache_parser_keeps_half_observation_as_cli_default() -> None:
     assert args.scale is None
     assert _cache_variant(args.role, args.scale).resolution_mode == "half"
     assert args.repo.name == "Fast-FoundationStereo"
+
+
+def test_full_observation_default_is_checkpoint_native() -> None:
+    full = _cache_variant("observation", 1)
+    assert full.default_max_disp == 416
+    assert full.max_disp_policy == "checkpoint_native_416_hr_px"
 
 
 def test_training_cache_lineage_binds_receipt_and_inventory(tmp_path: Path) -> None:
