@@ -1,0 +1,70 @@
+experiment: metric_stereo_video_best_t8_512
+seed: 42
+
+data:
+  train_manifest: runs/spring_v3_1_seed42/manifests/train.jsonl
+  validation_manifest: runs/spring_v3_1_seed42/manifests/validation.jsonl
+  clip_length: 8
+  crop_size_hw: [512, 768]
+  crop_alignment: 64
+  train_crop_mode: random
+  validation_crop_mode: fixed
+  num_workers: 4
+  pin_memory: true
+
+stereo:
+  repo: third_party/Fast-FoundationStereo
+  checkpoint: checkpoints/ffs/23-36-37/model_best_bp2_serialize.pth
+  iterations: 8
+  max_disp_lr_px: 192
+  predict_right: true
+  feature_level: 0
+  feature_channels: 224
+  left_right_maximum_error_lr_px: 1.0
+  left_right_confidence_temperature_lr_px: 0.5
+
+vggt:
+  repo: third_party/vggt-omega
+  checkpoint: checkpoints/vggt/vggt_omega_1b_512.pt
+  geometry_channels: 192
+
+fusion:
+  hidden_channels: 128
+  residual_blocks: 6
+  minimum_gauge_overlap: 64
+  inverse_depth_residual_scale: 0.25
+  relative_depth_tolerance: 0.05
+  absolute_depth_tolerance_m: 0.05
+
+loss:
+  disparity: 1.0
+  depth: 0.15
+  temporal: 0.10
+  reprojection: 0.10
+  left_right_consistency: 0.05
+  pose_scale: 0.01
+  uncertainty: 0.03
+  validity: 0.05
+  aligned_vggt_depth_auxiliary: 0.10
+
+train:
+  steps: 6000
+  micro_batch_size_per_rank: 1
+  gradient_accumulation: 1
+  precision: bf16
+  activation_checkpointing: true
+  fsdp: true
+  learning_rate_fusion: 1.0e-4
+  learning_rate_stereo: 1.0e-5
+  learning_rate_vggt_dense: 2.0e-6
+  learning_rate_vggt_aggregator: 1.0e-6
+  weight_decay: 0.05
+  warmup_steps: 300
+  minimum_learning_rate_ratio: 0.05
+  gradient_clip_norm: 1.0
+  log_interval: 1
+  validation_interval: 250
+  validation_batches: 16
+  checkpoint_interval: 250
+  keep_last_checkpoints: 4
+  output_dir: runs/metric_stereo_video/best_t8_512_seed42
