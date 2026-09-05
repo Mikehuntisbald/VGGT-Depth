@@ -1,0 +1,51 @@
+schema_version: 2
+name: metric_stereo_video_spring_formal_v2
+
+primary_selection_metrics:
+  - all_gt_penalized_epe_px
+  - epe_at_99pct_coverage_px
+  - completeness_1px
+  - completeness_2px
+  - prediction_coverage
+  - temporal_matched_penalized_delta_epe_px
+
+validity:
+  common_valid_threshold: 0.5
+  all_gt_error_cap_and_invalid_penalty_px: 10.0
+  accuracy_coverage_histogram_bins: 4096
+  accuracy_coverage_points: [0.50, 0.70, 0.80, 0.90, 0.95, 0.97, 0.99, 1.00]
+  accuracy_coverage_ranking_score: valid_probability
+
+spring_partitions:
+  detail_map: detailmap_disp1_left
+  match_map: matchmap_disp1_left
+  dynamic_map: rigidmap_BW_left
+  dynamic_map_semantic: white_or_true_is_dynamic
+  boundary_gradient_threshold_px: 1.0
+  boundary_radius_px: 1
+
+temporal:
+  prediction_source: separate_strict_causal_prefix_ending_at_t_minus_1
+  reference_source: spring_gt_previous_disparity_zbuffer_warped_with_known_pose
+  matched_definition: current_gt_valid_and_previous_gt_zbuffer_visible
+  disocclusion_definition: current_gt_valid_and_not_previous_gt_zbuffer_visible
+  unmatched_reporting: current_frame_epe_and_completion_not_undefined_delta_residual
+  motion_score: translation_m_plus_rotation_angle_rad
+  motion_threshold_source: train_split_t8_endpoint_tertiles_frozen_before_validation
+  small_medium_threshold: 0.0011685462079462623
+  medium_large_threshold: 0.005003009549514859
+
+pose:
+  model_class: known_pose_stereo_video
+  active_source: spring_gt_camera_from_world_relative_transform
+  required_formal_ablations:
+    - gt_pose
+    - vio_odometry_pose
+    - vggt_pose
+    - corrupted_pose
+    - no_pose_no_history
+  unavailable_inputs_are_never_substituted: true
+
+stereo:
+  low_resolution_max_disparity_px: 192
+  equivalent_high_resolution_max_disparity_px: 384

@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
 """Evaluate a trained causal metric stereo-video checkpoint.
 
-The evaluator loads one FSDP rank shard per process and runs the validation
-clips through five shared-checkpoint component variants.  The resulting JSON
-and CSV explicitly identify the surgical ablations; they are not independent
-retraining results.
+The default evaluates exactly the configuration represented by the checkpoint.
+Explicit ``--variants`` are shared-checkpoint diagnostics only and are never
+reported as independently trained ablations.
 """
 
 from __future__ import annotations
 
 import argparse
+import copy
 import csv
 import json
 from pathlib import Path
@@ -26,7 +26,14 @@ import torch.nn.functional as F
 from torch import Tensor
 
 from metrics.metric_stereo_video import MetricAccumulator, MetricValue, endpoint_metric_values, scalar_metric
+from metrics.metric_stereo_video import (
+    AccuracyCoverageHistogram,
+    temporal_residual_metric_values,
+)
+from metrics.boundary import disparity_boundary_mask
+from metrics.spring_arms import SpringNativeMapError, spring_map_bundle
 from geometry.metric_reprojection import stereo_reproject_right_to_left, temporal_reproject_previous_to_current
+from geometry.zbuffer_reproject import zbuffer_reproject
 from models.metric_stereo_video_system import MetricStereoVideoSystem
 from tools.train_metric_stereo_video import (
     _dataset,
@@ -43,32 +50,51 @@ from tools.train_metric_stereo_video import (
 
 
 VARIANTS: dict[str, dict[str, bool]] = {
-    "stereo_metric_prior_only": {
-        "enable_vggt_features": False,
+    "diagnostic_A0_reconstruction_only": {
+        "enable_vggt_dense_features": False,
+        "enable_vggt_geometry": False,
         "enable_vggt_gauge": False,
         "enable_temporal_memory": False,
         "visibility_aware_gating": True,
     },
-    "stereo_plus_vggt_gauge": {
-        "enable_vggt_features": True,
+    "diagnostic_A1_vggt_gauge_only": {
+        "enable_vggt_dense_features": False,
+        "enable_vggt_geometry": True,
         "enable_vggt_gauge": True,
         "enable_temporal_memory": False,
         "visibility_aware_gating": True,
     },
-    "stereo_plus_temporal_memory": {
-        "enable_vggt_features": False,
+    "diagnostic_A2_vggt_dense_feature_only": {
+        "enable_vggt_dense_features": True,
+        "enable_vggt_geometry": False,
+        "enable_vggt_gauge": False,
+        "enable_temporal_memory": False,
+        "visibility_aware_gating": True,
+    },
+    "diagnostic_A3_temporal_memory_only": {
+        "enable_vggt_dense_features": False,
+        "enable_vggt_geometry": False,
         "enable_vggt_gauge": False,
         "enable_temporal_memory": True,
         "visibility_aware_gating": True,
     },
-    "full_model": {
-        "enable_vggt_features": True,
+    "diagnostic_A4_vggt_gauge_and_features": {
+        "enable_vggt_dense_features": True,
+        "enable_vggt_geometry": True,
+        "enable_vggt_gauge": True,
+        "enable_temporal_memory": False,
+        "visibility_aware_gating": True,
+    },
+    "diagnostic_A5_full_model": {
+        "enable_vggt_dense_features": True,
+        "enable_vggt_geometry": True,
         "enable_vggt_gauge": True,
         "enable_temporal_memory": True,
         "visibility_aware_gating": True,
     },
-    "full_model_no_visibility_gating": {
-        "enable_vggt_features": True,
+    "diagnostic_A6_full_no_visibility_gating": {
+        "enable_vggt_dense_features": True,
+        "enable_vggt_geometry": True,
         "enable_vggt_gauge": True,
         "enable_temporal_memory": True,
         "visibility_aware_gating": False,
@@ -80,12 +106,20 @@ def _args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--checkpoint", type=Path, required=True, help="step_XXXXXXX directory")
     parser.add_argument("--config", type=Path, help="resolved training YAML; defaults to checkpoint run config")
+    parser.add_argument(
+        "--evaluation-contract",
+        type=Path,
+        default=Path("configs/metric_stereo_video/evaluation_contract.yaml"),
+    )
     parser.add_argument("--output-dir", type=Path, default=Path("runs/metric_stereo_video/evaluation_final"))
     parser.add_argument("--max-batches", type=int, help="limit validation batches per rank for a smoke evaluation")
     parser.add_argument("--num-workers", type=int, help="override validation DataLoader workers")
     parser.add_argument(
         "--variants",
-        help="comma-separated variant names (default: all five)",
+        help=(
+            "explicit comma-separated shared-checkpoint diagnostic variants; "
+            "default evaluates the checkpoint's trained configuration only"
+        ),
     )
     parser.add_argument(
         "--merge-existing",
@@ -93,6 +127,18 @@ def _args() -> argparse.Namespace:
         help="merge selected variants into an existing metrics.json report",
     )
     return parser.parse_args()
+
+
+def _selected_variants(requested: str | None) -> list[str]:
+    if requested is None:
+        return ["trained_configuration"]
+    selected = [name.strip() for name in requested.split(",") if name.strip()]
+    unknown = sorted(set(selected) - set(VARIANTS))
+    if unknown:
+        raise ValueError(f"unknown variants: {unknown}")
+    if not selected:
+        raise ValueError("--variants cannot be empty")
+    return selected
 
 
 def _checkpoint_paths(checkpoint: Path, rank: int, world_size: int) -> tuple[dict[str, Any], Path]:
@@ -147,14 +193,179 @@ def _load_model(config: Mapping[str, Any], checkpoint: Path, context: Any) -> to
 
 def _set_variant(model: torch.nn.Module, settings: Mapping[str, bool]) -> None:
     root = _unwrapped(model)
-    root.enable_vggt_features = bool(settings["enable_vggt_features"])
+    root.enable_vggt_dense_features = bool(settings["enable_vggt_dense_features"])
+    root.enable_vggt_geometry = bool(settings["enable_vggt_geometry"])
     geometry = root.geometry_model
     geometry.enable_vggt_gauge = bool(settings["enable_vggt_gauge"])
     geometry.enable_temporal_memory = bool(settings["enable_temporal_memory"])
     geometry.visibility_aware_gating = bool(settings["visibility_aware_gating"])
 
 
-def _endpoint_metrics(output: Any, batch: Mapping[str, Any]) -> dict[str, MetricValue]:
+def _trained_settings(model: torch.nn.Module) -> dict[str, bool]:
+    root = _unwrapped(model)
+    geometry = root.geometry_model
+    return {
+        "enable_vggt_dense_features": bool(root.enable_vggt_dense_features),
+        "enable_vggt_geometry": bool(root.enable_vggt_geometry),
+        "enable_vggt_gauge": bool(geometry.enable_vggt_gauge),
+        "enable_temporal_memory": bool(geometry.enable_temporal_memory),
+        "visibility_aware_gating": bool(geometry.visibility_aware_gating),
+    }
+
+
+def _previous_prefix_batch(batch: Mapping[str, Any]) -> dict[str, Any]:
+    """Remove the current frame so a second forward predicts strictly t-1."""
+
+    frames = int(batch["rgb"].shape[1])
+    if frames < 2:
+        raise ValueError("temporal residual evaluation requires at least two frames")
+    temporal_fields = {
+        "rgb",
+        "K",
+        "T_right_from_left",
+        "T_current_from_previous",
+        "temporal_transform_valid",
+        "T_current_from_previous_valid",
+        "T_left_camera_from_world",
+        "camera_pose_valid",
+        "baseline_m",
+        "disparity_gt_left_px",
+        "disparity_gt_right_px",
+        "valid_gt_left",
+        "valid_gt_right",
+        "target_time_mask",
+        "time_valid_mask",
+        "frame_ids",
+        "timestamps",
+        "manifest_indices",
+    }
+    prefix = dict(batch)
+    for name in temporal_fields:
+        value = prefix.get(name)
+        if isinstance(value, Tensor):
+            prefix[name] = value[:, :-1]
+    prefix["target_time_mask"] = torch.zeros_like(prefix["target_time_mask"])
+    prefix["target_time_mask"][:, -1] = True
+    prefix["clip_lengths"] = batch["clip_lengths"] - 1
+    return prefix
+
+
+def _spring_partition_masks(
+    cpu_batch: Mapping[str, Any], dataset: Any
+) -> dict[str, Tensor]:
+    """Load official Spring masks on the exact fixed-crop output grid."""
+
+    height, width = cpu_batch["rgb"].shape[-2:]
+    details: list[Tensor] = []
+    matched: list[Tensor] = []
+    for metadata in cpu_batch["identity_metadata"]:
+        endpoint_index = int(metadata["endpoint_manifest_index"])
+        record = dataset.records[endpoint_index].to_dict()
+        crop = tuple(int(value) for value in metadata["crop_xywh"])
+        try:
+            bundle = spring_map_bundle(
+                record,
+                target_hw=(height, width),
+                manifest_path=dataset.manifest_path,
+                crop_hr_xywh=crop,
+                require_rigid=False,
+            )
+        except SpringNativeMapError as exc:
+            raise RuntimeError(
+                f"formal Spring partition maps unavailable for endpoint {endpoint_index}: {exc}"
+            ) from exc
+        details.append(torch.from_numpy(bundle["detail"]).unsqueeze(0))
+        matched.append(torch.from_numpy(bundle["matched"]).unsqueeze(0))
+    return {
+        "detail": torch.stack(details).bool(),
+        "matched": torch.stack(matched).bool(),
+    }
+
+
+def _warp_previous_prediction_to_current(
+    previous_output: Any, batch: Mapping[str, Any]
+) -> tuple[Any, Tensor]:
+    batch_size = int(batch["rgb"].shape[0])
+    identity = torch.eye(
+        4, device=batch["rgb"].device, dtype=torch.float32
+    ).expand(batch_size, -1, -1)
+    warp = zbuffer_reproject(
+        previous_output.disparity_left_px.float(),
+        previous_output.depth_m.float(),
+        previous_output.confidence.float(),
+        batch["K"][:, -2, 0].float(),
+        identity,
+        batch["T_current_from_previous"][:, -1].float(),
+        intrinsics_current_hr_3x3=batch["K"][:, -1, 0].float(),
+        baseline_previous_m=batch["baseline_m"][:, -2].float(),
+        baseline_current_m=batch["baseline_m"][:, -1].float(),
+    )
+    height, width = previous_output.valid_mask.shape[-2:]
+    source_u = warp.source_uv[:, 0].long().clamp(0, width - 1)
+    source_v = warp.source_uv[:, 1].long().clamp(0, height - 1)
+    source_linear = (source_v * width + source_u).reshape(batch_size, 1, -1)
+    winner_valid = torch.gather(
+        previous_output.valid_mask.flatten(2), 2, source_linear
+    ).reshape_as(previous_output.valid_mask)
+    return warp, warp.valid_mask & winner_valid
+
+
+def _warp_previous_gt_to_current(batch: Mapping[str, Any]) -> Any:
+    previous_disparity = batch["previous_disparity_gt_left_px"].float()
+    previous_valid = batch["previous_valid_gt_left"].bool()
+    previous_disparity = torch.where(
+        previous_valid, previous_disparity, torch.zeros_like(previous_disparity)
+    )
+    factor = (
+        batch["K"][:, -2, 0, 0, 0].float()
+        * batch["baseline_m"][:, -2].float()
+    ).reshape(-1, 1, 1, 1)
+    previous_depth = torch.where(
+        previous_valid,
+        factor / previous_disparity.clamp_min(1e-8),
+        torch.zeros_like(previous_disparity),
+    )
+    identity = torch.eye(
+        4, device=previous_disparity.device, dtype=torch.float32
+    ).expand(previous_disparity.shape[0], -1, -1)
+    return zbuffer_reproject(
+        previous_disparity,
+        previous_depth,
+        previous_valid.float(),
+        batch["K"][:, -2, 0].float(),
+        identity,
+        batch["T_current_from_previous"][:, -1].float(),
+        intrinsics_current_hr_3x3=batch["K"][:, -1, 0].float(),
+        baseline_previous_m=batch["baseline_m"][:, -2].float(),
+        baseline_current_m=batch["baseline_m"][:, -1].float(),
+    )
+
+
+def _motion_bucket_masks(
+    batch: Mapping[str, Any], contract: Mapping[str, Any]
+) -> dict[str, Tensor]:
+    transform = batch["T_current_from_previous"][:, -1].float()
+    translation = torch.linalg.vector_norm(transform[:, :3, 3], dim=-1)
+    cosine = ((transform[:, :3, :3].diagonal(dim1=-2, dim2=-1).sum(-1) - 1.0) / 2.0).clamp(-1.0, 1.0)
+    score = translation + torch.acos(cosine)
+    low = float(contract["temporal"]["small_medium_threshold"])
+    high = float(contract["temporal"]["medium_large_threshold"])
+    shape = (score.shape[0], 1, batch["rgb"].shape[-2], batch["rgb"].shape[-1])
+    return {
+        "small_motion": (score <= low).reshape(-1, 1, 1, 1).expand(shape),
+        "medium_motion": ((score > low) & (score <= high)).reshape(-1, 1, 1, 1).expand(shape),
+        "large_motion": (score > high).reshape(-1, 1, 1, 1).expand(shape),
+    }
+
+
+def _endpoint_metrics(
+    output: Any,
+    previous_output: Any,
+    batch: Mapping[str, Any],
+    *,
+    spring_masks: Mapping[str, Tensor],
+    contract: Mapping[str, Any],
+) -> dict[str, MetricValue]:
     gt_disp = batch["disparity_gt_left_px"][:, -1]
     gt_valid = batch["valid_gt_left"][:, -1].bool()
     endpoint = output.endpoint
@@ -170,6 +381,18 @@ def _endpoint_metrics(output: Any, batch: Mapping[str, Any]) -> dict[str, Metric
         baseline_m=batch["baseline_m"][:, -1].float(),
         dynamic_mask=batch["dynamic_mask_current"].bool(),
         dynamic_available=batch["dynamic_mask_available"].bool(),
+        detail_mask=spring_masks["detail"],
+        matched_mask=spring_masks["matched"],
+        boundary_mask=disparity_boundary_mask(
+            gt_disp.float(),
+            gradient_threshold_px=float(
+                contract["spring_partitions"]["boundary_gradient_threshold_px"]
+            ),
+            radius_px=int(contract["spring_partitions"]["boundary_radius_px"]),
+        ),
+        invalid_penalty_px=float(
+            contract["validity"]["all_gt_error_cap_and_invalid_penalty_px"]
+        ),
     )
     left_rgb = batch["rgb"][:, -1, 0]
     right_rgb = batch["rgb"][:, -1, 1]
@@ -218,6 +441,28 @@ def _endpoint_metrics(output: Any, batch: Mapping[str, Any]) -> dict[str, Metric
         )
         photo_error = (temporal_photo.image - left_rgb).abs().mean(dim=1, keepdim=True)
         values["temporal_reprojection_residual"] = scalar_metric(photo_error, temporal_photo.valid_mask)
+        prediction_warp, prediction_winner_valid = _warp_previous_prediction_to_current(
+            previous_output, batch
+        )
+        gt_warp = _warp_previous_gt_to_current(batch)
+        values.update(
+            temporal_residual_metric_values(
+                current_prediction_disparity_px=endpoint.disparity_left_px,
+                warped_previous_prediction_disparity_px=prediction_warp.disparity_hr_px,
+                current_gt_disparity_px=gt_disp,
+                warped_previous_gt_disparity_px=gt_warp.disparity_hr_px,
+                current_prediction_valid=endpoint.valid_mask,
+                warped_prediction_valid=prediction_winner_valid,
+                current_gt_valid=gt_valid,
+                warped_gt_valid=gt_warp.valid_mask,
+                dynamic_mask=batch["dynamic_mask_current"].bool(),
+                dynamic_available=batch["dynamic_mask_available"].bool(),
+                motion_bucket_masks=_motion_bucket_masks(batch, contract),
+                invalid_penalty_px=float(
+                    contract["validity"]["all_gt_error_cap_and_invalid_penalty_px"]
+                ),
+            )
+        )
     return values
 
 
@@ -239,6 +484,8 @@ def _write_reports(
     results: Mapping[str, Any],
     context: Any,
     *,
+    evaluation_contract: Mapping[str, Any],
+    shared_checkpoint_ablation: bool,
     merge_existing: bool = False,
 ) -> None:
     if not context.primary:
@@ -252,10 +499,21 @@ def _write_reports(
     merged_variants = dict(existing.get("variants", {}))
     merged_variants.update(results)
     report = {
-        "schema_version": 1,
+        "schema_version": 2,
         "checkpoint": str(checkpoint),
-        "shared_checkpoint_ablation": True,
-        "ablation_note": "All variants use the same final trained checkpoint; component flags are changed only at evaluation time and are not independent retraining results.",
+        "evaluation_contract": dict(evaluation_contract),
+        "model_pose_contract": {
+            "class": "known_pose_stereo_video",
+            "active_pose_source": "spring_gt_camera_from_world_relative_transform",
+            "pose_is_model_input": True,
+            "pose_is_not_estimated_by_vggt": True,
+        },
+        "shared_checkpoint_ablation": shared_checkpoint_ablation,
+        "ablation_note": (
+            "Explicit diagnostic variants use one trained checkpoint with runtime component toggles; they are not independent retraining results."
+            if shared_checkpoint_ablation
+            else "The checkpoint is evaluated with the component configuration used to construct its trained model."
+        ),
         "config": dict(config),
         "variants": merged_variants,
     }
@@ -267,7 +525,7 @@ def _write_reports(
             for name, metric in payload["metrics"].items():
                 writer.writerow({"variant": variant, "metric": name, **metric})
     (output_dir / "ablation_matrix.json").write_text(
-        json.dumps({"schema_version": 1, "shared_checkpoint": True, "variants": merged_variants}, indent=2, sort_keys=True) + "\n",
+        json.dumps({"schema_version": 2, "shared_checkpoint": shared_checkpoint_ablation, "evaluation_contract": dict(evaluation_contract), "variants": merged_variants}, indent=2, sort_keys=True) + "\n",
         encoding="utf-8",
     )
 
@@ -280,6 +538,7 @@ def main() -> int:
     checkpoint = args.checkpoint.expanduser().resolve()
     config_path = args.config.expanduser().resolve() if args.config else checkpoint.parents[1] / "resolved_config.yaml"
     config = _read_config(config_path)
+    evaluation_contract = _read_config(args.evaluation_contract)
     if args.num_workers is not None:
         config["data"]["num_workers"] = int(args.num_workers)
     dataset = _dataset(config, training=False)
@@ -288,37 +547,110 @@ def main() -> int:
         sampler.set_epoch(0)
     model = _load_model(config, checkpoint, context)
     results: dict[str, Any] = {}
-    selected_variants = list(VARIANTS)
-    if args.variants:
-        selected_variants = [name.strip() for name in args.variants.split(",") if name.strip()]
-        unknown = sorted(set(selected_variants) - set(VARIANTS))
-        if unknown:
-            raise ValueError(f"unknown variants: {unknown}")
-        if not selected_variants:
-            raise ValueError("--variants cannot be empty")
+    selected_variants = _selected_variants(args.variants)
     for variant in selected_variants:
-        settings = VARIANTS[variant]
-        _set_variant(model, settings)
+        if variant == "trained_configuration":
+            settings = _trained_settings(model)
+        else:
+            settings = VARIANTS[variant]
+            _set_variant(model, settings)
         accumulator = MetricAccumulator()
+        coverage = AccuracyCoverageHistogram(
+            bins=int(
+                evaluation_contract["validity"][
+                    "accuracy_coverage_histogram_bins"
+                ]
+            ),
+            device=context.device,
+        )
         batches_seen = 0
         samples_seen = 0
         with torch.inference_mode():
-            for batch_index, batch in enumerate(loader):
+            for batch_index, cpu_batch in enumerate(loader):
                 if args.max_batches is not None and batch_index >= args.max_batches:
                     break
-                batch = _move_batch(batch, context.device)
+                spring_masks = {
+                    name: value.to(context.device, non_blocking=True)
+                    for name, value in _spring_partition_masks(
+                        cpu_batch, dataset
+                    ).items()
+                }
+                batch = _move_batch(cpu_batch, context.device)
                 with torch.autocast("cuda", dtype=torch.bfloat16):
                     output = model(batch)
-                accumulator.update(_endpoint_metrics(output, batch))
+                # FSDP may recycle gathered parameter/storage-backed tensors on
+                # the next forward. Snapshot the structured endpoint before
+                # running the t-1 prefix, whose outputs are needed only for
+                # temporal residuals.
+                output_snapshot = copy.deepcopy(output)
+                with torch.autocast("cuda", dtype=torch.bfloat16):
+                    previous_output = model(_previous_prefix_batch(batch))
+                # DistributedSampler pads two validation examples to preserve
+                # FSDP collective parity. Only the rank owning the original
+                # strided index contributes metrics, preventing duplicate GT.
+                if int(batch["rgb"].shape[0]) != 1:
+                    raise RuntimeError("formal evaluator requires micro batch size one")
+                dataset_index = int(cpu_batch["identity_metadata"][0]["dataset_index"])
+                unique_owner = dataset_index % context.world_size == context.rank
+                if unique_owner:
+                    accumulator.update(
+                        _endpoint_metrics(
+                            output_snapshot,
+                            previous_output,
+                            batch,
+                            spring_masks=spring_masks,
+                            contract=evaluation_contract,
+                        )
+                    )
+                    gt_disparity = batch["disparity_gt_left_px"][:, -1].float()
+                    gt_valid = batch["valid_gt_left"][:, -1].bool() & torch.isfinite(
+                        gt_disparity
+                    ) & (gt_disparity > 0)
+                    coverage.update(
+                        output_snapshot.valid_probability.float(),
+                        (
+                            output_snapshot.disparity_left_px.float()
+                            - gt_disparity
+                        ).abs(),
+                        gt_valid,
+                        error_cap_px=float(
+                            evaluation_contract["validity"][
+                                "all_gt_error_cap_and_invalid_penalty_px"
+                            ]
+                        ),
+                    )
                 batches_seen += 1
-                samples_seen += int(batch["rgb"].shape[0])
+                samples_seen += int(unique_owner)
         _sync(accumulator, context)
+        coverage.all_reduce_()
+        global_samples_tensor = torch.tensor(
+            samples_seen, dtype=torch.int64, device=context.device
+        )
+        if context.world_size > 1:
+            dist.all_reduce(global_samples_tensor, op=dist.ReduceOp.SUM)
+        global_samples = int(global_samples_tensor.item())
         if context.primary:
+            finalized = accumulator.finalize()
+            coverage_curve = coverage.finalize(
+                evaluation_contract["validity"]["accuracy_coverage_points"]
+            )
+            point_99 = next(
+                point
+                for point in coverage_curve["points"]
+                if abs(float(point["requested_coverage"]) - 0.99) < 1e-8
+            )
+            finalized["epe_at_99pct_coverage_px"] = {
+                "value": point_99["epe_px"],
+                "numerator": None,
+                "count": point_99["effective_count"],
+                "valid": point_99["epe_px"] is not None,
+            }
             results[variant] = {
                 "flags": dict(settings),
                 "batches": batches_seen * context.world_size,
-                "samples": samples_seen * context.world_size,
-                "metrics": accumulator.finalize(),
+                "samples": global_samples,
+                "metrics": finalized,
+                "accuracy_coverage_curve": coverage_curve,
             }
             print(json.dumps({"variant": variant, "samples": results[variant]["samples"], "metrics": results[variant]["metrics"]}, sort_keys=True), flush=True)
         if context.world_size > 1:
@@ -329,6 +661,8 @@ def main() -> int:
         checkpoint,
         results,
         context,
+        evaluation_contract=evaluation_contract,
+        shared_checkpoint_ablation=args.variants is not None,
         merge_existing=args.merge_existing,
     )
     if context.world_size > 1:
