@@ -1,0 +1,114 @@
+schema_version: 1
+base_config: configs/metric_stereo_video/best_t8_512.yaml
+evaluation_contract: configs/metric_stereo_video/evaluation_contract.yaml
+independent_training_required: true
+shared_controls:
+  seed: 42
+  clip_length: 8
+  crop_size_hw: [512, 768]
+  optimizer_steps: 6000
+  checkpoint_selection: final_step_6000_no_validation_metric_selection
+  validation_interval: 250
+  micro_batch_size_per_rank: 1
+  gradient_accumulation: 1
+  world_size: 8
+
+baselines:
+  B0:
+    name: full_resolution_ffs
+    kind: frozen_external_baseline
+    evaluation_mode: full
+  B1:
+    name: half_resolution_ffs_bilinear
+    kind: frozen_external_baseline
+    evaluation_mode: half
+
+trainable_arms:
+  A0:
+    name: reconstruction_only
+    fusion:
+      enable_vggt_dense_features: false
+      enable_vggt_geometry: false
+      enable_vggt_gauge: false
+      enable_temporal_memory: false
+      visibility_aware_gating: true
+    disabled_loss_weights:
+      temporal: 0.0
+      pose_scale: 0.0
+      aligned_vggt_depth_auxiliary: 0.0
+  A1:
+    name: reconstruction_plus_vggt_gauge_only
+    fusion:
+      enable_vggt_dense_features: false
+      enable_vggt_geometry: true
+      enable_vggt_gauge: true
+      enable_temporal_memory: false
+      visibility_aware_gating: true
+    disabled_loss_weights:
+      temporal: 0.0
+  A2:
+    name: reconstruction_plus_vggt_dense_feature_only
+    fusion:
+      enable_vggt_dense_features: true
+      enable_vggt_geometry: false
+      enable_vggt_gauge: false
+      enable_temporal_memory: false
+      visibility_aware_gating: true
+    disabled_loss_weights:
+      temporal: 0.0
+      pose_scale: 0.0
+      aligned_vggt_depth_auxiliary: 0.0
+  A3:
+    name: reconstruction_plus_temporal_memory_only
+    fusion:
+      enable_vggt_dense_features: false
+      enable_vggt_geometry: false
+      enable_vggt_gauge: false
+      enable_temporal_memory: true
+      visibility_aware_gating: true
+    disabled_loss_weights:
+      pose_scale: 0.0
+      aligned_vggt_depth_auxiliary: 0.0
+  A4:
+    name: reconstruction_plus_vggt_gauge_and_features
+    fusion:
+      enable_vggt_dense_features: true
+      enable_vggt_geometry: true
+      enable_vggt_gauge: true
+      enable_temporal_memory: false
+      visibility_aware_gating: true
+    disabled_loss_weights:
+      temporal: 0.0
+  A5:
+    name: full_model
+    fusion:
+      enable_vggt_dense_features: true
+      enable_vggt_geometry: true
+      enable_vggt_gauge: true
+      enable_temporal_memory: true
+      visibility_aware_gating: true
+  A6:
+    name: full_without_visibility_aware_gating
+    fusion:
+      enable_vggt_dense_features: true
+      enable_vggt_geometry: true
+      enable_vggt_gauge: true
+      enable_temporal_memory: true
+      visibility_aware_gating: false
+  A7:
+    name: full_plus_stage_c
+    status: deferred_optional
+    reason: stage_c_is_not_integrated_into_the_joint_training_graph
+
+pose_source_arms:
+  gt_pose:
+    status: ready
+    source: spring_gt_camera_from_world
+  vio_odometry_pose:
+    status: blocked_missing_input
+  vggt_pose:
+    status: blocked_camera_head_disabled_and_no_pose_checkpoint_contract
+  corrupted_pose:
+    status: protocol_required_before_run
+  no_pose_no_history:
+    status: represented_by_A4_for_full_vggt_and_A0_for_reconstruction_only
