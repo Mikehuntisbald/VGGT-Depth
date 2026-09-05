@@ -37,6 +37,12 @@ from .spring_arms import (
     temporal_residual_metrics as spring_temporal_residual_metrics,
     topk_diagnostics as spring_topk_diagnostics,
 )
+from .metric_stereo_video import (
+    MetricAccumulator as MetricStereoVideoAccumulator,
+    MetricValue as MetricStereoVideoValue,
+    endpoint_metric_values,
+    scalar_metric,
+)
 
 __all__ = [
     "CompletenessImprovementReport",
@@ -69,4 +75,8 @@ __all__ = [
     "spring_disparity_metrics",
     "spring_temporal_residual_metrics",
     "spring_topk_diagnostics",
+    "MetricStereoVideoAccumulator",
+    "MetricStereoVideoValue",
+    "endpoint_metric_values",
+    "scalar_metric",
 ]
