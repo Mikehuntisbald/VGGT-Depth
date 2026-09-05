@@ -366,6 +366,20 @@ def _validate_config(config: Mapping[str, Any], context: DistributedContext) -> 
         raise ValueError("multi-process joint training requires train.fsdp=true")
 
 
+def _validate_formal_world_size(
+    config: Mapping[str, Any], context: DistributedContext, *, dry_run: bool
+) -> None:
+    formal = config.get("formal_ablation")
+    if not isinstance(formal, Mapping) or dry_run:
+        return
+    expected_world_size = int(formal.get("world_size", 0))
+    if context.world_size != expected_world_size:
+        raise ValueError(
+            "formal ablation requires exactly "
+            f"{expected_world_size} ranks, got {context.world_size}"
+        )
+
+
 def _dataset(config: Mapping[str, Any], *, training: bool) -> RawStereoVideoClipDataset:
     data = config["data"]
     manifest_key = "train_manifest" if training else "validation_manifest"
@@ -455,6 +469,13 @@ def build_model(config: Mapping[str, Any]) -> MetricStereoVideoSystem:
         absolute_depth_tolerance_m=float(
             fusion_config["absolute_depth_tolerance_m"]
         ),
+        enable_vggt_gauge=bool(fusion_config.get("enable_vggt_gauge", True)),
+        enable_temporal_memory=bool(
+            fusion_config.get("enable_temporal_memory", True)
+        ),
+        visibility_aware_gating=bool(
+            fusion_config.get("visibility_aware_gating", True)
+        ),
     )
     return MetricStereoVideoSystem(
         stereo,
@@ -466,6 +487,12 @@ def build_model(config: Mapping[str, Any]) -> MetricStereoVideoSystem:
         ),
         left_right_confidence_temperature_lr_px=float(
             stereo_config["left_right_confidence_temperature_lr_px"]
+        ),
+        enable_vggt_dense_features=bool(
+            fusion_config.get("enable_vggt_dense_features", True)
+        ),
+        enable_vggt_geometry=bool(
+            fusion_config.get("enable_vggt_geometry", True)
         ),
     )
 
@@ -1535,6 +1562,7 @@ def main() -> int:
     if args.output_dir is not None:
         config["train"]["output_dir"] = str(args.output_dir)
     context = _distributed_context()
+    _validate_formal_world_size(config, context, dry_run=args.dry_run)
     _validate_config(config, context)
     seed = int(config["seed"])
     # Identical initialization is required because every rank loads independently.

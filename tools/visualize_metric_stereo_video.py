@@ -43,12 +43,13 @@ from data.raw_stereo_video_dataset import collate_raw_stereo_video_samples  # no
 
 
 VARIANT_LABELS = {
-    "stereo_metric_prior_only": "Stereo prior",
-    "stereo_plus_vggt_gauge": "Stereo + VGGT gauge",
-    "stereo_plus_temporal_memory": "Stereo + temporal",
-    "full_model": "Full model",
-    "full_model_no_visibility_gating": "Full - visibility gate",
+    "diagnostic_A0_reconstruction_only": "Reconstruction only",
+    "diagnostic_A1_vggt_gauge_only": "VGGT gauge only",
+    "diagnostic_A3_temporal_memory_only": "Temporal only",
+    "diagnostic_A5_full_model": "Full model",
+    "diagnostic_A6_full_no_visibility_gating": "Full - visibility gate",
 }
+VISUAL_VARIANTS = tuple(VARIANT_LABELS)
 
 
 def _args() -> argparse.Namespace:
@@ -163,7 +164,7 @@ def _render_panel(
     baseline = float(batch["baseline_m"][0, -1].item())
     target_depth = np.where(target_valid, fx * baseline / np.maximum(target_disp, 1e-8), np.nan)
     dynamic = _map(batch["dynamic_mask_current"]).astype(bool)
-    full_output = outputs["full_model"]
+    full_output = outputs["diagnostic_A5_full_model"]
     full_disp = _map(full_output.disparity_left_px)
     full_depth = _map(full_output.depth_m)
     uncertainty = _map(full_output.endpoint.uncertainty)
@@ -176,7 +177,7 @@ def _render_panel(
     )
     current_inverse = np.reciprocal(np.maximum(full_depth, 1e-8))
     warp_residual = np.abs(np.log(np.maximum(current_inverse, 1e-8) / np.maximum(warp, 1e-8)))
-    prior = _resize_map(outputs["full_model"].stereo.disparity_left_hr_px_lr_grid[:, -1], (height, width))
+    prior = _resize_map(full_output.stereo.disparity_left_hr_px_lr_grid[:, -1], (height, width))
 
     variant_disparities = {
         name: _map(output.disparity_left_px)
@@ -206,7 +207,7 @@ def _render_panel(
     _imshow(axes[1, 4], confidence, title="Confidence", cmap="viridis", limits=(0.0, 1.0))
     _imshow(axes[1, 5], dynamic.astype(np.float32), title="Dynamic mask", cmap="coolwarm", limits=(0.0, 1.0))
 
-    for column, name in enumerate(VARIANTS):
+    for column, name in enumerate(VISUAL_VARIANTS):
         prediction = variant_disparities[name]
         _imshow(
             axes[2, column],
@@ -324,7 +325,8 @@ def main() -> int:
         for sample_index, cpu_batch in enumerate(cpu_batches):
             batch = _move_batch(cpu_batch, context.device)
             outputs: dict[str, Any] = {}
-            for name, settings in VARIANTS.items():
+            for name in VISUAL_VARIANTS:
+                settings = VARIANTS[name]
                 _set_variant(model, settings)
                 with torch.autocast("cuda", dtype=torch.bfloat16):
                     outputs[name] = model(batch)

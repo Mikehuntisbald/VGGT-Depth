@@ -332,7 +332,9 @@ class MetricStereoVideoSystem(nn.Module):
         left_right_maximum_error_lr_px: float = 1.0,
         left_right_confidence_temperature_lr_px: float = 0.5,
         require_right_disparity: bool = True,
-        enable_vggt_features: bool = True,
+        enable_vggt_dense_features: bool = True,
+        enable_vggt_geometry: bool = True,
+        enable_vggt_features: bool | None = None,
     ) -> None:
         super().__init__()
         if not isinstance(stereo_backbone, nn.Module):
@@ -349,8 +351,17 @@ class MetricStereoVideoSystem(nn.Module):
             raise ValueError("stereo_feature_level must be a non-negative integer")
         if not isinstance(require_right_disparity, bool):
             raise TypeError("require_right_disparity must be bool")
-        if not isinstance(enable_vggt_features, bool):
-            raise TypeError("enable_vggt_features must be bool")
+        for name, value in (
+            ("enable_vggt_dense_features", enable_vggt_dense_features),
+            ("enable_vggt_geometry", enable_vggt_geometry),
+        ):
+            if not isinstance(value, bool):
+                raise TypeError(f"{name} must be bool")
+        if enable_vggt_features is not None:
+            if not isinstance(enable_vggt_features, bool):
+                raise TypeError("enable_vggt_features must be bool or None")
+            enable_vggt_dense_features = enable_vggt_features
+            enable_vggt_geometry = enable_vggt_features
         self.stereo_backbone = stereo_backbone
         self.vggt_backbone = vggt_backbone
         self.geometry_model = geometry_model
@@ -362,7 +373,8 @@ class MetricStereoVideoSystem(nn.Module):
             left_right_confidence_temperature_lr_px
         )
         self.require_right_disparity = bool(require_right_disparity)
-        self.enable_vggt_features = enable_vggt_features
+        self.enable_vggt_dense_features = enable_vggt_dense_features
+        self.enable_vggt_geometry = enable_vggt_geometry
         if self.require_right_disparity and getattr(
             stereo_backbone, "predict_right", True
         ) is False:
@@ -377,6 +389,19 @@ class MetricStereoVideoSystem(nn.Module):
             maximum_error_px=self.left_right_maximum_error_lr_px,
             confidence_temperature_px=self.left_right_confidence_temperature_lr_px,
         )
+
+    @property
+    def enable_vggt_features(self) -> bool:
+        """Compatibility alias for the old coupled ablation switch."""
+
+        return self.enable_vggt_dense_features and self.enable_vggt_geometry
+
+    @enable_vggt_features.setter
+    def enable_vggt_features(self, enabled: bool) -> None:
+        if not isinstance(enabled, bool):
+            raise TypeError("enable_vggt_features must be bool")
+        self.enable_vggt_dense_features = enabled
+        self.enable_vggt_geometry = enabled
 
     @staticmethod
     def _validate_batch(batch: Mapping[str, Any]) -> tuple[Tensor, ...]:
@@ -746,10 +771,24 @@ class MetricStereoVideoSystem(nn.Module):
         endpoint: MetricStereoVideoGeometryOutput | None = None
         for time_index in range(frames):
             is_endpoint = time_index == frames - 1
-            if is_endpoint and self.enable_vggt_features:
-                vggt_feature = vggt_output.geometry_current
-                vggt_inverse = inverse_depth_vggt
-                vggt_probability = vggt_confidence
+            if is_endpoint and (
+                self.enable_vggt_dense_features or self.enable_vggt_geometry
+            ):
+                vggt_feature = (
+                    vggt_output.geometry_current
+                    if self.enable_vggt_dense_features
+                    else invalid_vggt_feature
+                )
+                vggt_inverse = (
+                    inverse_depth_vggt
+                    if self.enable_vggt_geometry
+                    else invalid_vggt_inverse
+                )
+                vggt_probability = (
+                    vggt_confidence
+                    if self.enable_vggt_geometry
+                    else invalid_vggt_confidence
+                )
                 context_indices = tuple(range(frames))
             else:
                 # A zero feature with zero confidence is explicit missing data.

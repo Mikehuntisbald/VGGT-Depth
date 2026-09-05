@@ -19,6 +19,7 @@ from tools.train_metric_stereo_video import (
     _load_checkpoint,
     _lr_multiplier,
     _save_checkpoint,
+    _validate_formal_world_size,
     build_training_loss,
 )
 
@@ -92,6 +93,14 @@ def test_single_rank_finite_consensus() -> None:
     context = DistributedContext(0, 0, 1, torch.device("cpu"))
     assert _all_ranks_finite(torch.tensor(1.0), context)
     assert not _all_ranks_finite(torch.tensor(float("nan")), context)
+
+
+def test_formal_training_requires_declared_eight_rank_world_size() -> None:
+    config = {"formal_ablation": {"world_size": 8}}
+    single = DistributedContext(0, 0, 1, torch.device("cpu"))
+    _validate_formal_world_size(config, single, dry_run=True)
+    with pytest.raises(ValueError, match="exactly 8 ranks"):
+        _validate_formal_world_size(config, single, dry_run=False)
 
 
 def test_fsdp_mixed_precision_does_not_create_batch_norm_wrappers(
