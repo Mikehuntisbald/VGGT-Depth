@@ -21,6 +21,20 @@ except ImportError:  # pragma: no cover - only in minimal installs.
     torch = None  # type: ignore[assignment]
 
 
+def _assert_torch_tensor_condition(condition: Any, message: str) -> None:
+    """Validate one tensor invariant without synchronizing a valid CUDA path."""
+
+    if torch is None:  # pragma: no cover - callers only pass tensors with Torch.
+        raise RuntimeError("Torch tensor validation requires torch")
+    if condition.dtype != torch.bool or condition.numel() != 1:
+        raise TypeError("validation condition must be a one-element bool Tensor")
+    if condition.device.type == "cuda":
+        torch._assert_async(condition, message)
+        return
+    if not bool(condition):
+        raise ValueError(message)
+
+
 def _require_finite_real(value: Real, name: str) -> float:
     value_float = float(value)
     if not np.isfinite(value_float):
@@ -193,22 +207,29 @@ def resize_intrinsics_align_corners_false(
             if intrinsics_3x3.is_floating_point()
             else intrinsics_3x3.to(dtype=torch.float64)
         )
-        if not bool(torch.isfinite(resized).all().item()):
-            raise ValueError("intrinsics_3x3 must contain only finite values")
-        if not bool(((resized[..., 0, 0] > 0) & (resized[..., 1, 1] > 0)).all()):
-            raise ValueError("intrinsics_3x3 focal lengths must be positive")
-        expected_last_row = resized.new_tensor((0.0, 0.0, 1.0))
-        if not bool(
+        _assert_torch_tensor_condition(
+            torch.isfinite(resized).all(),
+            "intrinsics_3x3 must contain only finite values",
+        )
+        _assert_torch_tensor_condition(
+            ((resized[..., 0, 0] > 0) & (resized[..., 1, 1] > 0)).all(),
+            "intrinsics_3x3 focal lengths must be positive",
+        )
+        _assert_torch_tensor_condition(
             torch.isclose(
-                resized[..., 2, :],
-                expected_last_row.expand_as(resized[..., 2, :]),
+                resized[..., 2, :2],
+                torch.zeros_like(resized[..., 2, :2]),
                 atol=1e-8,
                 rtol=0.0,
             ).all()
-        ):
-            raise ValueError(
-                "intrinsics_3x3 must use homogeneous last row [0, 0, 1]"
-            )
+            & torch.isclose(
+                resized[..., 2, 2],
+                torch.ones_like(resized[..., 2, 2]),
+                atol=1e-8,
+                rtol=0.0,
+            ).all(),
+            "intrinsics_3x3 must use homogeneous last row [0, 0, 1]",
+        )
     else:
         array = np.asarray(intrinsics_3x3)
         if array.ndim < 2 or array.shape[-2:] != (3, 3):

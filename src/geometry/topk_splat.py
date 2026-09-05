@@ -506,6 +506,8 @@ def topk_z_aware_splat(
             depth,
             intrinsics_source_hr_3x3=disparity_intrinsics_previous,
             baseline_source_m=source_baseline,
+            disparity_storage_dtype=disparity_input.dtype,
+            depth_storage_dtype=depth_input.dtype,
             name="previous_depth_m",
         )
         target_disparity_numerator_m_px = (

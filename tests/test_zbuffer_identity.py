@@ -1,6 +1,9 @@
+import importlib
+
 import pytest
 
 torch = pytest.importorskip("torch")
+from torch.utils._python_dispatch import TorchDispatchMode
 
 from geometry.zbuffer_reproject import zbuffer_reproject
 
@@ -147,6 +150,64 @@ def test_dual_calibration_rejects_inconsistent_source_depth() -> None:
         )
 
 
+def test_dual_calibration_accepts_bfloat16_quantized_depth_witness() -> None:
+    calibration = _intrinsics(
+        fx_px=721.5, fy_px=721.5, cx_px=0.0, cy_px=0.0
+    ).float()
+    baseline = torch.tensor([0.18], dtype=torch.float32)
+    numerator_m_px = calibration[0, 0] * baseline[0]
+    disparity_fp32 = torch.tensor([[[[1.0028639]]]], dtype=torch.float32)
+    depth_fp32 = numerator_m_px / disparity_fp32
+    disparity_bf16 = disparity_fp32.to(torch.bfloat16)
+    depth_bf16 = depth_fp32.to(torch.bfloat16)
+
+    # Independent BF16 rounding exceeds the strict FP32 witness tolerance,
+    # even though both values originate from the same metric prediction.
+    recomputed_depth = numerator_m_px / disparity_bf16.float()
+    relative_error = (depth_bf16.float() - recomputed_depth).abs() / recomputed_depth
+    assert relative_error.item() > 2e-4
+
+    result = zbuffer_reproject(
+        disparity_bf16,
+        depth_bf16,
+        torch.ones_like(disparity_bf16),
+        calibration,
+        torch.eye(4),
+        torch.eye(4),
+        intrinsics_current_hr_3x3=calibration,
+        baseline_previous_m=baseline,
+        baseline_current_m=baseline,
+    )
+
+    assert bool(result.valid_mask.item())
+    assert result.depth_m.dtype == torch.bfloat16
+
+
+def test_bfloat16_witness_tolerance_still_rejects_metric_mismatch() -> None:
+    calibration = _intrinsics(
+        fx_px=721.5, fy_px=721.5, cx_px=0.0, cy_px=0.0
+    ).float()
+    baseline = torch.tensor([0.18], dtype=torch.float32)
+    disparity = torch.tensor([[[[8.0]]]], dtype=torch.bfloat16)
+    metric_depth = (calibration[0, 0] * baseline[0] / disparity.float()).to(
+        torch.bfloat16
+    )
+    inconsistent_depth = (metric_depth.float() * 1.03).to(torch.bfloat16)
+
+    with pytest.raises(ValueError, match=r"fx\*baseline/disparity"):
+        zbuffer_reproject(
+            disparity,
+            inconsistent_depth,
+            torch.ones_like(disparity),
+            calibration,
+            torch.eye(4),
+            torch.eye(4),
+            intrinsics_current_hr_3x3=calibration,
+            baseline_previous_m=baseline,
+            baseline_current_m=baseline,
+        )
+
+
 def test_explicit_same_calibration_matches_legacy_zbuffer() -> None:
     disparity = torch.tensor([[[[2.0, 4.0, 8.0]]]], dtype=torch.float64)
     depth = 1.0 / disparity
@@ -180,3 +241,44 @@ def test_explicit_same_calibration_matches_legacy_zbuffer() -> None:
         "collision_mask",
     ):
         torch.testing.assert_close(getattr(explicit, name), getattr(legacy, name))
+
+
+def test_fixed_size_rasterization_avoids_scalar_extraction_and_nonzero(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = importlib.import_module("geometry.zbuffer_reproject")
+    operations: list[str] = []
+
+    class _CaptureOperations(TorchDispatchMode):
+        def __torch_dispatch__(self, func, types, args=(), kwargs=None):
+            del types
+            operations.append(str(func))
+            return func(*args, **({} if kwargs is None else kwargs))
+
+    # CPU invariant checks intentionally extract a scalar to preserve immediate
+    # exceptions. Bypass only those checks so this test isolates rasterization.
+    monkeypatch.setattr(module, "_assert_tensor_condition", lambda *_args: None)
+    disparity = torch.tensor([[[[0.0, 1.0, 2.0, 0.0]]]])
+    depth = torch.tensor([[[[0.0, 2.0, 1.0, 0.0]]]])
+    confidence = torch.ones_like(disparity)
+    calibration = _intrinsics(fx_px=2.0, fy_px=2.0, cx_px=0.0, cy_px=0.0).float()
+    identity = torch.eye(4)
+
+    with _CaptureOperations():
+        module.zbuffer_reproject(
+            disparity,
+            depth,
+            confidence,
+            calibration,
+            identity,
+            identity,
+            intrinsics_current_hr_3x3=calibration,
+            baseline_previous_m=torch.tensor([1.0]),
+            baseline_current_m=torch.tensor([1.0]),
+        )
+
+    forbidden = {
+        "aten._local_scalar_dense.default",
+        "aten.nonzero.default",
+    }
+    assert forbidden.isdisjoint(operations)

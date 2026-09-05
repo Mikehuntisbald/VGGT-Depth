@@ -42,6 +42,11 @@ from .stereo_calibration import (
     RectifiedCalibrationRecord,
     load_rectified_calibration_sidecar,
 )
+from .raw_stereo_video_dataset import (
+    RawStereoVideoClipDataset,
+    RawStereoVideoSample,
+    collate_raw_stereo_video_samples,
+)
 from .collate import collate_temporal_training_samples, collate_training_samples
 from .temporal_training_dataset import (
     CachedTemporalTrainingDataset,
@@ -66,11 +71,14 @@ __all__ = [
     "ManifestValidationError",
     "RectifiedCalibrationIndex",
     "RectifiedCalibrationRecord",
+    "RawStereoVideoClipDataset",
+    "RawStereoVideoSample",
     "FFSTrainingSample",
     "TemporalTrainingSample",
     "build_causal_windows",
     "collate_training_samples",
     "collate_temporal_training_samples",
+    "collate_raw_stereo_video_samples",
     "iter_manifest",
     "load_manifest",
     "load_rectified_calibration_sidecar",

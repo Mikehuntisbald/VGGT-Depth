@@ -20,6 +20,8 @@ is retained.
 from __future__ import annotations
 
 from dataclasses import dataclass
+import math
+from numbers import Real
 from typing import TypeAlias
 
 import torch
@@ -27,6 +29,18 @@ from torch import Tensor
 
 
 Shape2D: TypeAlias = tuple[int, int]
+
+
+def _assert_tensor_condition(condition: Tensor, message: str) -> None:
+    """Validate one value invariant without synchronizing a valid CUDA path."""
+
+    if condition.dtype != torch.bool or condition.numel() != 1:
+        raise TypeError("validation condition must be a one-element bool Tensor")
+    if condition.device.type == "cuda":
+        torch._assert_async(condition, message)
+        return
+    if not bool(condition):
+        raise ValueError(message)
 
 
 @dataclass(frozen=True, slots=True)
@@ -121,20 +135,29 @@ def _batched_intrinsics(
             "intrinsics_hr_3x3 batch does not match image batch: "
             f"{intrinsics.shape[0]} != {batch_size}"
         )
-    if not bool(torch.isfinite(intrinsics).all().item()):
-        raise ValueError("intrinsics_hr_3x3 must contain only finite values")
-    if not bool(((intrinsics[:, 0, 0] > 0) & (intrinsics[:, 1, 1] > 0)).all()):
-        raise ValueError("intrinsics focal lengths must be positive")
-    expected_last_row = intrinsics.new_tensor((0.0, 0.0, 1.0))
-    if not bool(
+    _assert_tensor_condition(
+        torch.isfinite(intrinsics).all(),
+        "intrinsics_hr_3x3 must contain only finite values",
+    )
+    _assert_tensor_condition(
+        ((intrinsics[:, 0, 0] > 0) & (intrinsics[:, 1, 1] > 0)).all(),
+        "intrinsics focal lengths must be positive",
+    )
+    _assert_tensor_condition(
         torch.isclose(
-            intrinsics[:, 2],
-            expected_last_row.expand(batch_size, -1),
+            intrinsics[:, 2, :2],
+            torch.zeros_like(intrinsics[:, 2, :2]),
             atol=1e-6,
             rtol=0.0,
         ).all()
-    ):
-        raise ValueError("intrinsics_hr_3x3 must end with row [0,0,1]")
+        & torch.isclose(
+            intrinsics[:, 2, 2],
+            torch.ones_like(intrinsics[:, 2, 2]),
+            atol=1e-6,
+            rtol=0.0,
+        ).all(),
+        "intrinsics_hr_3x3 must end with row [0,0,1]",
+    )
     return intrinsics
 
 
@@ -168,10 +191,10 @@ def _batched_positive_scalar(
             f"{name} batch does not match image batch: "
             f"{result.shape[0]} != {batch_size}"
         )
-    if not bool(torch.isfinite(result).all().item()) or not bool(
-        (result > 0).all().item()
-    ):
-        raise ValueError(f"{name} must contain only finite positive values")
+    _assert_tensor_condition(
+        torch.isfinite(result).all() & (result > 0).all(),
+        f"{name} must contain only finite positive values",
+    )
     return result
 
 
@@ -181,6 +204,8 @@ def _metric_depth_from_explicit_stereo_disparity(
     *,
     intrinsics_source_hr_3x3: Tensor,
     baseline_source_m: Tensor,
+    disparity_storage_dtype: torch.dtype,
+    depth_storage_dtype: torch.dtype,
     name: str,
 ) -> Tensor:
     """Recompute source depth from explicit stereo calibration and fail closed.
@@ -203,25 +228,28 @@ def _metric_depth_from_explicit_stereo_disparity(
         torch.zeros_like(disparity_hr_px),
     )
     supplied_valid = torch.isfinite(supplied_depth_m) & (supplied_depth_m > 0)
+    # Disparity and its cached depth witness may have been rounded
+    # independently before this FP32 geometry path receives them.  For a
+    # normal floating-point value the relative rounding error is bounded by
+    # half an epsilon.  The product below bounds the combined error of the two
+    # stored values; a small FP32 allowance covers the recomputation itself.
+    disparity_roundoff = float(torch.finfo(disparity_storage_dtype).eps) / 2.0
+    depth_roundoff = float(torch.finfo(depth_storage_dtype).eps) / 2.0
+    quantization_rtol = (
+        (1.0 + disparity_roundoff) * (1.0 + depth_roundoff) - 1.0
+    ) + 8.0 * float(torch.finfo(disparity_hr_px.dtype).eps)
+    consistency_rtol = max(2e-4, quantization_rtol)
     consistent = torch.isclose(
         supplied_depth_m,
         recomputed_depth_m,
         atol=1e-6,
-        rtol=2e-4,
+        rtol=consistency_rtol,
     )
-    if bool((disparity_valid & (~supplied_valid | ~consistent)).any().item()):
-        comparable = disparity_valid & supplied_valid
-        relative_error = torch.where(
-            comparable,
-            (supplied_depth_m - recomputed_depth_m).abs()
-            / recomputed_depth_m.abs().clamp_min(1e-12),
-            torch.zeros_like(recomputed_depth_m),
-        )
-        raise ValueError(
-            f"{name} is inconsistent with source fx*baseline/disparity; "
-            f"mismatched={int((disparity_valid & (~supplied_valid | ~consistent)).sum())}, "
-            f"max_relative_error={float(relative_error.max()):.6g}"
-        )
+    mismatch = disparity_valid & (~supplied_valid | ~consistent)
+    _assert_tensor_condition(
+        ~mismatch.any(),
+        f"{name} is inconsistent with source fx*baseline/disparity",
+    )
     return recomputed_depth_m
 
 
@@ -255,8 +283,9 @@ def _batched_homogeneous_extrinsics(
             f"{name} batch does not match image batch: "
             f"{extrinsics.shape[0]} != {batch_size}"
         )
-    if not bool(torch.isfinite(extrinsics).all().item()):
-        raise ValueError(f"{name} must contain only finite values")
+    _assert_tensor_condition(
+        torch.isfinite(extrinsics).all(), f"{name} must contain only finite values"
+    )
 
     if tuple(extrinsics.shape[-2:]) == (3, 4):
         homogeneous = torch.zeros(
@@ -266,16 +295,21 @@ def _batched_homogeneous_extrinsics(
         homogeneous[:, 3, 3] = 1.0
     else:
         homogeneous = extrinsics.clone()
-        expected_last_row = homogeneous.new_tensor((0.0, 0.0, 0.0, 1.0))
-        if not bool(
+        _assert_tensor_condition(
             torch.isclose(
-                homogeneous[:, 3],
-                expected_last_row.expand(batch_size, -1),
+                homogeneous[:, 3, :3],
+                torch.zeros_like(homogeneous[:, 3, :3]),
                 atol=1e-6,
                 rtol=0.0,
             ).all()
-        ):
-            raise ValueError(f"{name} homogeneous last row must be [0,0,0,1]")
+            & torch.isclose(
+                homogeneous[:, 3, 3],
+                torch.ones_like(homogeneous[:, 3, 3]),
+                atol=1e-6,
+                rtol=0.0,
+            ).all(),
+            f"{name} homogeneous last row must be [0,0,0,1]",
+        )
     return homogeneous
 
 
@@ -284,22 +318,21 @@ def _validate_rotation(rotation: Tensor, name: str) -> None:
     identity = torch.eye(3, dtype=rotation.dtype, device=rotation.device)
     gram = rotation.transpose(-1, -2) @ rotation
     determinant = torch.linalg.det(rotation)
-    if not bool(
+    _assert_tensor_condition(
         torch.isclose(
             gram,
             identity.expand(batch_size, -1, -1),
             atol=1e-4,
             rtol=1e-4,
         ).all()
-    ) or not bool(
-        torch.isclose(
+        & torch.isclose(
             determinant,
             torch.ones_like(determinant),
             atol=1e-4,
             rtol=1e-4,
-        ).all()
-    ):
-        raise ValueError(f"{name} rotation must be a proper orthonormal matrix")
+        ).all(),
+        f"{name} rotation must be a proper orthonormal matrix",
+    )
 
 
 def relative_camera_transform(
@@ -365,7 +398,12 @@ def relative_camera_transform(
     )
     _validate_rotation(previous[:, :3, :3], "previous extrinsics")
     _validate_rotation(current[:, :3, :3], "current extrinsics")
-    inverse_previous = torch.linalg.inv(previous)
+    inverse_previous, inverse_info = torch.linalg.inv_ex(
+        previous, check_errors=False
+    )
+    _assert_tensor_condition(
+        (inverse_info == 0).all(), "previous extrinsics must be invertible"
+    )
     return current @ inverse_previous
 
 
@@ -435,7 +473,12 @@ def zbuffer_reproject(
         )
     if depth_m.device != disparity_hr_px.device or confidence.device != disparity_hr_px.device:
         raise ValueError("all image tensors must share a device")
-    if not torch.isfinite(torch.as_tensor(minimum_depth_m)) or minimum_depth_m <= 0:
+    if (
+        isinstance(minimum_depth_m, bool)
+        or not isinstance(minimum_depth_m, Real)
+        or not math.isfinite(float(minimum_depth_m))
+        or minimum_depth_m <= 0
+    ):
         raise ValueError("minimum_depth_m must be finite and > 0")
 
     batch_size, _, height, width = disparity_hr_px.shape
@@ -493,6 +536,8 @@ def zbuffer_reproject(
             depth,
             intrinsics_source_hr_3x3=intrinsics_previous,
             baseline_source_m=source_baseline,
+            disparity_storage_dtype=disparity_hr_px.dtype,
+            depth_storage_dtype=depth_m.dtype,
             name="previous_depth_m",
         )
         target_disparity_numerator_m_px = (
@@ -514,9 +559,13 @@ def zbuffer_reproject(
     )
     _validate_rotation(previous_extrinsics[:, :3, :3], "previous extrinsics")
     _validate_rotation(current_extrinsics[:, :3, :3], "current extrinsics")
-    transform_current_previous = current_extrinsics @ torch.linalg.inv(
-        previous_extrinsics
+    inverse_previous, inverse_info = torch.linalg.inv_ex(
+        previous_extrinsics, check_errors=False
     )
+    _assert_tensor_condition(
+        (inverse_info == 0).all(), "previous extrinsics must be invertible"
+    )
+    transform_current_previous = current_extrinsics @ inverse_previous
 
     grid_v, grid_u = torch.meshgrid(
         torch.arange(height, dtype=compute_dtype, device=device),
@@ -582,117 +631,137 @@ def zbuffer_reproject(
         * pixels_per_image
     )
     target_linear = batch_offset + target_v * width + target_u
-    valid_source_linear = source_linear[source_valid]
-    valid_target_linear = target_linear[source_valid]
-    valid_depth_current_m = z_current_m[source_valid]
-
     output_size = batch_size * pixels_per_image
+    source_linear = source_linear.reshape(output_size)
+    source_valid = source_valid.reshape(output_size)
+    target_linear = target_linear.reshape(output_size)
+    depth_current_flat = z_current_m.reshape(output_size)
+    safe_target_linear = torch.where(
+        source_valid, target_linear, torch.zeros_like(target_linear)
+    )
+    safe_depth_current_m = torch.where(
+        source_valid,
+        depth_current_flat,
+        torch.full_like(depth_current_flat, torch.inf),
+    )
     zbuffer_m = torch.full(
         (output_size,), torch.inf, dtype=compute_dtype, device=device
     )
     collision_count = torch.zeros(
         (output_size,), dtype=torch.int64, device=device
     )
-    if valid_target_linear.numel() > 0:
-        zbuffer_m.scatter_reduce_(
-            0,
-            valid_target_linear,
-            valid_depth_current_m,
-            reduce="amin",
-            include_self=True,
-        )
-        collision_count.scatter_add_(
-            0,
-            valid_target_linear,
-            torch.ones_like(valid_target_linear, dtype=torch.int64),
-        )
+    zbuffer_m.scatter_reduce_(
+        0,
+        safe_target_linear,
+        safe_depth_current_m,
+        reduce="amin",
+        include_self=True,
+    )
+    collision_count.scatter_add_(
+        0,
+        safe_target_linear,
+        source_valid.to(dtype=torch.int64),
+    )
 
     # For exactly tied depths, retain the lowest source index deterministically.
-    winning_depth = (
-        valid_depth_current_m == zbuffer_m[valid_target_linear]
-        if valid_target_linear.numel() > 0
-        else torch.empty(0, dtype=torch.bool, device=device)
+    winning_depth = source_valid & (
+        depth_current_flat == zbuffer_m[safe_target_linear]
     )
     winner_source = torch.full(
         (output_size,), output_size, dtype=torch.long, device=device
     )
-    if bool(winning_depth.any().item()):
-        winner_source.scatter_reduce_(
-            0,
-            valid_target_linear[winning_depth],
-            valid_source_linear[winning_depth],
-            reduce="amin",
-            include_self=True,
-        )
+    winner_candidates = torch.where(
+        winning_depth,
+        source_linear,
+        torch.full_like(source_linear, output_size),
+    )
+    winner_source.scatter_reduce_(
+        0,
+        safe_target_linear,
+        winner_candidates,
+        reduce="amin",
+        include_self=True,
+    )
 
     output_valid_flat = winner_source != output_size
-    output_target_linear = torch.nonzero(
-        output_valid_flat, as_tuple=False
-    ).squeeze(1)
-    output_source_linear = winner_source[output_valid_flat]
-
-    output_disparity_hr_px = torch.zeros(
-        output_size, dtype=compute_dtype, device=device
+    output_source_linear = torch.where(
+        output_valid_flat, winner_source, torch.zeros_like(winner_source)
     )
-    output_depth_m = torch.zeros(output_size, dtype=compute_dtype, device=device)
-    output_confidence = torch.zeros(
-        output_size, dtype=compute_dtype, device=device
+    source_batch = torch.div(
+        output_source_linear, pixels_per_image, rounding_mode="floor"
     )
-    output_projected_uv = torch.zeros(
-        (output_size, 2), dtype=compute_dtype, device=device
+    source_pixel = output_source_linear % pixels_per_image
+    winning_previous_depth_m = depth_flat_m.reshape(output_size)[
+        output_source_linear
+    ]
+    winning_previous_disparity_hr_px = disparity_flat_hr_px.reshape(output_size)[
+        output_source_linear
+    ]
+    winning_current_depth_m = depth_current_flat[output_source_linear]
+    winning_projected_u = projected_u.reshape(output_size)[output_source_linear]
+    winning_projected_v = projected_v.reshape(output_size)[output_source_linear]
+    winning_disparity_target_hr_px = (
+        winning_previous_disparity_hr_px
+        * winning_previous_depth_m
+        / winning_current_depth_m.clamp_min(torch.finfo(compute_dtype).tiny)
     )
-    output_fractional_offset = torch.zeros_like(output_projected_uv)
-    output_source_uv = torch.zeros_like(output_projected_uv)
-
-    if output_target_linear.numel() > 0:
-        source_batch = torch.div(
-            output_source_linear, pixels_per_image, rounding_mode="floor"
-        )
-        source_pixel = output_source_linear % pixels_per_image
-        winning_previous_depth_m = depth_flat_m[source_batch, source_pixel]
-        winning_previous_disparity_hr_px = disparity_flat_hr_px[
-            source_batch, source_pixel
-        ]
-        winning_current_depth_m = z_current_m[source_batch, source_pixel]
-        winning_projected_u = projected_u[source_batch, source_pixel]
-        winning_projected_v = projected_v[source_batch, source_pixel]
+    if target_disparity_numerator_m_px is not None:
         winning_disparity_target_hr_px = (
-            winning_previous_disparity_hr_px
-            * winning_previous_depth_m
-            / winning_current_depth_m
+            target_disparity_numerator_m_px[source_batch, 0]
+            / winning_current_depth_m.clamp_min(torch.finfo(compute_dtype).tiny)
         )
-        if target_disparity_numerator_m_px is not None:
-            winning_disparity_target_hr_px = (
-                target_disparity_numerator_m_px[source_batch, 0]
-                / winning_current_depth_m
-            )
-        output_disparity_hr_px[output_target_linear] = (
-            winning_disparity_target_hr_px
-        )
-        output_depth_m[output_target_linear] = winning_current_depth_m
-        output_confidence[output_target_linear] = confidence_flat[
-            source_batch, source_pixel
-        ]
-        output_projected_uv[output_target_linear, 0] = winning_projected_u
-        output_projected_uv[output_target_linear, 1] = winning_projected_v
-        output_target_u = (output_target_linear % pixels_per_image) % width
-        output_target_v = torch.div(
-            output_target_linear % pixels_per_image,
-            width,
-            rounding_mode="floor",
-        )
-        output_fractional_offset[output_target_linear, 0] = (
-            winning_projected_u - output_target_u.to(dtype=compute_dtype)
-        )
-        output_fractional_offset[output_target_linear, 1] = (
-            winning_projected_v - output_target_v.to(dtype=compute_dtype)
-        )
-        output_source_uv[output_target_linear, 0] = (
-            source_pixel % width
-        ).to(dtype=compute_dtype)
-        output_source_uv[output_target_linear, 1] = torch.div(
-            source_pixel, width, rounding_mode="floor"
-        ).to(dtype=compute_dtype)
+    output_target_linear = torch.arange(output_size, dtype=torch.long, device=device)
+    output_target_pixel = output_target_linear % pixels_per_image
+    output_target_u = output_target_pixel % width
+    output_target_v = torch.div(output_target_pixel, width, rounding_mode="floor")
+    output_disparity_hr_px = torch.where(
+        output_valid_flat,
+        winning_disparity_target_hr_px,
+        torch.zeros_like(winning_disparity_target_hr_px),
+    )
+    output_depth_m = torch.where(
+        output_valid_flat,
+        winning_current_depth_m,
+        torch.zeros_like(winning_current_depth_m),
+    )
+    winning_confidence = confidence_flat.reshape(output_size)[output_source_linear]
+    output_confidence = torch.where(
+        output_valid_flat, winning_confidence, torch.zeros_like(winning_confidence)
+    )
+    winning_projected_uv = torch.stack(
+        (winning_projected_u, winning_projected_v), dim=1
+    )
+    output_projected_uv = torch.where(
+        output_valid_flat.unsqueeze(1),
+        winning_projected_uv,
+        torch.zeros_like(winning_projected_uv),
+    )
+    winning_fractional_offset = torch.stack(
+        (
+            winning_projected_u - output_target_u.to(dtype=compute_dtype),
+            winning_projected_v - output_target_v.to(dtype=compute_dtype),
+        ),
+        dim=1,
+    )
+    output_fractional_offset = torch.where(
+        output_valid_flat.unsqueeze(1),
+        winning_fractional_offset,
+        torch.zeros_like(winning_fractional_offset),
+    )
+    winning_source_uv = torch.stack(
+        (
+            (source_pixel % width).to(dtype=compute_dtype),
+            torch.div(source_pixel, width, rounding_mode="floor").to(
+                dtype=compute_dtype
+            ),
+        ),
+        dim=1,
+    )
+    output_source_uv = torch.where(
+        output_valid_flat.unsqueeze(1),
+        winning_source_uv,
+        torch.zeros_like(winning_source_uv),
+    )
 
     output_shape = (batch_size, 1, height, width)
     vector_output_shape = (batch_size, height, width, 2)
