@@ -1,0 +1,175 @@
+{
+  "status": "COMPLETE",
+  "selected_arm": "none_mild",
+  "selected_profile": "mild",
+  "development_feasible": false,
+  "selection_uses_validation": false,
+  "arms": [
+    {
+      "status": "COMPLETE",
+      "arm": "none_control",
+      "steps": 3000,
+      "chosen": {
+        "shift": 0.0,
+        "metrics": {
+          "penalized_epe": 0.5937528126354996,
+          "raw_epe": 0.7423430140246886,
+          "good_damage": 0.028976028754655384,
+          "large_1px": 0.007160037419735154,
+          "large_5px": 0.002115355127338899,
+          "recovery": 0.5696562651168334,
+          "opportunity_epe": 1.8777134212640312,
+          "rejection_failure": 0.22501372872048325
+        },
+        "feasible": false,
+        "violation": 0.03020901371652518,
+        "score": 1.1000894396353464
+      },
+      "baseline_v1": {
+        "penalized_epe": 0.5940794488175276,
+        "raw_epe": 0.7432587293681004,
+        "good_damage": 0.0281263591842621,
+        "large_1px": 0.006980848678532747,
+        "large_5px": 0.0021264025219876297,
+        "recovery": 0.5592425633943031,
+        "opportunity_epe": 1.8827741185948323,
+        "rejection_failure": 0.2307111477210324
+      },
+      "checkpoint_sha256": "4b8a556654874074feceee98f5948a346d733c054c576fc6555f193b4a147c0c",
+      "elapsed_s": 8.702347456011921
+    },
+    {
+      "status": "COMPLETE",
+      "arm": "none_mild",
+      "steps": 3000,
+      "chosen": {
+        "shift": -0.5,
+        "metrics": {
+          "penalized_epe": 0.5954589535197645,
+          "raw_epe": 0.7407358416807759,
+          "good_damage": 0.027124208372046883,
+          "large_1px": 0.005785741525433091,
+          "large_5px": 0.001442568793231217,
+          "recovery": 0.5585583185524295,
+          "opportunity_epe": 1.944785804156379,
+          "rejection_failure": 0.2228171334431631
+        },
+        "feasible": false,
+        "violation": 0.02566792040358301,
+        "score": 1.0667222239034844
+      },
+      "baseline_v1": {
+        "penalized_epe": 0.5940794488175276,
+        "raw_epe": 0.7432587293681004,
+        "good_damage": 0.0281263591842621,
+        "large_1px": 0.006980848678532747,
+        "large_5px": 0.0021264025219876297,
+        "recovery": 0.5592425633943031,
+        "opportunity_epe": 1.8827741185948323,
+        "rejection_failure": 0.2307111477210324
+      },
+      "checkpoint_sha256": "c900f45a3024b09c149f9508d84b6bbf8a581778cf53bc7fedf3ceba150265cd",
+      "elapsed_s": 8.674583842977881
+    },
+    {
+      "status": "COMPLETE",
+      "arm": "none_balanced",
+      "steps": 3000,
+      "chosen": {
+        "shift": -1.0,
+        "metrics": {
+          "penalized_epe": 0.5994913990458683,
+          "raw_epe": 0.743456835148962,
+          "good_damage": 0.021539353249894252,
+          "large_1px": 0.0040877569679232265,
+          "large_5px": 0.0008486608569154702,
+          "recovery": 0.5125596786292669,
+          "opportunity_epe": 2.0339298538530564,
+          "rejection_failure": 0.16252516932088595
+        },
+        "feasible": false,
+        "violation": 0.2580484884083285,
+        "score": 1.0339486351497869
+      },
+      "baseline_v1": {
+        "penalized_epe": 0.5940794488175276,
+        "raw_epe": 0.7432587293681004,
+        "good_damage": 0.0281263591842621,
+        "large_1px": 0.006980848678532747,
+        "large_5px": 0.0021264025219876297,
+        "recovery": 0.5592425633943031,
+        "opportunity_epe": 1.8827741185948323,
+        "rejection_failure": 0.2307111477210324
+      },
+      "checkpoint_sha256": "7c9488e75a13ee071e41afd752ff0d87d4d107d19e2480fb412d896ecff30c6f",
+      "elapsed_s": 8.754345091991127
+    },
+    {
+      "status": "COMPLETE",
+      "arm": "none_recover",
+      "steps": 3000,
+      "chosen": {
+        "shift": -1.0,
+        "metrics": {
+          "penalized_epe": 0.5991272573598684,
+          "raw_epe": 0.7434727955843989,
+          "good_damage": 0.03481027337773967,
+          "large_1px": 0.005917647417538932,
+          "large_5px": 0.0009905094042051688,
+          "recovery": 0.6309789047876107,
+          "opportunity_epe": 1.962002172714146,
+          "rejection_failure": 0.24725425590334982
+        },
+        "feasible": false,
+        "violation": 0.3226073752257328,
+        "score": 1.066014789656925
+      },
+      "baseline_v1": {
+        "penalized_epe": 0.5940794488175276,
+        "raw_epe": 0.7432587293681004,
+        "good_damage": 0.0281263591842621,
+        "large_1px": 0.006980848678532747,
+        "large_5px": 0.0021264025219876297,
+        "recovery": 0.5592425633943031,
+        "opportunity_epe": 1.8827741185948323,
+        "rejection_failure": 0.2307111477210324
+      },
+      "checkpoint_sha256": "ed71c50b4c1e921059d64033a1f37280847baea729d6bd4101a7881ef1696aa3",
+      "elapsed_s": 8.741721600992605
+    },
+    {
+      "status": "COMPLETE",
+      "arm": "none_protect",
+      "steps": 3000,
+      "chosen": {
+        "shift": -0.5,
+        "metrics": {
+          "penalized_epe": 0.601215586247406,
+          "raw_epe": 0.7449484765921623,
+          "good_damage": 0.02502024280341356,
+          "large_1px": 0.004110072705113662,
+          "large_5px": 0.0007302327862810802,
+          "recovery": 0.5360819972097393,
+          "opportunity_epe": 2.046523904520943,
+          "rejection_failure": 0.19870034779425225
+        },
+        "feasible": false,
+        "violation": 0.2029492658726917,
+        "score": 1.0394513042547848
+      },
+      "baseline_v1": {
+        "penalized_epe": 0.5940794488175276,
+        "raw_epe": 0.7432587293681004,
+        "good_damage": 0.0281263591842621,
+        "large_1px": 0.006980848678532747,
+        "large_5px": 0.0021264025219876297,
+        "recovery": 0.5592425633943031,
+        "opportunity_epe": 1.8827741185948323,
+        "rejection_failure": 0.2307111477210324
+      },
+      "checkpoint_sha256": "0b74fc901352b4e4d619c83836f26564d128cd59f184cf6e46ba7b4cf0af3614",
+      "elapsed_s": 8.81025767797837
+    }
+  ],
+  "created_unix_s": 1788746196.3985777
+}

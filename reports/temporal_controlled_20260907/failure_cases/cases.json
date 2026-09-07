@@ -1,0 +1,58 @@
+[
+  {
+    "arm": "matching_mild",
+    "kind": "new_degradation",
+    "sequence_id": "0005",
+    "frame_id": 10,
+    "dataset_index": 2,
+    "x": 253,
+    "y": 147,
+    "change_px": 76.01312255859375,
+    "v1_error_px": 2.2035903930664062,
+    "new_error_px": 78.21671295166016,
+    "gate": 0.0009734630584716797,
+    "figure": "matching_mild_new_degradation_000002.png"
+  },
+  {
+    "arm": "matching_mild",
+    "kind": "recovery_over_v1",
+    "sequence_id": "0005",
+    "frame_id": 32,
+    "dataset_index": 24,
+    "x": 581,
+    "y": 200,
+    "change_px": 76.28593444824219,
+    "v1_error_px": 99.28038787841797,
+    "new_error_px": 22.994457244873047,
+    "gate": 0.005647336132824421,
+    "figure": "matching_mild_recovery_over_v1_000024.png"
+  },
+  {
+    "arm": "categorical_mild",
+    "kind": "new_degradation",
+    "sequence_id": "0005",
+    "frame_id": 10,
+    "dataset_index": 2,
+    "x": 253,
+    "y": 147,
+    "change_px": 76.08953857421875,
+    "v1_error_px": 2.2035903930664062,
+    "new_error_px": 78.29312896728516,
+    "gate": 0.0,
+    "figure": "categorical_mild_new_degradation_000002.png"
+  },
+  {
+    "arm": "categorical_mild",
+    "kind": "recovery_over_v1",
+    "sequence_id": "0005",
+    "frame_id": 32,
+    "dataset_index": 24,
+    "x": 581,
+    "y": 200,
+    "change_px": 76.73785400390625,
+    "v1_error_px": 99.28038787841797,
+    "new_error_px": 22.54253387451172,
+    "gate": 0.0,
+    "figure": "categorical_mild_recovery_over_v1_000024.png"
+  }
+]

@@ -1,0 +1,32 @@
+{
+  "arm": "alignment_mild",
+  "status": "CALIBRATED",
+  "chosen": {
+    "shift": -0.5,
+    "metrics": {
+      "penalized_epe": 0.5953000799342751,
+      "raw_epe": 0.7406930616633581,
+      "good_damage": 0.027102622172150405,
+      "large_1px": 0.005827942572991241,
+      "large_5px": 0.0014503019694853284,
+      "recovery": 0.5605058924978442,
+      "opportunity_epe": 1.9440042238765534,
+      "rejection_failure": 0.21565531759106718
+    },
+    "feasible": false,
+    "violation": 0.020546597246835496,
+    "score": 1.0663934705524836
+  },
+  "baseline": {
+    "penalized_epe": 0.5940794488175276,
+    "raw_epe": 0.7432587293681004,
+    "good_damage": 0.0281263591842621,
+    "large_1px": 0.006980848678532747,
+    "large_5px": 0.0021264025219876297,
+    "recovery": 0.5592425633943031,
+    "opportunity_epe": 1.8827741185948323,
+    "rejection_failure": 0.2307111477210324
+  },
+  "checkpoint_sha256": "619ec97b3cf0cf1b5416516090ebfd2e948a8a867ab817da737766b7258898db",
+  "source_checkpoint": "runs/metric_stereo_video/temporal_controlled_20260907/components/alignment_mild/final.pt"
+}

@@ -1,0 +1,33 @@
+{
+  "status": "COMPLETE",
+  "arm": "residual_ambiguity_control",
+  "steps": 3000,
+  "chosen": {
+    "shift": 0.0,
+    "metrics": {
+      "penalized_epe": 0.5947644620074428,
+      "raw_epe": 0.7425373759622417,
+      "good_damage": 0.03203300208467577,
+      "large_1px": 0.006922739382680425,
+      "large_5px": 0.0019916243072731184,
+      "recovery": 0.5922335406165214,
+      "opportunity_epe": 1.884730952759546,
+      "rejection_failure": 0.2650329489291598
+    },
+    "feasible": false,
+    "violation": 0.15042681264183488,
+    "score": 1.102805135379683
+  },
+  "baseline_v1": {
+    "penalized_epe": 0.5940794488175276,
+    "raw_epe": 0.7432587293681004,
+    "good_damage": 0.0281263591842621,
+    "large_1px": 0.006980848678532747,
+    "large_5px": 0.0021264025219876297,
+    "recovery": 0.5592425633943031,
+    "opportunity_epe": 1.8827741185948323,
+    "rejection_failure": 0.2307111477210324
+  },
+  "checkpoint_sha256": "fd1082ed469f1c492aac1f4523fc6052980bedf6f4482a89d4d240cfe0ab7ca7",
+  "elapsed_s": 10.176988292019814
+}

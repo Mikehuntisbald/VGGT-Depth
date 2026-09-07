@@ -1,0 +1,32 @@
+{
+  "arm": "none_mild",
+  "status": "CALIBRATED",
+  "chosen": {
+    "shift": -0.5,
+    "metrics": {
+      "penalized_epe": 0.5954589535197645,
+      "raw_epe": 0.7407358416807759,
+      "good_damage": 0.027124208372046883,
+      "large_1px": 0.005785741525433091,
+      "large_5px": 0.001442568793231217,
+      "recovery": 0.5585583185524295,
+      "opportunity_epe": 1.944785804156379,
+      "rejection_failure": 0.2228171334431631
+    },
+    "feasible": false,
+    "violation": 0.02566792040358301,
+    "score": 1.0667222239034844
+  },
+  "baseline": {
+    "penalized_epe": 0.5940794488175276,
+    "raw_epe": 0.7432587293681004,
+    "good_damage": 0.0281263591842621,
+    "large_1px": 0.006980848678532747,
+    "large_5px": 0.0021264025219876297,
+    "recovery": 0.5592425633943031,
+    "opportunity_epe": 1.8827741185948323,
+    "rejection_failure": 0.2307111477210324
+  },
+  "checkpoint_sha256": "169f60562e332552014d51f00fd40260cdafc95d086f7c60297633056081d67f",
+  "source_checkpoint": "runs/metric_stereo_video/temporal_controlled_20260907/supervision/none_mild/final.pt"
+}
