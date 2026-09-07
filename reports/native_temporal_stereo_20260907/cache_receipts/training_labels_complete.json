@@ -1,0 +1,9 @@
+{
+  "status": "COMPLETE",
+  "samples": 1152,
+  "source": "real Spring left/right GT, exact existing crop; last two frames",
+  "input_encodings_changed": false,
+  "endpoint_GT_spot_checks": "first/middle/last exact match",
+  "source_sha256": "531e41136da55cdf6f2343184a100c37454a2308b66a161f4770baa931e7fcba",
+  "elapsed_s": 56.4056502780295
+}

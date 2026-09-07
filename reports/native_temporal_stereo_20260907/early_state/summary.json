@@ -1,0 +1,33 @@
+{
+  "status": "COMPLETE",
+  "steps": 1000,
+  "variant": "early_state",
+  "elapsed_s": 864.1680241569993,
+  "checkpoint_sha256": "73528f019cd1ec512c2b687501db98b534e16df28e8388f804805134e44a648d",
+  "gradient_ownership": {
+    "initializer.key.weight": 0.02007565274834633,
+    "initializer.key.bias": 0.002031792886555195,
+    "initializer.context.0.weight": 0.0,
+    "initializer.context.0.bias": 0.0,
+    "initializer.context.1.weight": 0.0,
+    "initializer.context.1.bias": 0.0,
+    "initializer.cost.0.weight": 0.0,
+    "initializer.cost.0.bias": 0.0,
+    "initializer.cost.1.weight": 0.0,
+    "initializer.cost.1.bias": 0.0,
+    "initializer.cost.3.weight": 0.0,
+    "initializer.cost.3.bias": 0.0,
+    "initializer.cost.4.weight": 0.0,
+    "initializer.cost.4.bias": 0.0,
+    "initializer.cost.6.weight": 0.014902202412486076,
+    "initializer.cost.6.bias": 1.4781951904296875e-05,
+    "initializer.state_fusion.0.gates.weight": 0.006113870535045862,
+    "initializer.state_fusion.0.gates.bias": 0.001845701364800334,
+    "initializer.state_fusion.0.proposal.weight": 0.01835191436111927,
+    "initializer.state_fusion.0.proposal.bias": 0.00621725944802165
+  },
+  "trainable_parameters": {
+    "geometry": 2908966,
+    "temporal_matcher": 128549
+  }
+}

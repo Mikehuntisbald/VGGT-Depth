@@ -1,0 +1,47 @@
+{
+  "status": "PASS",
+  "arms": {
+    "late": {
+      "maximum_parameter_or_buffer_change": {
+        "refiner": 0.0,
+        "geometry": 0.0042784493416547775,
+        "initializer": 0.0
+      },
+      "changed_tensor_counts": {
+        "refiner": 0,
+        "geometry": 104,
+        "initializer": 0
+      },
+      "checkpoint_sha256": "87624b26a1e49db20a24f09c71518c69de9c83a3273afe86ab1679cd9820587f"
+    },
+    "early_seed": {
+      "maximum_parameter_or_buffer_change": {
+        "refiner": 0.0,
+        "geometry": 0.002652682363986969,
+        "initializer": 0.02051146700978279
+      },
+      "changed_tensor_counts": {
+        "refiner": 0,
+        "geometry": 98,
+        "initializer": 16
+      },
+      "checkpoint_sha256": "4a117fc0e7280d30828795c41da8cae4156e1fff17838961a5d14b8fd52a4e3f"
+    },
+    "early_state": {
+      "maximum_parameter_or_buffer_change": {
+        "refiner": 0.0,
+        "geometry": 0.0028696544468402863,
+        "initializer": 0.02414068393409252
+      },
+      "changed_tensor_counts": {
+        "refiner": 0,
+        "geometry": 98,
+        "initializer": 20
+      },
+      "checkpoint_sha256": "73528f019cd1ec512c2b687501db98b534e16df28e8388f804805134e44a648d"
+    }
+  },
+  "A5_runtime_sources_checked": 65,
+  "A5_runtime_sources_changed": [],
+  "v1_checkpoint_sha256": "60fe5a02263c2d39a622e0a0f64db381154c01e01bb33c9dcc21dd295556f269"
+}

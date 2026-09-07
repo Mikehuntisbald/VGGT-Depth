@@ -1,0 +1,11 @@
+{
+  "status": "COMPLETE",
+  "steps": 1000,
+  "variant": "late",
+  "elapsed_s": 1566.3092353169923,
+  "checkpoint_sha256": "87624b26a1e49db20a24f09c71518c69de9c83a3273afe86ab1679cd9820587f",
+  "gradient_ownership": {},
+  "trainable_parameters": {
+    "geometry": 3226534
+  }
+}

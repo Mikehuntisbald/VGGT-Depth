@@ -1,0 +1,15 @@
+{
+  "schema": 1,
+  "checkpoint_manifest_sha256": "c01c57b387362ee2eabed75679f9be54ff798cda4216d967590d18a529981e88",
+  "config_sha256": "b52e3a10c5386f4245582892f713f0816225db35a919d6fcd00fe6e5a6eac3c0",
+  "sampling_plan_lineage_sha256": "4996254fdad60123c6b704dc9a856169d04ec37e0167e57214ebc14549c1d76a",
+  "script_sha256": "bfa96e5a557c3e5e9f70d2f14dadeb0f0d0bdca038af53e3da57e80d1b8c7839",
+  "refiner_source_sha256": "7bd52fba7db43fa8ea9129603a3f8ea7e0c13513c4e66ecaf9e94547d1c011a5",
+  "max_batches": null,
+  "encoder_frozen": true,
+  "input_boundary": "FFS encoded feature/cost/context and causal VGGT features; no A5/v1 prediction input",
+  "vg_gt_schedule": "independent causal prefixes 1..T, available each frame; shared by structural control and new matcher",
+  "training_crop": "same deterministic epoch-zero crops as original cache",
+  "torch": "2.8.0+cu128",
+  "cuda": "12.8"
+}

@@ -1,0 +1,2644 @@
+[
+  {
+    "sequence_id": "0005",
+    "frame_id": 8,
+    "dataset_index": 0,
+    "A5/metric_depth_absrel": [
+      9474.526047769885,
+      393216
+    ],
+    "A5/metric_depth_rmse_squared": [
+      239321.05659910245,
+      393216
+    ],
+    "A5/epe_px": [
+      348029.53639030457,
+      393216
+    ],
+    "A5/common_valid_epe_px": [
+      348029.53639030457,
+      393216
+    ],
+    "A5/bad1_px": [
+      28606.0,
+      393216
+    ],
+    "A5/bad3_px": [
+      7193.0,
+      393216
+    ],
+    "A5/all_gt_penalized_epe_px": [
+      177416.78747940063,
+      393216
+    ],
+    "A5/all_gt_bad1": [
+      28606.0,
+      393216
+    ],
+    "A5/all_gt_bad3": [
+      7193.0,
+      393216
+    ],
+    "A5/completeness_1px": [
+      364610.0,
+      393216
+    ],
+    "A5/completeness_2px": [
+      382507.0,
+      393216
+    ],
+    "A5/prediction_coverage": [
+      393216.0,
+      393216
+    ],
+    "A5/prediction_valid_fraction": [
+      393216.0,
+      393216
+    ],
+    "A5/gt_valid_pixels": [
+      393216.0,
+      393216
+    ],
+    "A5/scale_error_log": [
+      0.001334372558631003,
+      1
+    ],
+    "A5/dynamic_epe_px": [
+      245563.26770973206,
+      264079
+    ],
+    "A5/static_epe_px": [
+      102466.26868057251,
+      129137
+    ],
+    "A5/dynamic_penalized_epe_px": [
+      127901.52439117432,
+      264079
+    ],
+    "A5/static_penalized_epe_px": [
+      49515.26308822632,
+      129137
+    ],
+    "A5/dynamic_pixels": [
+      264079.0,
+      264079
+    ],
+    "A5/static_pixels": [
+      129137.0,
+      129137
+    ],
+    "A5/uncertainty_nll": [
+      -1303955.3338302665,
+      393216
+    ],
+    "A5/uncertainty_1sigma_coverage": [
+      367473.0,
+      393216
+    ],
+    "A5/uncertainty_2sigma_coverage": [
+      390489.0,
+      393216
+    ],
+    "A5/validity_confidence_brier_0p1_log_depth": [
+      5032.599526665976,
+      393216
+    ],
+    "A5/validity_confidence_ece_0p1_log_depth": [
+      4909.686649560957,
+      393216
+    ],
+    "A5/uncertainty_brier": [
+      5032.599526665976,
+      393216
+    ],
+    "A5/uncertainty_ece": [
+      4909.686649560957,
+      393216
+    ],
+    "A5/spring_high_detail_epe_px": [
+      29099.0932598114,
+      7224
+    ],
+    "A5/spring_high_detail_bad1": [
+      4870.0,
+      7224
+    ],
+    "A5/spring_low_detail_epe_px": [
+      148317.69421958923,
+      385992
+    ],
+    "A5/spring_low_detail_bad1": [
+      23736.0,
+      385992
+    ],
+    "A5/spring_matched_epe_px": [
+      37383.06176376343,
+      34343
+    ],
+    "A5/spring_matched_bad1": [
+      2903.0,
+      34343
+    ],
+    "A5/spring_boundary_epe_px": [
+      82185.53585147858,
+      45734
+    ],
+    "A5/spring_boundary_bad1": [
+      15111.0,
+      45734
+    ],
+    "A5/spring_unmatched_completion_1px": [
+      333170.0,
+      358873
+    ],
+    "A5/spring_unmatched_completion_2px": [
+      350615.0,
+      358873
+    ],
+    "A5/temporal_matched_common_valid_delta_epe_px": [
+      640552.8230276108,
+      393216
+    ],
+    "A5/temporal_matched_penalized_delta_epe_px": [
+      257032.7394771576,
+      393216
+    ],
+    "A5/rigid_temporal_residual_epe_px": [
+      70548.26809692383,
+      129137
+    ],
+    "A5/non_rigid_temporal_residual_epe_px": [
+      186484.47138023376,
+      264079
+    ],
+    "A5/temporal_prediction_transport_miss_rate": [
+      0.0,
+      393216
+    ],
+    "A5/temporal_disocclusion_current_epe_px": [
+      0.0,
+      0
+    ],
+    "A5/temporal_disocclusion_completion_1px": [
+      0.0,
+      0
+    ],
+    "A5/temporal_disocclusion_completion_2px": [
+      0.0,
+      0
+    ],
+    "A5/temporal_small_motion_penalized_delta_epe_px": [
+      257032.7394771576,
+      393216
+    ],
+    "A5/temporal_medium_motion_penalized_delta_epe_px": [
+      0.0,
+      0
+    ],
+    "A5/temporal_large_motion_penalized_delta_epe_px": [
+      0.0,
+      0
+    ],
+    "A5/good_current_damage_rate": [
+      0.0,
+      109337
+    ],
+    "A5/rejection_task_failure_rate": [
+      0.0,
+      43371
+    ],
+    "A5/large_degradation_1px_rate": [
+      0.0,
+      393216
+    ],
+    "A5/large_degradation_5px_rate": [
+      0.0,
+      393216
+    ],
+    "A5/large_degradation_5px_excess_mean": [
+      0.0,
+      393216
+    ],
+    "A5/new_large_5px_vs_v1_rate": [
+      0.0,
+      393216
+    ],
+    "A5/removed_large_5px_vs_v1_rate": [
+      1389.0,
+      393216
+    ],
+    "A5/error_increase_over_v1_5px_rate": [
+      1548.0,
+      393216
+    ],
+    "A5/fixed_opportunity_recovery_rate": [
+      0.0,
+      45684
+    ],
+    "A5/fixed_opportunity_epe_px": [
+      168819.30365467072,
+      45684
+    ],
+    "A5/recoverable_to_1px_rate": [
+      0.0,
+      9954
+    ],
+    "A5/fg_bg_spurious_mixing_rate": [
+      0.0,
+      5999
+    ],
+    "A5/fg_bg_error_px": [
+      55311.6218957901,
+      5999
+    ],
+    "A5/boundary_good_current_damage_rate": [
+      0.0,
+      4584
+    ],
+    "A5/fg_bg_foreground_gt_error_px": [
+      20663.678825378418,
+      3515
+    ],
+    "A5/fg_bg_background_gt_error_px": [
+      34647.94307041168,
+      2484
+    ],
+    "v1/metric_depth_absrel": [
+      9514.500702463178,
+      393216
+    ],
+    "v1/metric_depth_rmse_squared": [
+      264783.5906600221,
+      393216
+    ],
+    "v1/epe_px": [
+      355869.97005462646,
+      393216
+    ],
+    "v1/common_valid_epe_px": [
+      355869.97005462646,
+      393216
+    ],
+    "v1/bad1_px": [
+      26922.0,
+      393216
+    ],
+    "v1/bad3_px": [
+      6031.0,
+      393216
+    ],
+    "v1/all_gt_penalized_epe_px": [
+      167187.68176841736,
+      393216
+    ],
+    "v1/all_gt_bad1": [
+      26922.0,
+      393216
+    ],
+    "v1/all_gt_bad3": [
+      6031.0,
+      393216
+    ],
+    "v1/completeness_1px": [
+      366294.0,
+      393216
+    ],
+    "v1/completeness_2px": [
+      383859.0,
+      393216
+    ],
+    "v1/prediction_coverage": [
+      393216.0,
+      393216
+    ],
+    "v1/prediction_valid_fraction": [
+      393216.0,
+      393216
+    ],
+    "v1/gt_valid_pixels": [
+      393216.0,
+      393216
+    ],
+    "v1/scale_error_log": [
+      0.0016294547822326422,
+      1
+    ],
+    "v1/dynamic_epe_px": [
+      245032.85398101807,
+      264079
+    ],
+    "v1/static_epe_px": [
+      110837.1160736084,
+      129137
+    ],
+    "v1/dynamic_penalized_epe_px": [
+      124853.06774711609,
+      264079
+    ],
+    "v1/static_penalized_epe_px": [
+      42334.61402130127,
+      129137
+    ],
+    "v1/dynamic_pixels": [
+      264079.0,
+      264079
+    ],
+    "v1/static_pixels": [
+      129137.0,
+      129137
+    ],
+    "v1/uncertainty_nll": [
+      -1309890.9532895852,
+      393216
+    ],
+    "v1/uncertainty_1sigma_coverage": [
+      372955.0,
+      393216
+    ],
+    "v1/uncertainty_2sigma_coverage": [
+      390392.0,
+      393216
+    ],
+    "v1/validity_confidence_brier_0p1_log_depth": [
+      3680.6898369440833,
+      393216
+    ],
+    "v1/validity_confidence_ece_0p1_log_depth": [
+      3517.68664956093,
+      393216
+    ],
+    "v1/uncertainty_brier": [
+      3680.6898369440833,
+      393216
+    ],
+    "v1/uncertainty_ece": [
+      3517.68664956093,
+      393216
+    ],
+    "v1/spring_high_detail_epe_px": [
+      26189.85719013214,
+      7224
+    ],
+    "v1/spring_high_detail_bad1": [
+      4641.0,
+      7224
+    ],
+    "v1/spring_low_detail_epe_px": [
+      140997.82457828522,
+      385992
+    ],
+    "v1/spring_low_detail_bad1": [
+      22281.0,
+      385992
+    ],
+    "v1/spring_matched_epe_px": [
+      32998.323033332825,
+      34343
+    ],
+    "v1/spring_matched_bad1": [
+      2560.0,
+      34343
+    ],
+    "v1/spring_boundary_epe_px": [
+      71150.11326599121,
+      45734
+    ],
+    "v1/spring_boundary_bad1": [
+      14379.0,
+      45734
+    ],
+    "v1/spring_unmatched_completion_1px": [
+      334511.0,
+      358873
+    ],
+    "v1/spring_unmatched_completion_2px": [
+      351663.0,
+      358873
+    ],
+    "v1/temporal_matched_common_valid_delta_epe_px": [
+      649467.5447731018,
+      393216
+    ],
+    "v1/temporal_matched_penalized_delta_epe_px": [
+      233125.51038742065,
+      393216
+    ],
+    "v1/rigid_temporal_residual_epe_px": [
+      57283.031829833984,
+      129137
+    ],
+    "v1/non_rigid_temporal_residual_epe_px": [
+      175842.47855758667,
+      264079
+    ],
+    "v1/temporal_prediction_transport_miss_rate": [
+      0.0,
+      393216
+    ],
+    "v1/temporal_disocclusion_current_epe_px": [
+      0.0,
+      0
+    ],
+    "v1/temporal_disocclusion_completion_1px": [
+      0.0,
+      0
+    ],
+    "v1/temporal_disocclusion_completion_2px": [
+      0.0,
+      0
+    ],
+    "v1/temporal_small_motion_penalized_delta_epe_px": [
+      233125.51038742065,
+      393216
+    ],
+    "v1/temporal_medium_motion_penalized_delta_epe_px": [
+      0.0,
+      0
+    ],
+    "v1/temporal_large_motion_penalized_delta_epe_px": [
+      0.0,
+      0
+    ],
+    "v1/good_current_damage_rate": [
+      10088.0,
+      109337
+    ],
+    "v1/rejection_task_failure_rate": [
+      8502.0,
+      43371
+    ],
+    "v1/large_degradation_1px_rate": [
+      2588.0,
+      393216
+    ],
+    "v1/large_degradation_5px_rate": [
+      1389.0,
+      393216
+    ],
+    "v1/large_degradation_5px_excess_mean": [
+      37549.5228767395,
+      393216
+    ],
+    "v1/new_large_5px_vs_v1_rate": [
+      0.0,
+      393216
+    ],
+    "v1/removed_large_5px_vs_v1_rate": [
+      0.0,
+      393216
+    ],
+    "v1/error_increase_over_v1_5px_rate": [
+      0.0,
+      393216
+    ],
+    "v1/fixed_opportunity_recovery_rate": [
+      15957.0,
+      45684
+    ],
+    "v1/fixed_opportunity_epe_px": [
+      124232.52184486389,
+      45684
+    ],
+    "v1/recoverable_to_1px_rate": [
+      3075.0,
+      9954
+    ],
+    "v1/fg_bg_spurious_mixing_rate": [
+      228.0,
+      5999
+    ],
+    "v1/fg_bg_error_px": [
+      36534.98861312866,
+      5999
+    ],
+    "v1/boundary_good_current_damage_rate": [
+      828.0,
+      4584
+    ],
+    "v1/fg_bg_foreground_gt_error_px": [
+      13502.859340667725,
+      3515
+    ],
+    "v1/fg_bg_background_gt_error_px": [
+      23032.129272460938,
+      2484
+    ],
+    "early_state/metric_depth_absrel": [
+      8985.747322540508,
+      393216
+    ],
+    "early_state/metric_depth_rmse_squared": [
+      247685.92743083055,
+      393216
+    ],
+    "early_state/epe_px": [
+      343140.28867816925,
+      393216
+    ],
+    "early_state/common_valid_epe_px": [
+      343140.28867816925,
+      393216
+    ],
+    "early_state/bad1_px": [
+      23672.0,
+      393216
+    ],
+    "early_state/bad3_px": [
+      7109.0,
+      393216
+    ],
+    "early_state/all_gt_penalized_epe_px": [
+      165530.60288906097,
+      393216
+    ],
+    "early_state/all_gt_bad1": [
+      23672.0,
+      393216
+    ],
+    "early_state/all_gt_bad3": [
+      7109.0,
+      393216
+    ],
+    "early_state/completeness_1px": [
+      369544.0,
+      393216
+    ],
+    "early_state/completeness_2px": [
+      383370.0,
+      393216
+    ],
+    "early_state/prediction_coverage": [
+      393216.0,
+      393216
+    ],
+    "early_state/prediction_valid_fraction": [
+      393216.0,
+      393216
+    ],
+    "early_state/gt_valid_pixels": [
+      393216.0,
+      393216
+    ],
+    "early_state/scale_error_log": [
+      8.654219709569588e-05,
+      1
+    ],
+    "early_state/dynamic_epe_px": [
+      241307.6367263794,
+      264079
+    ],
+    "early_state/static_epe_px": [
+      101832.65195178986,
+      129137
+    ],
+    "early_state/dynamic_penalized_epe_px": [
+      120992.50696372986,
+      264079
+    ],
+    "early_state/static_penalized_epe_px": [
+      44538.095925331116,
+      129137
+    ],
+    "early_state/dynamic_pixels": [
+      264079.0,
+      264079
+    ],
+    "early_state/static_pixels": [
+      129137.0,
+      129137
+    ],
+    "early_state/uncertainty_nll": [
+      -1305601.0026281755,
+      393216
+    ],
+    "early_state/uncertainty_1sigma_coverage": [
+      381196.0,
+      393216
+    ],
+    "early_state/uncertainty_2sigma_coverage": [
+      391098.0,
+      393216
+    ],
+    "early_state/validity_confidence_brier_0p1_log_depth": [
+      5158.639634078725,
+      393216
+    ],
+    "early_state/validity_confidence_ece_0p1_log_depth": [
+      5013.138712763799,
+      393216
+    ],
+    "early_state/uncertainty_brier": [
+      5158.639634078725,
+      393216
+    ],
+    "early_state/uncertainty_ece": [
+      5013.138712763799,
+      393216
+    ],
+    "early_state/spring_high_detail_epe_px": [
+      29579.042510032654,
+      7224
+    ],
+    "early_state/spring_high_detail_bad1": [
+      4897.0,
+      7224
+    ],
+    "early_state/spring_low_detail_epe_px": [
+      135951.56037902832,
+      385992
+    ],
+    "early_state/spring_low_detail_bad1": [
+      18775.0,
+      385992
+    ],
+    "early_state/spring_matched_epe_px": [
+      34884.57790470123,
+      34343
+    ],
+    "early_state/spring_matched_bad1": [
+      2907.0,
+      34343
+    ],
+    "early_state/spring_boundary_epe_px": [
+      82998.6467037201,
+      45734
+    ],
+    "early_state/spring_boundary_bad1": [
+      15067.0,
+      45734
+    ],
+    "early_state/spring_unmatched_completion_1px": [
+      338108.0,
+      358873
+    ],
+    "early_state/spring_unmatched_completion_2px": [
+      351566.0,
+      358873
+    ],
+    "early_state/temporal_matched_common_valid_delta_epe_px": [
+      653378.3658514023,
+      393216
+    ],
+    "early_state/temporal_matched_penalized_delta_epe_px": [
+      262444.3374891281,
+      393216
+    ],
+    "early_state/rigid_temporal_residual_epe_px": [
+      71171.46436595917,
+      129137
+    ],
+    "early_state/non_rigid_temporal_residual_epe_px": [
+      191272.87312316895,
+      264079
+    ],
+    "early_state/temporal_prediction_transport_miss_rate": [
+      0.0,
+      393216
+    ],
+    "early_state/temporal_disocclusion_current_epe_px": [
+      0.0,
+      0
+    ],
+    "early_state/temporal_disocclusion_completion_1px": [
+      0.0,
+      0
+    ],
+    "early_state/temporal_disocclusion_completion_2px": [
+      0.0,
+      0
+    ],
+    "early_state/temporal_small_motion_penalized_delta_epe_px": [
+      262444.3374891281,
+      393216
+    ],
+    "early_state/temporal_medium_motion_penalized_delta_epe_px": [
+      0.0,
+      0
+    ],
+    "early_state/temporal_large_motion_penalized_delta_epe_px": [
+      0.0,
+      0
+    ],
+    "early_state/good_current_damage_rate": [
+      27888.0,
+      109337
+    ],
+    "early_state/rejection_task_failure_rate": [
+      16475.0,
+      43371
+    ],
+    "early_state/large_degradation_1px_rate": [
+      2237.0,
+      393216
+    ],
+    "early_state/large_degradation_5px_rate": [
+      1338.0,
+      393216
+    ],
+    "early_state/large_degradation_5px_excess_mean": [
+      23176.650007247925,
+      393216
+    ],
+    "early_state/new_large_5px_vs_v1_rate": [
+      983.0,
+      393216
+    ],
+    "early_state/removed_large_5px_vs_v1_rate": [
+      1034.0,
+      393216
+    ],
+    "early_state/error_increase_over_v1_5px_rate": [
+      2016.0,
+      393216
+    ],
+    "early_state/fixed_opportunity_recovery_rate": [
+      13516.0,
+      45684
+    ],
+    "early_state/fixed_opportunity_epe_px": [
+      154764.00212192535,
+      45684
+    ],
+    "early_state/recoverable_to_1px_rate": [
+      3047.0,
+      9954
+    ],
+    "early_state/fg_bg_spurious_mixing_rate": [
+      584.0,
+      5999
+    ],
+    "early_state/fg_bg_error_px": [
+      54788.994614601135,
+      5999
+    ],
+    "early_state/boundary_good_current_damage_rate": [
+      1905.0,
+      4584
+    ],
+    "early_state/fg_bg_foreground_gt_error_px": [
+      20558.305042266846,
+      3515
+    ],
+    "early_state/fg_bg_background_gt_error_px": [
+      34230.68957233429,
+      2484
+    ],
+    "early_state/history_initialization_rate": [
+      78080.0,
+      393216
+    ],
+    "early_state/initializer_correct_solver_wrong_rate": [
+      4831.0,
+      318045
+    ],
+    "early_state/solver_correct_geometry_wrong_rate": [
+      5681.0,
+      372002
+    ],
+    "early_state/native_stereo_epe_px": [
+      154936.17472934723,
+      393216
+    ],
+    "zero_endpoint_only/metric_depth_absrel": [
+      9473.334811307193,
+      393216
+    ],
+    "zero_endpoint_only/metric_depth_rmse_squared": [
+      239182.1021511769,
+      393216
+    ],
+    "zero_endpoint_only/epe_px": [
+      347934.28010463715,
+      393216
+    ],
+    "zero_endpoint_only/common_valid_epe_px": [
+      347934.28010463715,
+      393216
+    ],
+    "zero_endpoint_only/bad1_px": [
+      28613.0,
+      393216
+    ],
+    "zero_endpoint_only/bad3_px": [
+      7185.0,
+      393216
+    ],
+    "zero_endpoint_only/all_gt_penalized_epe_px": [
+      177446.27490711212,
+      393216
+    ],
+    "zero_endpoint_only/all_gt_bad1": [
+      28613.0,
+      393216
+    ],
+    "zero_endpoint_only/all_gt_bad3": [
+      7185.0,
+      393216
+    ],
+    "zero_endpoint_only/completeness_1px": [
+      364603.0,
+      393216
+    ],
+    "zero_endpoint_only/completeness_2px": [
+      382503.0,
+      393216
+    ],
+    "zero_endpoint_only/prediction_coverage": [
+      393216.0,
+      393216
+    ],
+    "zero_endpoint_only/prediction_valid_fraction": [
+      393216.0,
+      393216
+    ],
+    "zero_endpoint_only/gt_valid_pixels": [
+      393216.0,
+      393216
+    ],
+    "zero_endpoint_only/scale_error_log": [
+      0.0013373488327488303,
+      1
+    ],
+    "zero_endpoint_only/dynamic_epe_px": [
+      245597.51593589783,
+      264079
+    ],
+    "zero_endpoint_only/static_epe_px": [
+      102336.76416873932,
+      129137
+    ],
+    "zero_endpoint_only/dynamic_penalized_epe_px": [
+      127967.78083229065,
+      264079
+    ],
+    "zero_endpoint_only/static_penalized_epe_px": [
+      49478.49407482147,
+      129137
+    ],
+    "zero_endpoint_only/dynamic_pixels": [
+      264079.0,
+      264079
+    ],
+    "zero_endpoint_only/static_pixels": [
+      129137.0,
+      129137
+    ],
+    "zero_endpoint_only/uncertainty_nll": [
+      -1304096.5507380494,
+      393216
+    ],
+    "zero_endpoint_only/uncertainty_1sigma_coverage": [
+      367501.0,
+      393216
+    ],
+    "zero_endpoint_only/uncertainty_2sigma_coverage": [
+      390500.0,
+      393216
+    ],
+    "zero_endpoint_only/validity_confidence_brier_0p1_log_depth": [
+      5031.734950834803,
+      393216
+    ],
+    "zero_endpoint_only/validity_confidence_ece_0p1_log_depth": [
+      4909.921957015992,
+      393216
+    ],
+    "zero_endpoint_only/uncertainty_brier": [
+      5031.734950834803,
+      393216
+    ],
+    "zero_endpoint_only/uncertainty_ece": [
+      4909.921957015992,
+      393216
+    ],
+    "zero_endpoint_only/spring_high_detail_epe_px": [
+      29097.057240486145,
+      7224
+    ],
+    "zero_endpoint_only/spring_high_detail_bad1": [
+      4872.0,
+      7224
+    ],
+    "zero_endpoint_only/spring_low_detail_epe_px": [
+      148349.21766662598,
+      385992
+    ],
+    "zero_endpoint_only/spring_low_detail_bad1": [
+      23741.0,
+      385992
+    ],
+    "zero_endpoint_only/spring_matched_epe_px": [
+      37379.32560157776,
+      34343
+    ],
+    "zero_endpoint_only/spring_matched_bad1": [
+      2905.0,
+      34343
+    ],
+    "zero_endpoint_only/spring_boundary_epe_px": [
+      82170.67886924744,
+      45734
+    ],
+    "zero_endpoint_only/spring_boundary_bad1": [
+      15115.0,
+      45734
+    ],
+    "zero_endpoint_only/spring_unmatched_completion_1px": [
+      333165.0,
+      358873
+    ],
+    "zero_endpoint_only/spring_unmatched_completion_2px": [
+      350611.0,
+      358873
+    ],
+    "zero_endpoint_only/temporal_matched_common_valid_delta_epe_px": [
+      640563.4997262955,
+      393216
+    ],
+    "zero_endpoint_only/temporal_matched_penalized_delta_epe_px": [
+      257027.32888889313,
+      393216
+    ],
+    "zero_endpoint_only/rigid_temporal_residual_epe_px": [
+      70550.92216014862,
+      129137
+    ],
+    "zero_endpoint_only/non_rigid_temporal_residual_epe_px": [
+      186476.4067287445,
+      264079
+    ],
+    "zero_endpoint_only/temporal_prediction_transport_miss_rate": [
+      0.0,
+      393216
+    ],
+    "zero_endpoint_only/temporal_disocclusion_current_epe_px": [
+      0.0,
+      0
+    ],
+    "zero_endpoint_only/temporal_disocclusion_completion_1px": [
+      0.0,
+      0
+    ],
+    "zero_endpoint_only/temporal_disocclusion_completion_2px": [
+      0.0,
+      0
+    ],
+    "zero_endpoint_only/temporal_small_motion_penalized_delta_epe_px": [
+      257027.32888889313,
+      393216
+    ],
+    "zero_endpoint_only/temporal_medium_motion_penalized_delta_epe_px": [
+      0.0,
+      0
+    ],
+    "zero_endpoint_only/temporal_large_motion_penalized_delta_epe_px": [
+      0.0,
+      0
+    ],
+    "zero_endpoint_only/good_current_damage_rate": [
+      1.0,
+      109337
+    ],
+    "zero_endpoint_only/rejection_task_failure_rate": [
+      1.0,
+      43371
+    ],
+    "zero_endpoint_only/large_degradation_1px_rate": [
+      8.0,
+      393216
+    ],
+    "zero_endpoint_only/large_degradation_5px_rate": [
+      1.0,
+      393216
+    ],
+    "zero_endpoint_only/large_degradation_5px_excess_mean": [
+      2.80560302734375,
+      393216
+    ],
+    "zero_endpoint_only/new_large_5px_vs_v1_rate": [
+      1.0,
+      393216
+    ],
+    "zero_endpoint_only/removed_large_5px_vs_v1_rate": [
+      1389.0,
+      393216
+    ],
+    "zero_endpoint_only/error_increase_over_v1_5px_rate": [
+      1549.0,
+      393216
+    ],
+    "zero_endpoint_only/fixed_opportunity_recovery_rate": [
+      21.0,
+      45684
+    ],
+    "zero_endpoint_only/fixed_opportunity_epe_px": [
+      168810.89802837372,
+      45684
+    ],
+    "zero_endpoint_only/recoverable_to_1px_rate": [
+      22.0,
+      9954
+    ],
+    "zero_endpoint_only/fg_bg_spurious_mixing_rate": [
+      1.0,
+      5999
+    ],
+    "zero_endpoint_only/fg_bg_error_px": [
+      55317.995792388916,
+      5999
+    ],
+    "zero_endpoint_only/boundary_good_current_damage_rate": [
+      1.0,
+      4584
+    ],
+    "zero_endpoint_only/fg_bg_foreground_gt_error_px": [
+      20672.36326980591,
+      3515
+    ],
+    "zero_endpoint_only/fg_bg_background_gt_error_px": [
+      34645.63252258301,
+      2484
+    ],
+    "zero_causal_each_frame/metric_depth_absrel": [
+      9533.730036581517,
+      393216
+    ],
+    "zero_causal_each_frame/metric_depth_rmse_squared": [
+      239812.94601493372,
+      393216
+    ],
+    "zero_causal_each_frame/epe_px": [
+      348145.2909755707,
+      393216
+    ],
+    "zero_causal_each_frame/common_valid_epe_px": [
+      348145.2909755707,
+      393216
+    ],
+    "zero_causal_each_frame/bad1_px": [
+      28580.0,
+      393216
+    ],
+    "zero_causal_each_frame/bad3_px": [
+      7192.0,
+      393216
+    ],
+    "zero_causal_each_frame/all_gt_penalized_epe_px": [
+      177664.1538181305,
+      393216
+    ],
+    "zero_causal_each_frame/all_gt_bad1": [
+      28580.0,
+      393216
+    ],
+    "zero_causal_each_frame/all_gt_bad3": [
+      7192.0,
+      393216
+    ],
+    "zero_causal_each_frame/completeness_1px": [
+      364636.0,
+      393216
+    ],
+    "zero_causal_each_frame/completeness_2px": [
+      382403.0,
+      393216
+    ],
+    "zero_causal_each_frame/prediction_coverage": [
+      393216.0,
+      393216
+    ],
+    "zero_causal_each_frame/prediction_valid_fraction": [
+      393216.0,
+      393216
+    ],
+    "zero_causal_each_frame/gt_valid_pixels": [
+      393216.0,
+      393216
+    ],
+    "zero_causal_each_frame/scale_error_log": [
+      0.0012224590172991157,
+      1
+    ],
+    "zero_causal_each_frame/dynamic_epe_px": [
+      244877.8936328888,
+      264079
+    ],
+    "zero_causal_each_frame/static_epe_px": [
+      103267.39734268188,
+      129137
+    ],
+    "zero_causal_each_frame/dynamic_penalized_epe_px": [
+      127246.80793952942,
+      264079
+    ],
+    "zero_causal_each_frame/static_penalized_epe_px": [
+      50417.345878601074,
+      129137
+    ],
+    "zero_causal_each_frame/dynamic_pixels": [
+      264079.0,
+      264079
+    ],
+    "zero_causal_each_frame/static_pixels": [
+      129137.0,
+      129137
+    ],
+    "zero_causal_each_frame/uncertainty_nll": [
+      -1285277.2059612456,
+      393216
+    ],
+    "zero_causal_each_frame/uncertainty_1sigma_coverage": [
+      375938.0,
+      393216
+    ],
+    "zero_causal_each_frame/uncertainty_2sigma_coverage": [
+      390909.0,
+      393216
+    ],
+    "zero_causal_each_frame/validity_confidence_brier_0p1_log_depth": [
+      5023.7556026984985,
+      393216
+    ],
+    "zero_causal_each_frame/validity_confidence_ece_0p1_log_depth": [
+      4785.658679306494,
+      393216
+    ],
+    "zero_causal_each_frame/uncertainty_brier": [
+      5023.7556026984985,
+      393216
+    ],
+    "zero_causal_each_frame/uncertainty_ece": [
+      4785.658679306494,
+      393216
+    ],
+    "zero_causal_each_frame/spring_high_detail_epe_px": [
+      29106.19280719757,
+      7224
+    ],
+    "zero_causal_each_frame/spring_high_detail_bad1": [
+      4869.0,
+      7224
+    ],
+    "zero_causal_each_frame/spring_low_detail_epe_px": [
+      148557.96101093292,
+      385992
+    ],
+    "zero_causal_each_frame/spring_low_detail_bad1": [
+      23711.0,
+      385992
+    ],
+    "zero_causal_each_frame/spring_matched_epe_px": [
+      37931.88507461548,
+      34343
+    ],
+    "zero_causal_each_frame/spring_matched_bad1": [
+      2914.0,
+      34343
+    ],
+    "zero_causal_each_frame/spring_boundary_epe_px": [
+      82219.91624069214,
+      45734
+    ],
+    "zero_causal_each_frame/spring_boundary_bad1": [
+      15111.0,
+      45734
+    ],
+    "zero_causal_each_frame/spring_unmatched_completion_1px": [
+      333207.0,
+      358873
+    ],
+    "zero_causal_each_frame/spring_unmatched_completion_2px": [
+      350513.0,
+      358873
+    ],
+    "zero_causal_each_frame/temporal_matched_common_valid_delta_epe_px": [
+      640780.1445379257,
+      393216
+    ],
+    "zero_causal_each_frame/temporal_matched_penalized_delta_epe_px": [
+      257254.27281951904,
+      393216
+    ],
+    "zero_causal_each_frame/rigid_temporal_residual_epe_px": [
+      70812.9962940216,
+      129137
+    ],
+    "zero_causal_each_frame/non_rigid_temporal_residual_epe_px": [
+      186441.27652549744,
+      264079
+    ],
+    "zero_causal_each_frame/temporal_prediction_transport_miss_rate": [
+      0.0,
+      393216
+    ],
+    "zero_causal_each_frame/temporal_disocclusion_current_epe_px": [
+      0.0,
+      0
+    ],
+    "zero_causal_each_frame/temporal_disocclusion_completion_1px": [
+      0.0,
+      0
+    ],
+    "zero_causal_each_frame/temporal_disocclusion_completion_2px": [
+      0.0,
+      0
+    ],
+    "zero_causal_each_frame/temporal_small_motion_penalized_delta_epe_px": [
+      257254.27281951904,
+      393216
+    ],
+    "zero_causal_each_frame/temporal_medium_motion_penalized_delta_epe_px": [
+      0.0,
+      0
+    ],
+    "zero_causal_each_frame/temporal_large_motion_penalized_delta_epe_px": [
+      0.0,
+      0
+    ],
+    "zero_causal_each_frame/good_current_damage_rate": [
+      32.0,
+      109337
+    ],
+    "zero_causal_each_frame/rejection_task_failure_rate": [
+      27.0,
+      43371
+    ],
+    "zero_causal_each_frame/large_degradation_1px_rate": [
+      10.0,
+      393216
+    ],
+    "zero_causal_each_frame/large_degradation_5px_rate": [
+      1.0,
+      393216
+    ],
+    "zero_causal_each_frame/large_degradation_5px_excess_mean": [
+      2.7894363403320312,
+      393216
+    ],
+    "zero_causal_each_frame/new_large_5px_vs_v1_rate": [
+      1.0,
+      393216
+    ],
+    "zero_causal_each_frame/removed_large_5px_vs_v1_rate": [
+      1389.0,
+      393216
+    ],
+    "zero_causal_each_frame/error_increase_over_v1_5px_rate": [
+      1550.0,
+      393216
+    ],
+    "zero_causal_each_frame/fixed_opportunity_recovery_rate": [
+      256.0,
+      45684
+    ],
+    "zero_causal_each_frame/fixed_opportunity_epe_px": [
+      168975.60151195526,
+      45684
+    ],
+    "zero_causal_each_frame/recoverable_to_1px_rate": [
+      175.0,
+      9954
+    ],
+    "zero_causal_each_frame/fg_bg_spurious_mixing_rate": [
+      1.0,
+      5999
+    ],
+    "zero_causal_each_frame/fg_bg_error_px": [
+      55320.76463031769,
+      5999
+    ],
+    "zero_causal_each_frame/boundary_good_current_damage_rate": [
+      15.0,
+      4584
+    ],
+    "zero_causal_each_frame/fg_bg_foreground_gt_error_px": [
+      20665.124881744385,
+      3515
+    ],
+    "zero_causal_each_frame/fg_bg_background_gt_error_px": [
+      34655.6397485733,
+      2484
+    ]
+  },
+  {
+    "sequence_id": "0005",
+    "frame_id": 9,
+    "dataset_index": 1,
+    "A5/metric_depth_absrel": [
+      9932.352841448192,
+      393216
+    ],
+    "A5/metric_depth_rmse_squared": [
+      251627.0481983053,
+      393216
+    ],
+    "A5/epe_px": [
+      351541.9735946655,
+      393216
+    ],
+    "A5/common_valid_epe_px": [
+      351541.9735946655,
+      393216
+    ],
+    "A5/bad1_px": [
+      24426.0,
+      393216
+    ],
+    "A5/bad3_px": [
+      7336.0,
+      393216
+    ],
+    "A5/all_gt_penalized_epe_px": [
+      172827.9185256958,
+      393216
+    ],
+    "A5/all_gt_bad1": [
+      24426.0,
+      393216
+    ],
+    "A5/all_gt_bad3": [
+      7336.0,
+      393216
+    ],
+    "A5/completeness_1px": [
+      368790.0,
+      393216
+    ],
+    "A5/completeness_2px": [
+      383500.0,
+      393216
+    ],
+    "A5/prediction_coverage": [
+      393216.0,
+      393216
+    ],
+    "A5/prediction_valid_fraction": [
+      393216.0,
+      393216
+    ],
+    "A5/gt_valid_pixels": [
+      393216.0,
+      393216
+    ],
+    "A5/scale_error_log": [
+      0.0008400725200772285,
+      1
+    ],
+    "A5/dynamic_epe_px": [
+      252232.894241333,
+      256747
+    ],
+    "A5/static_epe_px": [
+      99309.07935333252,
+      136469
+    ],
+    "A5/dynamic_penalized_epe_px": [
+      122266.49338722229,
+      256747
+    ],
+    "A5/static_penalized_epe_px": [
+      50561.42513847351,
+      136469
+    ],
+    "A5/dynamic_pixels": [
+      256747.0,
+      256747
+    ],
+    "A5/static_pixels": [
+      136469.0,
+      136469
+    ],
+    "A5/uncertainty_nll": [
+      -1290649.3632711591,
+      393216
+    ],
+    "A5/uncertainty_1sigma_coverage": [
+      364053.0,
+      393216
+    ],
+    "A5/uncertainty_2sigma_coverage": [
+      389717.0,
+      393216
+    ],
+    "A5/validity_confidence_brier_0p1_log_depth": [
+      5414.807666024201,
+      393216
+    ],
+    "A5/validity_confidence_ece_0p1_log_depth": [
+      5292.116740226746,
+      393216
+    ],
+    "A5/uncertainty_brier": [
+      5414.807666024201,
+      393216
+    ],
+    "A5/uncertainty_ece": [
+      5292.116740226746,
+      393216
+    ],
+    "A5/spring_high_detail_epe_px": [
+      29797.82838344574,
+      7573
+    ],
+    "A5/spring_high_detail_bad1": [
+      4831.0,
+      7573
+    ],
+    "A5/spring_low_detail_epe_px": [
+      143030.09014225006,
+      385643
+    ],
+    "A5/spring_low_detail_bad1": [
+      19595.0,
+      385643
+    ],
+    "A5/spring_matched_epe_px": [
+      36306.14654159546,
+      36930
+    ],
+    "A5/spring_matched_bad1": [
+      3026.0,
+      36930
+    ],
+    "A5/spring_boundary_epe_px": [
+      84395.80654239655,
+      48408
+    ],
+    "A5/spring_boundary_bad1": [
+      14623.0,
+      48408
+    ],
+    "A5/spring_unmatched_completion_1px": [
+      334886.0,
+      356286
+    ],
+    "A5/spring_unmatched_completion_2px": [
+      349214.0,
+      356286
+    ],
+    "A5/temporal_matched_common_valid_delta_epe_px": [
+      577481.100725174,
+      393216
+    ],
+    "A5/temporal_matched_penalized_delta_epe_px": [
+      236779.84654045105,
+      393216
+    ],
+    "A5/rigid_temporal_residual_epe_px": [
+      71406.39266109467,
+      136469
+    ],
+    "A5/non_rigid_temporal_residual_epe_px": [
+      165373.45387935638,
+      256747
+    ],
+    "A5/temporal_prediction_transport_miss_rate": [
+      0.0,
+      393216
+    ],
+    "A5/temporal_disocclusion_current_epe_px": [
+      0.0,
+      0
+    ],
+    "A5/temporal_disocclusion_completion_1px": [
+      0.0,
+      0
+    ],
+    "A5/temporal_disocclusion_completion_2px": [
+      0.0,
+      0
+    ],
+    "A5/temporal_small_motion_penalized_delta_epe_px": [
+      236779.84654045105,
+      393216
+    ],
+    "A5/temporal_medium_motion_penalized_delta_epe_px": [
+      0.0,
+      0
+    ],
+    "A5/temporal_large_motion_penalized_delta_epe_px": [
+      0.0,
+      0
+    ],
+    "A5/good_current_damage_rate": [
+      0.0,
+      120318
+    ],
+    "A5/rejection_task_failure_rate": [
+      0.0,
+      39270
+    ],
+    "A5/large_degradation_1px_rate": [
+      0.0,
+      393216
+    ],
+    "A5/large_degradation_5px_rate": [
+      0.0,
+      393216
+    ],
+    "A5/large_degradation_5px_excess_mean": [
+      0.0,
+      393216
+    ],
+    "A5/new_large_5px_vs_v1_rate": [
+      0.0,
+      393216
+    ],
+    "A5/removed_large_5px_vs_v1_rate": [
+      1406.0,
+      393216
+    ],
+    "A5/error_increase_over_v1_5px_rate": [
+      1682.0,
+      393216
+    ],
+    "A5/fixed_opportunity_recovery_rate": [
+      0.0,
+      65795
+    ],
+    "A5/fixed_opportunity_epe_px": [
+      167734.470621109,
+      65795
+    ],
+    "A5/recoverable_to_1px_rate": [
+      0.0,
+      8851
+    ],
+    "A5/fg_bg_spurious_mixing_rate": [
+      0.0,
+      5193
+    ],
+    "A5/fg_bg_error_px": [
+      57987.28803443909,
+      5193
+    ],
+    "A5/boundary_good_current_damage_rate": [
+      0.0,
+      4603
+    ],
+    "A5/fg_bg_foreground_gt_error_px": [
+      33754.52876281738,
+      2340
+    ],
+    "A5/fg_bg_background_gt_error_px": [
+      24232.759271621704,
+      2853
+    ],
+    "v1/metric_depth_absrel": [
+      9554.500875056445,
+      393216
+    ],
+    "v1/metric_depth_rmse_squared": [
+      279422.24757724867,
+      393216
+    ],
+    "v1/epe_px": [
+      350192.6338605881,
+      393216
+    ],
+    "v1/common_valid_epe_px": [
+      350192.6338605881,
+      393216
+    ],
+    "v1/bad1_px": [
+      22780.0,
+      393216
+    ],
+    "v1/bad3_px": [
+      6054.0,
+      393216
+    ],
+    "v1/all_gt_penalized_epe_px": [
+      154719.6159029007,
+      393216
+    ],
+    "v1/all_gt_bad1": [
+      22780.0,
+      393216
+    ],
+    "v1/all_gt_bad3": [
+      6054.0,
+      393216
+    ],
+    "v1/completeness_1px": [
+      370436.0,
+      393216
+    ],
+    "v1/completeness_2px": [
+      384833.0,
+      393216
+    ],
+    "v1/prediction_coverage": [
+      393216.0,
+      393216
+    ],
+    "v1/prediction_valid_fraction": [
+      393216.0,
+      393216
+    ],
+    "v1/gt_valid_pixels": [
+      393216.0,
+      393216
+    ],
+    "v1/scale_error_log": [
+      0.0012134101707488298,
+      1
+    ],
+    "v1/dynamic_epe_px": [
+      242540.57674884796,
+      256747
+    ],
+    "v1/static_epe_px": [
+      107652.05711174011,
+      136469
+    ],
+    "v1/dynamic_penalized_epe_px": [
+      113398.70041370392,
+      256747
+    ],
+    "v1/static_penalized_epe_px": [
+      41320.91548919678,
+      136469
+    ],
+    "v1/dynamic_pixels": [
+      256747.0,
+      256747
+    ],
+    "v1/static_pixels": [
+      136469.0,
+      136469
+    ],
+    "v1/uncertainty_nll": [
+      -1310786.058509409,
+      393216
+    ],
+    "v1/uncertainty_1sigma_coverage": [
+      373795.0,
+      393216
+    ],
+    "v1/uncertainty_2sigma_coverage": [
+      390092.0,
+      393216
+    ],
+    "v1/validity_confidence_brier_0p1_log_depth": [
+      3903.0739493033207,
+      393216
+    ],
+    "v1/validity_confidence_ece_0p1_log_depth": [
+      3752.1167402267347,
+      393216
+    ],
+    "v1/uncertainty_brier": [
+      3903.0739493033207,
+      393216
+    ],
+    "v1/uncertainty_ece": [
+      3752.1167402267347,
+      393216
+    ],
+    "v1/spring_high_detail_epe_px": [
+      26549.577255249023,
+      7573
+    ],
+    "v1/spring_high_detail_bad1": [
+      4643.0,
+      7573
+    ],
+    "v1/spring_low_detail_epe_px": [
+      128170.03864765167,
+      385643
+    ],
+    "v1/spring_low_detail_bad1": [
+      18137.0,
+      385643
+    ],
+    "v1/spring_matched_epe_px": [
+      29968.37543487549,
+      36930
+    ],
+    "v1/spring_matched_bad1": [
+      2579.0,
+      36930
+    ],
+    "v1/spring_boundary_epe_px": [
+      71457.18475914001,
+      48408
+    ],
+    "v1/spring_boundary_bad1": [
+      13575.0,
+      48408
+    ],
+    "v1/spring_unmatched_completion_1px": [
+      336085.0,
+      356286
+    ],
+    "v1/spring_unmatched_completion_2px": [
+      350105.0,
+      356286
+    ],
+    "v1/temporal_matched_common_valid_delta_epe_px": [
+      581867.8364629745,
+      393216
+    ],
+    "v1/temporal_matched_penalized_delta_epe_px": [
+      208134.34821796417,
+      393216
+    ],
+    "v1/rigid_temporal_residual_epe_px": [
+      55691.487535476685,
+      136469
+    ],
+    "v1/non_rigid_temporal_residual_epe_px": [
+      152442.8606824875,
+      256747
+    ],
+    "v1/temporal_prediction_transport_miss_rate": [
+      0.0,
+      393216
+    ],
+    "v1/temporal_disocclusion_current_epe_px": [
+      0.0,
+      0
+    ],
+    "v1/temporal_disocclusion_completion_1px": [
+      0.0,
+      0
+    ],
+    "v1/temporal_disocclusion_completion_2px": [
+      0.0,
+      0
+    ],
+    "v1/temporal_small_motion_penalized_delta_epe_px": [
+      208134.34821796417,
+      393216
+    ],
+    "v1/temporal_medium_motion_penalized_delta_epe_px": [
+      0.0,
+      0
+    ],
+    "v1/temporal_large_motion_penalized_delta_epe_px": [
+      0.0,
+      0
+    ],
+    "v1/good_current_damage_rate": [
+      9693.0,
+      120318
+    ],
+    "v1/rejection_task_failure_rate": [
+      7365.0,
+      39270
+    ],
+    "v1/large_degradation_1px_rate": [
+      2435.0,
+      393216
+    ],
+    "v1/large_degradation_5px_rate": [
+      1406.0,
+      393216
+    ],
+    "v1/large_degradation_5px_excess_mean": [
+      39679.557708740234,
+      393216
+    ],
+    "v1/new_large_5px_vs_v1_rate": [
+      0.0,
+      393216
+    ],
+    "v1/removed_large_5px_vs_v1_rate": [
+      0.0,
+      393216
+    ],
+    "v1/error_increase_over_v1_5px_rate": [
+      0.0,
+      393216
+    ],
+    "v1/fixed_opportunity_recovery_rate": [
+      29067.0,
+      65795
+    ],
+    "v1/fixed_opportunity_epe_px": [
+      115446.04376792908,
+      65795
+    ],
+    "v1/recoverable_to_1px_rate": [
+      2794.0,
+      8851
+    ],
+    "v1/fg_bg_spurious_mixing_rate": [
+      168.0,
+      5193
+    ],
+    "v1/fg_bg_error_px": [
+      34100.6856842041,
+      5193
+    ],
+    "v1/boundary_good_current_damage_rate": [
+      792.0,
+      4603
+    ],
+    "v1/fg_bg_foreground_gt_error_px": [
+      18894.9229927063,
+      2340
+    ],
+    "v1/fg_bg_background_gt_error_px": [
+      15205.762691497803,
+      2853
+    ],
+    "early_state/metric_depth_absrel": [
+      9634.441320897236,
+      393216
+    ],
+    "early_state/metric_depth_rmse_squared": [
+      264693.3345688853,
+      393216
+    ],
+    "early_state/epe_px": [
+      355714.7408180237,
+      393216
+    ],
+    "early_state/common_valid_epe_px": [
+      355714.7408180237,
+      393216
+    ],
+    "early_state/bad1_px": [
+      20694.0,
+      393216
+    ],
+    "early_state/bad3_px": [
+      7281.0,
+      393216
+    ],
+    "early_state/all_gt_penalized_epe_px": [
+      168413.65356826782,
+      393216
+    ],
+    "early_state/all_gt_bad1": [
+      20694.0,
+      393216
+    ],
+    "early_state/all_gt_bad3": [
+      7281.0,
+      393216
+    ],
+    "early_state/completeness_1px": [
+      372522.0,
+      393216
+    ],
+    "early_state/completeness_2px": [
+      384010.0,
+      393216
+    ],
+    "early_state/prediction_coverage": [
+      393216.0,
+      393216
+    ],
+    "early_state/prediction_valid_fraction": [
+      393216.0,
+      393216
+    ],
+    "early_state/gt_valid_pixels": [
+      393216.0,
+      393216
+    ],
+    "early_state/scale_error_log": [
+      0.0003748642629943788,
+      1
+    ],
+    "early_state/dynamic_epe_px": [
+      256183.95807743073,
+      256747
+    ],
+    "early_state/static_epe_px": [
+      99530.78274059296,
+      136469
+    ],
+    "early_state/dynamic_penalized_epe_px": [
+      122152.21843242645,
+      256747
+    ],
+    "early_state/static_penalized_epe_px": [
+      46261.43513584137,
+      136469
+    ],
+    "early_state/dynamic_pixels": [
+      256747.0,
+      256747
+    ],
+    "early_state/static_pixels": [
+      136469.0,
+      136469
+    ],
+    "early_state/uncertainty_nll": [
+      -1291386.8679705777,
+      393216
+    ],
+    "early_state/uncertainty_1sigma_coverage": [
+      380568.0,
+      393216
+    ],
+    "early_state/uncertainty_2sigma_coverage": [
+      390829.0,
+      393216
+    ],
+    "early_state/validity_confidence_brier_0p1_log_depth": [
+      5484.705831896993,
+      393216
+    ],
+    "early_state/validity_confidence_ece_0p1_log_depth": [
+      5329.661445796468,
+      393216
+    ],
+    "early_state/uncertainty_brier": [
+      5484.705831896993,
+      393216
+    ],
+    "early_state/uncertainty_ece": [
+      5329.661445796468,
+      393216
+    ],
+    "early_state/spring_high_detail_epe_px": [
+      30021.885538101196,
+      7573
+    ],
+    "early_state/spring_high_detail_bad1": [
+      4918.0,
+      7573
+    ],
+    "early_state/spring_low_detail_epe_px": [
+      138391.76803016663,
+      385643
+    ],
+    "early_state/spring_low_detail_bad1": [
+      15776.0,
+      385643
+    ],
+    "early_state/spring_matched_epe_px": [
+      34111.43674468994,
+      36930
+    ],
+    "early_state/spring_matched_bad1": [
+      3030.0,
+      36930
+    ],
+    "early_state/spring_boundary_epe_px": [
+      84383.16496372223,
+      48408
+    ],
+    "early_state/spring_boundary_bad1": [
+      14786.0,
+      48408
+    ],
+    "early_state/spring_unmatched_completion_1px": [
+      338622.0,
+      356286
+    ],
+    "early_state/spring_unmatched_completion_2px": [
+      349749.0,
+      356286
+    ],
+    "early_state/temporal_matched_common_valid_delta_epe_px": [
+      594324.6483097076,
+      393216
+    ],
+    "early_state/temporal_matched_penalized_delta_epe_px": [
+      239957.23731708527,
+      393216
+    ],
+    "early_state/rigid_temporal_residual_epe_px": [
+      70629.27827644348,
+      136469
+    ],
+    "early_state/non_rigid_temporal_residual_epe_px": [
+      169327.95904064178,
+      256747
+    ],
+    "early_state/temporal_prediction_transport_miss_rate": [
+      0.0,
+      393216
+    ],
+    "early_state/temporal_disocclusion_current_epe_px": [
+      0.0,
+      0
+    ],
+    "early_state/temporal_disocclusion_completion_1px": [
+      0.0,
+      0
+    ],
+    "early_state/temporal_disocclusion_completion_2px": [
+      0.0,
+      0
+    ],
+    "early_state/temporal_small_motion_penalized_delta_epe_px": [
+      239957.23731708527,
+      393216
+    ],
+    "early_state/temporal_medium_motion_penalized_delta_epe_px": [
+      0.0,
+      0
+    ],
+    "early_state/temporal_large_motion_penalized_delta_epe_px": [
+      0.0,
+      0
+    ],
+    "early_state/good_current_damage_rate": [
+      43456.0,
+      120318
+    ],
+    "early_state/rejection_task_failure_rate": [
+      19723.0,
+      39270
+    ],
+    "early_state/large_degradation_1px_rate": [
+      2302.0,
+      393216
+    ],
+    "early_state/large_degradation_5px_rate": [
+      1274.0,
+      393216
+    ],
+    "early_state/large_degradation_5px_excess_mean": [
+      20831.48393535614,
+      393216
+    ],
+    "early_state/new_large_5px_vs_v1_rate": [
+      872.0,
+      393216
+    ],
+    "early_state/removed_large_5px_vs_v1_rate": [
+      1004.0,
+      393216
+    ],
+    "early_state/error_increase_over_v1_5px_rate": [
+      2046.0,
+      393216
+    ],
+    "early_state/fixed_opportunity_recovery_rate": [
+      16708.0,
+      65795
+    ],
+    "early_state/fixed_opportunity_epe_px": [
+      157984.55502319336,
+      65795
+    ],
+    "early_state/recoverable_to_1px_rate": [
+      2535.0,
+      8851
+    ],
+    "early_state/fg_bg_spurious_mixing_rate": [
+      563.0,
+      5193
+    ],
+    "early_state/fg_bg_error_px": [
+      57728.24309158325,
+      5193
+    ],
+    "early_state/boundary_good_current_damage_rate": [
+      2078.0,
+      4603
+    ],
+    "early_state/fg_bg_foreground_gt_error_px": [
+      32061.111560821533,
+      2340
+    ],
+    "early_state/fg_bg_background_gt_error_px": [
+      25667.13153076172,
+      2853
+    ],
+    "early_state/history_initialization_rate": [
+      80256.0,
+      393216
+    ],
+    "early_state/initializer_correct_solver_wrong_rate": [
+      4145.0,
+      320511
+    ],
+    "early_state/solver_correct_geometry_wrong_rate": [
+      4570.0,
+      370959
+    ],
+    "early_state/native_stereo_epe_px": [
+      164558.01266670227,
+      393216
+    ],
+    "zero_endpoint_only/metric_depth_absrel": [
+      9943.343803925196,
+      393216
+    ],
+    "zero_endpoint_only/metric_depth_rmse_squared": [
+      251315.17710066854,
+      393216
+    ],
+    "zero_endpoint_only/epe_px": [
+      351320.2701320648,
+      393216
+    ],
+    "zero_endpoint_only/common_valid_epe_px": [
+      351320.2701320648,
+      393216
+    ],
+    "zero_endpoint_only/bad1_px": [
+      24407.0,
+      393216
+    ],
+    "zero_endpoint_only/bad3_px": [
+      7325.0,
+      393216
+    ],
+    "zero_endpoint_only/all_gt_penalized_epe_px": [
+      172768.74869728088,
+      393216
+    ],
+    "zero_endpoint_only/all_gt_bad1": [
+      24407.0,
+      393216
+    ],
+    "zero_endpoint_only/all_gt_bad3": [
+      7325.0,
+      393216
+    ],
+    "zero_endpoint_only/completeness_1px": [
+      368809.0,
+      393216
+    ],
+    "zero_endpoint_only/completeness_2px": [
+      383527.0,
+      393216
+    ],
+    "zero_endpoint_only/prediction_coverage": [
+      393216.0,
+      393216
+    ],
+    "zero_endpoint_only/prediction_valid_fraction": [
+      393216.0,
+      393216
+    ],
+    "zero_endpoint_only/gt_valid_pixels": [
+      393216.0,
+      393216
+    ],
+    "zero_endpoint_only/scale_error_log": [
+      0.0008436457719653845,
+      1
+    ],
+    "zero_endpoint_only/dynamic_epe_px": [
+      252083.55882263184,
+      256747
+    ],
+    "zero_endpoint_only/static_epe_px": [
+      99236.71130943298,
+      136469
+    ],
+    "zero_endpoint_only/dynamic_penalized_epe_px": [
+      122233.48119354248,
+      256747
+    ],
+    "zero_endpoint_only/static_penalized_epe_px": [
+      50535.2675037384,
+      136469
+    ],
+    "zero_endpoint_only/dynamic_pixels": [
+      256747.0,
+      256747
+    ],
+    "zero_endpoint_only/static_pixels": [
+      136469.0,
+      136469
+    ],
+    "zero_endpoint_only/uncertainty_nll": [
+      -1290683.358696433,
+      393216
+    ],
+    "zero_endpoint_only/uncertainty_1sigma_coverage": [
+      364124.0,
+      393216
+    ],
+    "zero_endpoint_only/uncertainty_2sigma_coverage": [
+      389713.0,
+      393216
+    ],
+    "zero_endpoint_only/validity_confidence_brier_0p1_log_depth": [
+      5413.466656424761,
+      393216
+    ],
+    "zero_endpoint_only/validity_confidence_ece_0p1_log_depth": [
+      5291.577917218215,
+      393216
+    ],
+    "zero_endpoint_only/uncertainty_brier": [
+      5413.466656424761,
+      393216
+    ],
+    "zero_endpoint_only/uncertainty_ece": [
+      5291.577917218215,
+      393216
+    ],
+    "zero_endpoint_only/spring_high_detail_epe_px": [
+      29730.227350234985,
+      7573
+    ],
+    "zero_endpoint_only/spring_high_detail_bad1": [
+      4830.0,
+      7573
+    ],
+    "zero_endpoint_only/spring_low_detail_epe_px": [
+      143038.5213470459,
+      385643
+    ],
+    "zero_endpoint_only/spring_low_detail_bad1": [
+      19577.0,
+      385643
+    ],
+    "zero_endpoint_only/spring_matched_epe_px": [
+      36226.92493247986,
+      36930
+    ],
+    "zero_endpoint_only/spring_matched_bad1": [
+      3022.0,
+      36930
+    ],
+    "zero_endpoint_only/spring_boundary_epe_px": [
+      84319.74111557007,
+      48408
+    ],
+    "zero_endpoint_only/spring_boundary_bad1": [
+      14626.0,
+      48408
+    ],
+    "zero_endpoint_only/spring_unmatched_completion_1px": [
+      334901.0,
+      356286
+    ],
+    "zero_endpoint_only/spring_unmatched_completion_2px": [
+      349233.0,
+      356286
+    ],
+    "zero_endpoint_only/temporal_matched_common_valid_delta_epe_px": [
+      577040.1868963242,
+      393216
+    ],
+    "zero_endpoint_only/temporal_matched_penalized_delta_epe_px": [
+      236790.95613193512,
+      393216
+    ],
+    "zero_endpoint_only/rigid_temporal_residual_epe_px": [
+      71383.8258857727,
+      136469
+    ],
+    "zero_endpoint_only/non_rigid_temporal_residual_epe_px": [
+      165407.1302461624,
+      256747
+    ],
+    "zero_endpoint_only/temporal_prediction_transport_miss_rate": [
+      0.0,
+      393216
+    ],
+    "zero_endpoint_only/temporal_disocclusion_current_epe_px": [
+      0.0,
+      0
+    ],
+    "zero_endpoint_only/temporal_disocclusion_completion_1px": [
+      0.0,
+      0
+    ],
+    "zero_endpoint_only/temporal_disocclusion_completion_2px": [
+      0.0,
+      0
+    ],
+    "zero_endpoint_only/temporal_small_motion_penalized_delta_epe_px": [
+      236790.95613193512,
+      393216
+    ],
+    "zero_endpoint_only/temporal_medium_motion_penalized_delta_epe_px": [
+      0.0,
+      0
+    ],
+    "zero_endpoint_only/temporal_large_motion_penalized_delta_epe_px": [
+      0.0,
+      0
+    ],
+    "zero_endpoint_only/good_current_damage_rate": [
+      7.0,
+      120318
+    ],
+    "zero_endpoint_only/rejection_task_failure_rate": [
+      4.0,
+      39270
+    ],
+    "zero_endpoint_only/large_degradation_1px_rate": [
+      41.0,
+      393216
+    ],
+    "zero_endpoint_only/large_degradation_5px_rate": [
+      23.0,
+      393216
+    ],
+    "zero_endpoint_only/large_degradation_5px_excess_mean": [
+      244.88546180725098,
+      393216
+    ],
+    "zero_endpoint_only/new_large_5px_vs_v1_rate": [
+      16.0,
+      393216
+    ],
+    "zero_endpoint_only/removed_large_5px_vs_v1_rate": [
+      1399.0,
+      393216
+    ],
+    "zero_endpoint_only/error_increase_over_v1_5px_rate": [
+      1691.0,
+      393216
+    ],
+    "zero_endpoint_only/fixed_opportunity_recovery_rate": [
+      42.0,
+      65795
+    ],
+    "zero_endpoint_only/fixed_opportunity_epe_px": [
+      167451.70972442627,
+      65795
+    ],
+    "zero_endpoint_only/recoverable_to_1px_rate": [
+      33.0,
+      8851
+    ],
+    "zero_endpoint_only/fg_bg_spurious_mixing_rate": [
+      5.0,
+      5193
+    ],
+    "zero_endpoint_only/fg_bg_error_px": [
+      57753.591064453125,
+      5193
+    ],
+    "zero_endpoint_only/boundary_good_current_damage_rate": [
+      2.0,
+      4603
+    ],
+    "zero_endpoint_only/fg_bg_foreground_gt_error_px": [
+      33768.513092041016,
+      2340
+    ],
+    "zero_endpoint_only/fg_bg_background_gt_error_px": [
+      23985.07797241211,
+      2853
+    ],
+    "zero_causal_each_frame/metric_depth_absrel": [
+      10020.777372104263,
+      393216
+    ],
+    "zero_causal_each_frame/metric_depth_rmse_squared": [
+      251890.1954235377,
+      393216
+    ],
+    "zero_causal_each_frame/epe_px": [
+      352546.3961362839,
+      393216
+    ],
+    "zero_causal_each_frame/common_valid_epe_px": [
+      352546.3961362839,
+      393216
+    ],
+    "zero_causal_each_frame/bad1_px": [
+      24319.0,
+      393216
+    ],
+    "zero_causal_each_frame/bad3_px": [
+      7326.0,
+      393216
+    ],
+    "zero_causal_each_frame/all_gt_penalized_epe_px": [
+      174014.29480838776,
+      393216
+    ],
+    "zero_causal_each_frame/all_gt_bad1": [
+      24319.0,
+      393216
+    ],
+    "zero_causal_each_frame/all_gt_bad3": [
+      7326.0,
+      393216
+    ],
+    "zero_causal_each_frame/completeness_1px": [
+      368897.0,
+      393216
+    ],
+    "zero_causal_each_frame/completeness_2px": [
+      383470.0,
+      393216
+    ],
+    "zero_causal_each_frame/prediction_coverage": [
+      393216.0,
+      393216
+    ],
+    "zero_causal_each_frame/prediction_valid_fraction": [
+      393216.0,
+      393216
+    ],
+    "zero_causal_each_frame/gt_valid_pixels": [
+      393216.0,
+      393216
+    ],
+    "zero_causal_each_frame/scale_error_log": [
+      0.0007291757501661777,
+      1
+    ],
+    "zero_causal_each_frame/dynamic_epe_px": [
+      252286.55598163605,
+      256747
+    ],
+    "zero_causal_each_frame/static_epe_px": [
+      100259.84015464783,
+      136469
+    ],
+    "zero_causal_each_frame/dynamic_penalized_epe_px": [
+      122434.83030796051,
+      256747
+    ],
+    "zero_causal_each_frame/static_penalized_epe_px": [
+      51579.464500427246,
+      136469
+    ],
+    "zero_causal_each_frame/dynamic_pixels": [
+      256747.0,
+      256747
+    ],
+    "zero_causal_each_frame/static_pixels": [
+      136469.0,
+      136469
+    ],
+    "zero_causal_each_frame/uncertainty_nll": [
+      -1275633.429448647,
+      393216
+    ],
+    "zero_causal_each_frame/uncertainty_1sigma_coverage": [
+      370628.0,
+      393216
+    ],
+    "zero_causal_each_frame/uncertainty_2sigma_coverage": [
+      390874.0,
+      393216
+    ],
+    "zero_causal_each_frame/validity_confidence_brier_0p1_log_depth": [
+      5405.8156255589565,
+      393216
+    ],
+    "zero_causal_each_frame/validity_confidence_ece_0p1_log_depth": [
+      5173.411589443672,
+      393216
+    ],
+    "zero_causal_each_frame/uncertainty_brier": [
+      5405.8156255589565,
+      393216
+    ],
+    "zero_causal_each_frame/uncertainty_ece": [
+      5173.411589443672,
+      393216
+    ],
+    "zero_causal_each_frame/spring_high_detail_epe_px": [
+      29734.755061149597,
+      7573
+    ],
+    "zero_causal_each_frame/spring_high_detail_bad1": [
+      4835.0,
+      7573
+    ],
+    "zero_causal_each_frame/spring_low_detail_epe_px": [
+      144279.53974723816,
+      385643
+    ],
+    "zero_causal_each_frame/spring_low_detail_bad1": [
+      19484.0,
+      385643
+    ],
+    "zero_causal_each_frame/spring_matched_epe_px": [
+      36854.59269618988,
+      36930
+    ],
+    "zero_causal_each_frame/spring_matched_bad1": [
+      3030.0,
+      36930
+    ],
+    "zero_causal_each_frame/spring_boundary_epe_px": [
+      84374.83926773071,
+      48408
+    ],
+    "zero_causal_each_frame/spring_boundary_bad1": [
+      14681.0,
+      48408
+    ],
+    "zero_causal_each_frame/spring_unmatched_completion_1px": [
+      334997.0,
+      356286
+    ],
+    "zero_causal_each_frame/spring_unmatched_completion_2px": [
+      349174.0,
+      356286
+    ],
+    "zero_causal_each_frame/temporal_matched_common_valid_delta_epe_px": [
+      577308.438457489,
+      393216
+    ],
+    "zero_causal_each_frame/temporal_matched_penalized_delta_epe_px": [
+      237072.01505184174,
+      393216
+    ],
+    "zero_causal_each_frame/rigid_temporal_residual_epe_px": [
+      71508.54088020325,
+      136469
+    ],
+    "zero_causal_each_frame/non_rigid_temporal_residual_epe_px": [
+      165563.4741716385,
+      256747
+    ],
+    "zero_causal_each_frame/temporal_prediction_transport_miss_rate": [
+      0.0,
+      393216
+    ],
+    "zero_causal_each_frame/temporal_disocclusion_current_epe_px": [
+      0.0,
+      0
+    ],
+    "zero_causal_each_frame/temporal_disocclusion_completion_1px": [
+      0.0,
+      0
+    ],
+    "zero_causal_each_frame/temporal_disocclusion_completion_2px": [
+      0.0,
+      0
+    ],
+    "zero_causal_each_frame/temporal_small_motion_penalized_delta_epe_px": [
+      237072.01505184174,
+      393216
+    ],
+    "zero_causal_each_frame/temporal_medium_motion_penalized_delta_epe_px": [
+      0.0,
+      0
+    ],
+    "zero_causal_each_frame/temporal_large_motion_penalized_delta_epe_px": [
+      0.0,
+      0
+    ],
+    "zero_causal_each_frame/good_current_damage_rate": [
+      33.0,
+      120318
+    ],
+    "zero_causal_each_frame/rejection_task_failure_rate": [
+      19.0,
+      39270
+    ],
+    "zero_causal_each_frame/large_degradation_1px_rate": [
+      41.0,
+      393216
+    ],
+    "zero_causal_each_frame/large_degradation_5px_rate": [
+      23.0,
+      393216
+    ],
+    "zero_causal_each_frame/large_degradation_5px_excess_mean": [
+      245.29923057556152,
+      393216
+    ],
+    "zero_causal_each_frame/new_large_5px_vs_v1_rate": [
+      16.0,
+      393216
+    ],
+    "zero_causal_each_frame/removed_large_5px_vs_v1_rate": [
+      1399.0,
+      393216
+    ],
+    "zero_causal_each_frame/error_increase_over_v1_5px_rate": [
+      1692.0,
+      393216
+    ],
+    "zero_causal_each_frame/fixed_opportunity_recovery_rate": [
+      238.0,
+      65795
+    ],
+    "zero_causal_each_frame/fixed_opportunity_epe_px": [
+      167876.55364227295,
+      65795
+    ],
+    "zero_causal_each_frame/recoverable_to_1px_rate": [
+      275.0,
+      8851
+    ],
+    "zero_causal_each_frame/fg_bg_spurious_mixing_rate": [
+      5.0,
+      5193
+    ],
+    "zero_causal_each_frame/fg_bg_error_px": [
+      57770.28255748749,
+      5193
+    ],
+    "zero_causal_each_frame/boundary_good_current_damage_rate": [
+      18.0,
+      4603
+    ],
+    "zero_causal_each_frame/fg_bg_foreground_gt_error_px": [
+      33789.68197250366,
+      2340
+    ],
+    "zero_causal_each_frame/fg_bg_background_gt_error_px": [
+      23980.600584983826,
+      2853
+    ]
+  }
+]

@@ -1,0 +1,8 @@
+{
+  "hidden_channels": [
+    60
+  ],
+  "volume_channels": 28,
+  "feature_channels": 224,
+  "source": "observed frozen encoder outputs; serialized FFS args.hidden_dims may be stale after pruning"
+}

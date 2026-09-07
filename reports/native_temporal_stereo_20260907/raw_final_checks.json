@@ -1,0 +1,362 @@
+{
+  "status": "PASS",
+  "samples": 8,
+  "rows": [
+    {
+      "rank": 0,
+      "dataset_index": 0,
+      "checks": [
+        {
+          "arm": "late",
+          "dataset_index": 0,
+          "raw_cache_max_abs_px": 0.0
+        },
+        {
+          "arm": "early_seed",
+          "dataset_index": 0,
+          "raw_cache_max_abs_px": 0.0
+        },
+        {
+          "arm": "early_state",
+          "dataset_index": 0,
+          "raw_cache_max_abs_px": 0.0
+        }
+      ],
+      "raw_encoder_field_max_differences": {
+        "/encoded/left": 0.0,
+        "/encoded/right": 0.0,
+        "/encoded/volume": 0.0,
+        "/encoded/seed": 0.0,
+        "/encoded/hidden/0": 0.0,
+        "/encoded/context/0": 0.0,
+        "/encoded/attention/0": 0.0,
+        "/encoded/stem": 0.0,
+        "/rgb": 0.0,
+        "/right_disparity_lr": 0.0,
+        "/vggt/feature": 0.0,
+        "/vggt/inverse_relative": 0.0,
+        "/vggt/confidence": 0.0,
+        "/K": 0.0,
+        "/T_right_from_left": 0.0,
+        "/T_current_from_previous": 0.0,
+        "/baseline_m": 0.0
+      },
+      "future_pixel_perturbation": "both images in last frame inverted; every preceding input field and native output exact",
+      "independent_raw_prefix": "past RGB physically sliced and re-encoded; every field and native endpoint exact",
+      "elapsed_s": 32.81278787803603
+    },
+    {
+      "rank": 1,
+      "dataset_index": 2,
+      "checks": [
+        {
+          "arm": "late",
+          "dataset_index": 2,
+          "raw_cache_max_abs_px": 0.0
+        },
+        {
+          "arm": "early_seed",
+          "dataset_index": 2,
+          "raw_cache_max_abs_px": 0.0
+        },
+        {
+          "arm": "early_state",
+          "dataset_index": 2,
+          "raw_cache_max_abs_px": 0.0
+        }
+      ],
+      "raw_encoder_field_max_differences": {
+        "/encoded/left": 0.0,
+        "/encoded/right": 0.0,
+        "/encoded/volume": 0.0,
+        "/encoded/seed": 0.0,
+        "/encoded/hidden/0": 0.0,
+        "/encoded/context/0": 0.0,
+        "/encoded/attention/0": 0.0,
+        "/encoded/stem": 0.0,
+        "/rgb": 0.0,
+        "/right_disparity_lr": 0.0,
+        "/vggt/feature": 0.0,
+        "/vggt/inverse_relative": 0.0,
+        "/vggt/confidence": 0.0,
+        "/T_right_from_left": 0.0,
+        "/baseline_m": 0.0,
+        "/K": 0.0,
+        "/T_current_from_previous": 0.0
+      },
+      "future_pixel_perturbation": "both images in last frame inverted; every preceding input field and native output exact",
+      "independent_raw_prefix": "past RGB physically sliced and re-encoded; every field and native endpoint exact",
+      "elapsed_s": 32.720990782021545
+    },
+    {
+      "rank": 2,
+      "dataset_index": 24,
+      "checks": [
+        {
+          "arm": "late",
+          "dataset_index": 24,
+          "raw_cache_max_abs_px": 0.0
+        },
+        {
+          "arm": "early_seed",
+          "dataset_index": 24,
+          "raw_cache_max_abs_px": 0.0
+        },
+        {
+          "arm": "early_state",
+          "dataset_index": 24,
+          "raw_cache_max_abs_px": 0.0
+        }
+      ],
+      "raw_encoder_field_max_differences": {
+        "/encoded/left": 0.0,
+        "/encoded/right": 0.0,
+        "/encoded/volume": 0.0,
+        "/encoded/seed": 0.0,
+        "/encoded/hidden/0": 0.0,
+        "/encoded/context/0": 0.0,
+        "/encoded/attention/0": 0.0,
+        "/encoded/stem": 0.0,
+        "/rgb": 0.0,
+        "/right_disparity_lr": 0.0,
+        "/vggt/feature": 0.0,
+        "/vggt/inverse_relative": 0.0,
+        "/vggt/confidence": 0.0,
+        "/T_current_from_previous": 0.0,
+        "/K": 0.0,
+        "/T_right_from_left": 0.0,
+        "/baseline_m": 0.0
+      },
+      "future_pixel_perturbation": "both images in last frame inverted; every preceding input field and native output exact",
+      "independent_raw_prefix": "past RGB physically sliced and re-encoded; every field and native endpoint exact",
+      "elapsed_s": 33.25822317798156
+    },
+    {
+      "rank": 3,
+      "dataset_index": 29,
+      "checks": [
+        {
+          "arm": "late",
+          "dataset_index": 29,
+          "raw_cache_max_abs_px": 0.0
+        },
+        {
+          "arm": "early_seed",
+          "dataset_index": 29,
+          "raw_cache_max_abs_px": 0.0
+        },
+        {
+          "arm": "early_state",
+          "dataset_index": 29,
+          "raw_cache_max_abs_px": 0.0
+        }
+      ],
+      "raw_encoder_field_max_differences": {
+        "/encoded/left": 0.0,
+        "/encoded/right": 0.0,
+        "/encoded/volume": 0.0,
+        "/encoded/seed": 0.0,
+        "/encoded/hidden/0": 0.0,
+        "/encoded/context/0": 0.0,
+        "/encoded/attention/0": 0.0,
+        "/encoded/stem": 0.0,
+        "/rgb": 0.0,
+        "/right_disparity_lr": 0.0,
+        "/vggt/feature": 0.0,
+        "/vggt/inverse_relative": 0.0,
+        "/vggt/confidence": 0.0,
+        "/T_current_from_previous": 0.0,
+        "/K": 0.0,
+        "/baseline_m": 0.0,
+        "/T_right_from_left": 0.0
+      },
+      "future_pixel_perturbation": "both images in last frame inverted; every preceding input field and native output exact",
+      "independent_raw_prefix": "past RGB physically sliced and re-encoded; every field and native endpoint exact",
+      "elapsed_s": 33.09982093900908
+    },
+    {
+      "rank": 4,
+      "dataset_index": 300,
+      "checks": [
+        {
+          "arm": "late",
+          "dataset_index": 300,
+          "raw_cache_max_abs_px": 0.0
+        },
+        {
+          "arm": "early_seed",
+          "dataset_index": 300,
+          "raw_cache_max_abs_px": 0.0
+        },
+        {
+          "arm": "early_state",
+          "dataset_index": 300,
+          "raw_cache_max_abs_px": 0.0
+        }
+      ],
+      "raw_encoder_field_max_differences": {
+        "/encoded/left": 0.0,
+        "/encoded/right": 0.0,
+        "/encoded/volume": 0.0,
+        "/encoded/seed": 0.0,
+        "/encoded/hidden/0": 0.0,
+        "/encoded/context/0": 0.0,
+        "/encoded/attention/0": 0.0,
+        "/encoded/stem": 0.0,
+        "/rgb": 0.0,
+        "/right_disparity_lr": 0.0,
+        "/vggt/feature": 0.0,
+        "/vggt/inverse_relative": 0.0,
+        "/vggt/confidence": 0.0,
+        "/baseline_m": 0.0,
+        "/T_current_from_previous": 0.0,
+        "/T_right_from_left": 0.0,
+        "/K": 0.0
+      },
+      "future_pixel_perturbation": "both images in last frame inverted; every preceding input field and native output exact",
+      "independent_raw_prefix": "past RGB physically sliced and re-encoded; every field and native endpoint exact",
+      "elapsed_s": 33.49745973898098
+    },
+    {
+      "rank": 5,
+      "dataset_index": 600,
+      "checks": [
+        {
+          "arm": "late",
+          "dataset_index": 600,
+          "raw_cache_max_abs_px": 0.0
+        },
+        {
+          "arm": "early_seed",
+          "dataset_index": 600,
+          "raw_cache_max_abs_px": 0.0
+        },
+        {
+          "arm": "early_state",
+          "dataset_index": 600,
+          "raw_cache_max_abs_px": 0.0
+        }
+      ],
+      "raw_encoder_field_max_differences": {
+        "/encoded/left": 0.0,
+        "/encoded/right": 0.0,
+        "/encoded/volume": 0.0,
+        "/encoded/seed": 0.0,
+        "/encoded/hidden/0": 0.0,
+        "/encoded/context/0": 0.0,
+        "/encoded/attention/0": 0.0,
+        "/encoded/stem": 0.0,
+        "/rgb": 0.0,
+        "/right_disparity_lr": 0.0,
+        "/vggt/feature": 0.0,
+        "/vggt/inverse_relative": 0.0,
+        "/vggt/confidence": 0.0,
+        "/T_current_from_previous": 0.0,
+        "/T_right_from_left": 0.0,
+        "/K": 0.0,
+        "/baseline_m": 0.0
+      },
+      "future_pixel_perturbation": "both images in last frame inverted; every preceding input field and native output exact",
+      "independent_raw_prefix": "past RGB physically sliced and re-encoded; every field and native endpoint exact",
+      "elapsed_s": 32.75602151697967
+    },
+    {
+      "rank": 6,
+      "dataset_index": 900,
+      "checks": [
+        {
+          "arm": "late",
+          "dataset_index": 900,
+          "raw_cache_max_abs_px": 0.0
+        },
+        {
+          "arm": "early_seed",
+          "dataset_index": 900,
+          "raw_cache_max_abs_px": 0.0
+        },
+        {
+          "arm": "early_state",
+          "dataset_index": 900,
+          "raw_cache_max_abs_px": 0.0
+        }
+      ],
+      "raw_encoder_field_max_differences": {
+        "/encoded/left": 0.0,
+        "/encoded/right": 0.0,
+        "/encoded/volume": 0.0,
+        "/encoded/seed": 0.0,
+        "/encoded/hidden/0": 0.0,
+        "/encoded/context/0": 0.0,
+        "/encoded/attention/0": 0.0,
+        "/encoded/stem": 0.0,
+        "/rgb": 0.0,
+        "/right_disparity_lr": 0.0,
+        "/vggt/feature": 0.0,
+        "/vggt/inverse_relative": 0.0,
+        "/vggt/confidence": 0.0,
+        "/baseline_m": 0.0,
+        "/T_current_from_previous": 0.0,
+        "/T_right_from_left": 0.0,
+        "/K": 0.0
+      },
+      "future_pixel_perturbation": "both images in last frame inverted; every preceding input field and native output exact",
+      "independent_raw_prefix": "past RGB physically sliced and re-encoded; every field and native endpoint exact",
+      "elapsed_s": 33.837684497004375
+    },
+    {
+      "rank": 7,
+      "dataset_index": 1200,
+      "checks": [
+        {
+          "arm": "late",
+          "dataset_index": 1200,
+          "raw_cache_max_abs_px": 0.0
+        },
+        {
+          "arm": "early_seed",
+          "dataset_index": 1200,
+          "raw_cache_max_abs_px": 0.0
+        },
+        {
+          "arm": "early_state",
+          "dataset_index": 1200,
+          "raw_cache_max_abs_px": 0.0
+        }
+      ],
+      "raw_encoder_field_max_differences": {
+        "/encoded/left": 0.0,
+        "/encoded/right": 0.0,
+        "/encoded/volume": 0.0,
+        "/encoded/seed": 0.0,
+        "/encoded/hidden/0": 0.0,
+        "/encoded/context/0": 0.0,
+        "/encoded/attention/0": 0.0,
+        "/encoded/stem": 0.0,
+        "/rgb": 0.0,
+        "/right_disparity_lr": 0.0,
+        "/vggt/feature": 0.0,
+        "/vggt/inverse_relative": 0.0,
+        "/vggt/confidence": 0.0,
+        "/K": 0.0,
+        "/T_right_from_left": 0.0,
+        "/T_current_from_previous": 0.0,
+        "/baseline_m": 0.0
+      },
+      "future_pixel_perturbation": "both images in last frame inverted; every preceding input field and native output exact",
+      "independent_raw_prefix": "past RGB physically sliced and re-encoded; every field and native endpoint exact",
+      "elapsed_s": 32.75551455601817
+    }
+  ],
+  "source_sha256": "3e047b45d48aea8abab2d88ba6fc1c43f43e3f9eaa79b06b97dbc3544278b085",
+  "encoder_source_sha256": "cc6a63aaa82eb08bf782dd0eda1b10c03ef3936b8907ba6323c39531f29385bd",
+  "old_A5_geometry_called": false,
+  "raw_inputs": [
+    "rgb",
+    "K",
+    "baseline_m",
+    "T_current_from_previous",
+    "T_right_from_left"
+  ],
+  "labels_in_forward": false,
+  "original_final_prediction_in_forward": false
+}

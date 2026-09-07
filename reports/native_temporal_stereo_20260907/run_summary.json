@@ -1,0 +1,17 @@
+{
+  "status": "COMPLETE",
+  "trained_arms": [
+    "late",
+    "early_seed",
+    "early_state"
+  ],
+  "updates_per_arm": 1000,
+  "validation_endpoints_per_arm": 1294,
+  "raw_input_and_causality": "PASS",
+  "source_files_checked": 65,
+  "base_source_files_changed": [],
+  "v1_checkpoint_sha256": "60fe5a02263c2d39a622e0a0f64db381154c01e01bb33c9dcc21dd295556f269",
+  "training_sources_unchanged": true,
+  "cache_temporary": "/tmp/vggt_native_stereo_20260907",
+  "completed_unix_s": 1788771703.848681
+}

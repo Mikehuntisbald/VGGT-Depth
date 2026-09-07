@@ -1,0 +1,274 @@
+{
+  "status": "PASS",
+  "samples": 8,
+  "rows": [
+    {
+      "rank": 0,
+      "dataset_index": 0,
+      "checks": [
+        {
+          "arm": "early_state",
+          "dataset_index": 0,
+          "raw_cache_max_abs_px": 0.0
+        }
+      ],
+      "raw_encoder_field_max_differences": {
+        "/encoded/left": 0.0,
+        "/encoded/right": 0.0,
+        "/encoded/volume": 0.0,
+        "/encoded/seed": 0.0,
+        "/encoded/hidden/0": 0.0,
+        "/encoded/context/0": 0.0,
+        "/encoded/attention/0": 0.0,
+        "/encoded/stem": 0.0,
+        "/rgb": 0.0,
+        "/right_disparity_lr": 0.0,
+        "/vggt/feature": 0.0,
+        "/vggt/inverse_relative": 0.0,
+        "/vggt/confidence": 0.0,
+        "/T_right_from_left": 0.0,
+        "/K": 0.0,
+        "/baseline_m": 0.0,
+        "/T_current_from_previous": 0.0
+      },
+      "future_pixel_perturbation": "both images in last frame inverted; every preceding input field and native output exact",
+      "elapsed_s": 47.12484330002917
+    },
+    {
+      "rank": 1,
+      "dataset_index": 1,
+      "checks": [
+        {
+          "arm": "early_state",
+          "dataset_index": 1,
+          "raw_cache_max_abs_px": 0.0
+        }
+      ],
+      "raw_encoder_field_max_differences": {
+        "/encoded/left": 0.0,
+        "/encoded/right": 0.0,
+        "/encoded/volume": 0.0,
+        "/encoded/seed": 0.0,
+        "/encoded/hidden/0": 0.0,
+        "/encoded/context/0": 0.0,
+        "/encoded/attention/0": 0.0,
+        "/encoded/stem": 0.0,
+        "/rgb": 0.0,
+        "/right_disparity_lr": 0.0,
+        "/vggt/feature": 0.0,
+        "/vggt/inverse_relative": 0.0,
+        "/vggt/confidence": 0.0,
+        "/baseline_m": 0.0,
+        "/T_current_from_previous": 0.0,
+        "/T_right_from_left": 0.0,
+        "/K": 0.0
+      },
+      "future_pixel_perturbation": "both images in last frame inverted; every preceding input field and native output exact",
+      "elapsed_s": 47.16244512598496
+    },
+    {
+      "rank": 2,
+      "dataset_index": 2,
+      "checks": [
+        {
+          "arm": "early_state",
+          "dataset_index": 2,
+          "raw_cache_max_abs_px": 0.0
+        }
+      ],
+      "raw_encoder_field_max_differences": {
+        "/encoded/left": 0.0,
+        "/encoded/right": 0.0,
+        "/encoded/volume": 0.0,
+        "/encoded/seed": 0.0,
+        "/encoded/hidden/0": 0.0,
+        "/encoded/context/0": 0.0,
+        "/encoded/attention/0": 0.0,
+        "/encoded/stem": 0.0,
+        "/rgb": 0.0,
+        "/right_disparity_lr": 0.0,
+        "/vggt/feature": 0.0,
+        "/vggt/inverse_relative": 0.0,
+        "/vggt/confidence": 0.0,
+        "/K": 0.0,
+        "/T_right_from_left": 0.0,
+        "/T_current_from_previous": 0.0,
+        "/baseline_m": 0.0
+      },
+      "future_pixel_perturbation": "both images in last frame inverted; every preceding input field and native output exact",
+      "elapsed_s": 47.98929576296359
+    },
+    {
+      "rank": 3,
+      "dataset_index": 3,
+      "checks": [
+        {
+          "arm": "early_state",
+          "dataset_index": 3,
+          "raw_cache_max_abs_px": 0.0
+        }
+      ],
+      "raw_encoder_field_max_differences": {
+        "/encoded/left": 0.0,
+        "/encoded/right": 0.0,
+        "/encoded/volume": 0.0,
+        "/encoded/seed": 0.0,
+        "/encoded/hidden/0": 0.0,
+        "/encoded/context/0": 0.0,
+        "/encoded/attention/0": 0.0,
+        "/encoded/stem": 0.0,
+        "/rgb": 0.0,
+        "/right_disparity_lr": 0.0,
+        "/vggt/feature": 0.0,
+        "/vggt/inverse_relative": 0.0,
+        "/vggt/confidence": 0.0,
+        "/baseline_m": 0.0,
+        "/K": 0.0,
+        "/T_current_from_previous": 0.0,
+        "/T_right_from_left": 0.0
+      },
+      "future_pixel_perturbation": "both images in last frame inverted; every preceding input field and native output exact",
+      "elapsed_s": 47.96200675301952
+    },
+    {
+      "rank": 4,
+      "dataset_index": 4,
+      "checks": [
+        {
+          "arm": "early_state",
+          "dataset_index": 4,
+          "raw_cache_max_abs_px": 0.0
+        }
+      ],
+      "raw_encoder_field_max_differences": {
+        "/encoded/left": 0.0,
+        "/encoded/right": 0.0,
+        "/encoded/volume": 0.0,
+        "/encoded/seed": 0.0,
+        "/encoded/hidden/0": 0.0,
+        "/encoded/context/0": 0.0,
+        "/encoded/attention/0": 0.0,
+        "/encoded/stem": 0.0,
+        "/rgb": 0.0,
+        "/right_disparity_lr": 0.0,
+        "/vggt/feature": 0.0,
+        "/vggt/inverse_relative": 0.0,
+        "/vggt/confidence": 0.0,
+        "/baseline_m": 0.0,
+        "/T_current_from_previous": 0.0,
+        "/K": 0.0,
+        "/T_right_from_left": 0.0
+      },
+      "future_pixel_perturbation": "both images in last frame inverted; every preceding input field and native output exact",
+      "elapsed_s": 48.5602882829844
+    },
+    {
+      "rank": 5,
+      "dataset_index": 5,
+      "checks": [
+        {
+          "arm": "early_state",
+          "dataset_index": 5,
+          "raw_cache_max_abs_px": 0.0
+        }
+      ],
+      "raw_encoder_field_max_differences": {
+        "/encoded/left": 0.0,
+        "/encoded/right": 0.0,
+        "/encoded/volume": 0.0,
+        "/encoded/seed": 0.0,
+        "/encoded/hidden/0": 0.0,
+        "/encoded/context/0": 0.0,
+        "/encoded/attention/0": 0.0,
+        "/encoded/stem": 0.0,
+        "/rgb": 0.0,
+        "/right_disparity_lr": 0.0,
+        "/vggt/feature": 0.0,
+        "/vggt/inverse_relative": 0.0,
+        "/vggt/confidence": 0.0,
+        "/T_right_from_left": 0.0,
+        "/T_current_from_previous": 0.0,
+        "/K": 0.0,
+        "/baseline_m": 0.0
+      },
+      "future_pixel_perturbation": "both images in last frame inverted; every preceding input field and native output exact",
+      "elapsed_s": 47.08709256997099
+    },
+    {
+      "rank": 6,
+      "dataset_index": 6,
+      "checks": [
+        {
+          "arm": "early_state",
+          "dataset_index": 6,
+          "raw_cache_max_abs_px": 0.0
+        }
+      ],
+      "raw_encoder_field_max_differences": {
+        "/encoded/left": 0.0,
+        "/encoded/right": 0.0,
+        "/encoded/volume": 0.0,
+        "/encoded/seed": 0.0,
+        "/encoded/hidden/0": 0.0,
+        "/encoded/context/0": 0.0,
+        "/encoded/attention/0": 0.0,
+        "/encoded/stem": 0.0,
+        "/rgb": 0.0,
+        "/right_disparity_lr": 0.0,
+        "/vggt/feature": 0.0,
+        "/vggt/inverse_relative": 0.0,
+        "/vggt/confidence": 0.0,
+        "/K": 0.0,
+        "/baseline_m": 0.0,
+        "/T_current_from_previous": 0.0,
+        "/T_right_from_left": 0.0
+      },
+      "future_pixel_perturbation": "both images in last frame inverted; every preceding input field and native output exact",
+      "elapsed_s": 47.12018418399384
+    },
+    {
+      "rank": 7,
+      "dataset_index": 7,
+      "checks": [
+        {
+          "arm": "early_state",
+          "dataset_index": 7,
+          "raw_cache_max_abs_px": 0.0
+        }
+      ],
+      "raw_encoder_field_max_differences": {
+        "/encoded/left": 0.0,
+        "/encoded/right": 0.0,
+        "/encoded/volume": 0.0,
+        "/encoded/seed": 0.0,
+        "/encoded/hidden/0": 0.0,
+        "/encoded/context/0": 0.0,
+        "/encoded/attention/0": 0.0,
+        "/encoded/stem": 0.0,
+        "/rgb": 0.0,
+        "/right_disparity_lr": 0.0,
+        "/vggt/feature": 0.0,
+        "/vggt/inverse_relative": 0.0,
+        "/vggt/confidence": 0.0,
+        "/T_current_from_previous": 0.0,
+        "/T_right_from_left": 0.0,
+        "/baseline_m": 0.0,
+        "/K": 0.0
+      },
+      "future_pixel_perturbation": "both images in last frame inverted; every preceding input field and native output exact",
+      "elapsed_s": 47.51975166396005
+    }
+  ],
+  "source_sha256": "09379c0cdda54388392f8513b06050897ebedd5686fa495c4850d67c90d3808a",
+  "encoder_source_sha256": "4e24a1b7c1719cd23e9824adc0e34f8b88b4b76b7a687f671503167b3e57377f",
+  "old_A5_geometry_called": false,
+  "raw_inputs": [
+    "rgb",
+    "K",
+    "baseline_m",
+    "T_current_from_previous",
+    "T_right_from_left"
+  ],
+  "labels_in_forward": false,
+  "original_final_prediction_in_forward": false
+}

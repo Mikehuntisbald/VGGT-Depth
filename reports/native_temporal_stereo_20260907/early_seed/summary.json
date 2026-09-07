@@ -1,0 +1,29 @@
+{
+  "status": "COMPLETE",
+  "steps": 1000,
+  "variant": "early_seed",
+  "elapsed_s": 850.4455208490253,
+  "checkpoint_sha256": "4a117fc0e7280d30828795c41da8cae4156e1fff17838961a5d14b8fd52a4e3f",
+  "gradient_ownership": {
+    "initializer.key.weight": 0.02008640579879284,
+    "initializer.key.bias": 0.002032569842413068,
+    "initializer.context.0.weight": 0.0,
+    "initializer.context.0.bias": 0.0,
+    "initializer.context.1.weight": 0.0,
+    "initializer.context.1.bias": 0.0,
+    "initializer.cost.0.weight": 0.0,
+    "initializer.cost.0.bias": 0.0,
+    "initializer.cost.1.weight": 0.0,
+    "initializer.cost.1.bias": 0.0,
+    "initializer.cost.3.weight": 0.0,
+    "initializer.cost.3.bias": 0.0,
+    "initializer.cost.4.weight": 0.0,
+    "initializer.cost.4.bias": 0.0,
+    "initializer.cost.6.weight": 0.01516533363610506,
+    "initializer.cost.6.bias": 3.0040740966796875e-05
+  },
+  "trainable_parameters": {
+    "geometry": 2908966,
+    "temporal_matcher": 106769
+  }
+}
