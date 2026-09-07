@@ -1,0 +1,33 @@
+{
+  "status": "COMPLETE",
+  "arm": "learned_codd_margin01_codd",
+  "steps": 12500,
+  "chosen": {
+    "shift": 0.0,
+    "metrics": {
+      "penalized_epe": 0.5917662021368763,
+      "raw_epe": 0.7438213673713722,
+      "good_damage": 0.01644914360196517,
+      "large_1px": 0.007246428045888226,
+      "large_5px": 0.002317301501517691,
+      "recovery": 0.4376068256227259,
+      "opportunity_epe": 1.8800878083735404,
+      "rejection_failure": 0.062282628592348524
+    },
+    "feasible": false,
+    "violation": 0.524777278539196,
+    "score": 1.085316825745041
+  },
+  "baseline_v1": {
+    "penalized_epe": 0.5940794488175276,
+    "raw_epe": 0.7432587293681004,
+    "good_damage": 0.0281263591842621,
+    "large_1px": 0.006980848678532747,
+    "large_5px": 0.0021264025219876297,
+    "recovery": 0.5592425633943031,
+    "opportunity_epe": 1.8827741185948323,
+    "rejection_failure": 0.2307111477210324
+  },
+  "checkpoint_sha256": "c649a3cedb30d820087276f61a0a3eeab93d1662155de48376d1d06ef3f20f49",
+  "elapsed_s": 31.660433652985375
+}

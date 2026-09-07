@@ -1,0 +1,98 @@
+{
+  "status": "COMPLETE",
+  "trained_arms": 8,
+  "updates_per_arm": 12500,
+  "validation_endpoints_per_arm": 1294,
+  "accepted_validation_arms": [],
+  "baseline_v1_preserved": true,
+  "objective_acceptance": "NOT_MET",
+  "base_runtime_files_verified": 65,
+  "base_runtime_files_changed": [],
+  "v1_checkpoint_sha256": "60fe5a02263c2d39a622e0a0f64db381154c01e01bb33c9dcc21dd295556f269",
+  "new_unit_tests_passed": 5,
+  "raw_inference_parity": {
+    "status": "PASS",
+    "samples": 8,
+    "checkpoint_sha256": "3e2e2aecb84e4b3e3142962667e32698df76735cb8d66b9e24177861447350b8",
+    "future_perturbation_past_feature_max_abs": 0,
+    "results": [
+      {
+        "index": 0,
+        "pixels": 393216,
+        "maximum_abs_difference_px": 0.0,
+        "mean_abs_difference_px": 0.0,
+        "validity_identical": true
+      },
+      {
+        "index": 1,
+        "pixels": 393216,
+        "maximum_abs_difference_px": 0.0,
+        "mean_abs_difference_px": 0.0,
+        "validity_identical": true
+      },
+      {
+        "index": 2,
+        "pixels": 393216,
+        "maximum_abs_difference_px": 0.0,
+        "mean_abs_difference_px": 0.0,
+        "validity_identical": true
+      },
+      {
+        "index": 3,
+        "pixels": 393216,
+        "maximum_abs_difference_px": 0.0,
+        "mean_abs_difference_px": 0.0,
+        "validity_identical": true
+      },
+      {
+        "index": 4,
+        "pixels": 393216,
+        "maximum_abs_difference_px": 0.0,
+        "mean_abs_difference_px": 0.0,
+        "validity_identical": true
+      },
+      {
+        "index": 5,
+        "pixels": 393216,
+        "maximum_abs_difference_px": 0.0,
+        "mean_abs_difference_px": 0.0,
+        "validity_identical": true
+      },
+      {
+        "index": 6,
+        "pixels": 393216,
+        "maximum_abs_difference_px": 0.0,
+        "mean_abs_difference_px": 0.0,
+        "validity_identical": true
+      },
+      {
+        "index": 7,
+        "pixels": 393216,
+        "maximum_abs_difference_px": 0.0,
+        "mean_abs_difference_px": 0.0,
+        "validity_identical": true
+      }
+    ]
+  },
+  "feature_cache_receipts": {
+    "train": {
+      "status": "COMPLETE",
+      "samples": 1152,
+      "expected": 1152,
+      "elapsed_s": 358.0118913439801
+    },
+    "validation": {
+      "status": "COMPLETE",
+      "samples": 1294,
+      "expected": 1294,
+      "elapsed_s": 558.15225774399
+    }
+  },
+  "sources_verified": true,
+  "completed_unix_s": 1788751908.7767663,
+  "cache_location": "/tmp/vggt_learned_evidence_20260907",
+  "cache_persistence": "temporary storage; exact regeneration source and lineage retained",
+  "margin_adaptation": "fusion margin 1 to existing opportunity threshold 0.1 HR px; reset remains 5; no calibration",
+  "results_file": "extended_results.json",
+  "raw_parity_scope": "representative learned_codd_codd checkpoint; all learned arms share the same inference implementation"
+}

@@ -1,0 +1,106 @@
+{
+  "01_to_02": {
+    "v1": {
+      "value": 0.10956259002168056,
+      "numerator": 3663986.0,
+      "count": 33441944,
+      "valid": true
+    },
+    "learned_codd_codd": {
+      "value": 0.08536534239755919,
+      "numerator": 2854783.0,
+      "count": 33441944,
+      "valid": true
+    },
+    "learned_codd_margin01_codd": {
+      "value": 0.09733004755943614,
+      "numerator": 3254906.0,
+      "count": 33441944,
+      "valid": true
+    },
+    "learned_codd_margin01_codd_regret": {
+      "value": 0.09740357797381635,
+      "numerator": 3257365.0,
+      "count": 33441944,
+      "valid": true
+    }
+  },
+  "02_to_1": {
+    "v1": {
+      "value": 0.6017090701603588,
+      "numerator": 14618008.0,
+      "count": 24294146,
+      "valid": true
+    },
+    "learned_codd_codd": {
+      "value": 0.46800706639369005,
+      "numerator": 11369832.0,
+      "count": 24294146,
+      "valid": true
+    },
+    "learned_codd_margin01_codd": {
+      "value": 0.4037928725710301,
+      "numerator": 9809803.0,
+      "count": 24294146,
+      "valid": true
+    },
+    "learned_codd_margin01_codd_regret": {
+      "value": 0.3926179994143445,
+      "numerator": 9538319.0,
+      "count": 24294146,
+      "valid": true
+    }
+  },
+  "1_to_5": {
+    "v1": {
+      "value": 0.9112065462101107,
+      "numerator": 2426020.0,
+      "count": 2662426,
+      "valid": true
+    },
+    "learned_codd_codd": {
+      "value": 0.7459478685980381,
+      "numerator": 1986031.0,
+      "count": 2662426,
+      "valid": true
+    },
+    "learned_codd_margin01_codd": {
+      "value": 0.6978000515319487,
+      "numerator": 1857841.0,
+      "count": 2662426,
+      "valid": true
+    },
+    "learned_codd_margin01_codd_regret": {
+      "value": 0.6922119149978253,
+      "numerator": 1842963.0,
+      "count": 2662426,
+      "valid": true
+    }
+  },
+  "over_5": {
+    "v1": {
+      "value": 0.8743186770452034,
+      "numerator": 1416405.0,
+      "count": 1620010,
+      "valid": true
+    },
+    "learned_codd_codd": {
+      "value": 0.735652249060191,
+      "numerator": 1191764.0,
+      "count": 1620010,
+      "valid": true
+    },
+    "learned_codd_margin01_codd": {
+      "value": 0.6722859735433732,
+      "numerator": 1089110.0,
+      "count": 1620010,
+      "valid": true
+    },
+    "learned_codd_margin01_codd_regret": {
+      "value": 0.6394837068906982,
+      "numerator": 1035970.0,
+      "count": 1620010,
+      "valid": true
+    }
+  }
+}

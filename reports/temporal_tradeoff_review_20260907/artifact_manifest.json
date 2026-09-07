@@ -1,0 +1,28 @@
+{
+  "original_base_commit": "2436e8a03c2063d49f658aa3e805c432a183fd92",
+  "source_run": "runs/metric_stereo_video/temporal_tradeoff_review_20260907",
+  "scope": "Reports, metrics, per-sample evidence, training receipts and checks. Large JSON is losslessly gzipped. Markdown links are adapted; original report hashes are retained. Weights, caches, logs and duplicate source snapshots remain on the experiment host.",
+  "files": [
+    {
+      "source": "runs/metric_stereo_video/temporal_tradeoff_review_20260907/REPORT.md",
+      "source_sha256": "b5f910cb6a66cd824d7e542120ed977b3d32c7376daa3b615deccd402fabe922",
+      "source_bytes": 927,
+      "archive": "REPORT.md",
+      "archive_sha256": "b5f910cb6a66cd824d7e542120ed977b3d32c7376daa3b615deccd402fabe922",
+      "archive_bytes": 927,
+      "encoding": "identity",
+      "markdown_links_adapted": true
+    },
+    {
+      "source": "runs/metric_stereo_video/temporal_tradeoff_review_20260907/review.json",
+      "source_sha256": "e26e1e6d96811740b5798454e3b98d00b4b7f158f26ad50d62126859ea0d205f",
+      "source_bytes": 5930,
+      "archive": "review.json",
+      "archive_sha256": "e26e1e6d96811740b5798454e3b98d00b4b7f158f26ad50d62126859ea0d205f",
+      "archive_bytes": 5930,
+      "encoding": "identity",
+      "markdown_links_adapted": false
+    }
+  ],
+  "checkpoints": []
+}

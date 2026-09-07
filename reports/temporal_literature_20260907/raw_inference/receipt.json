@@ -1,0 +1,9 @@
+{
+  "status": "COMPLETE",
+  "samples": 8,
+  "checkpoint_sha256": "3e2e2aecb84e4b3e3142962667e32698df76735cb8d66b9e24177861447350b8",
+  "gt_provided_to_repair": false,
+  "causality_checked": true,
+  "source_sha256": "2096357d85c1df567fffd51fc9274093e80f2d90c882cc52897fb83565c9f607",
+  "history_source": "unmodified A5 strict past prefix"
+}

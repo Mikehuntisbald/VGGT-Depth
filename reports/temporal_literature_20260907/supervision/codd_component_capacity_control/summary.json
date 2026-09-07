@@ -1,0 +1,33 @@
+{
+  "status": "COMPLETE",
+  "arm": "codd_component_capacity_control",
+  "steps": 12500,
+  "chosen": {
+    "shift": 0.0,
+    "metrics": {
+      "penalized_epe": 0.5948273709624055,
+      "raw_epe": 0.7420202170296311,
+      "good_damage": 0.028429484544510514,
+      "large_1px": 0.006886724876125564,
+      "large_5px": 0.001964889612223191,
+      "recovery": 0.5633578474330302,
+      "opportunity_epe": 1.89457436971681,
+      "rejection_failure": 0.23915431081823174
+    },
+    "feasible": false,
+    "violation": 0.02336686777196939,
+    "score": 1.09400522497112
+  },
+  "baseline_v1": {
+    "penalized_epe": 0.5940794488175276,
+    "raw_epe": 0.7432587293681004,
+    "good_damage": 0.0281263591842621,
+    "large_1px": 0.006980848678532747,
+    "large_5px": 0.0021264025219876297,
+    "recovery": 0.5592425633943031,
+    "opportunity_epe": 1.8827741185948323,
+    "rejection_failure": 0.2307111477210324
+  },
+  "checkpoint_sha256": "f2a11c4c0480f6dab2e6747a3bcfbc8c0491a46b8152149e8eb837739c49aba3",
+  "elapsed_s": 40.63918862200808
+}

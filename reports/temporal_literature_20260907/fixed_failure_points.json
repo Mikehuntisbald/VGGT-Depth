@@ -1,0 +1,620 @@
+[
+  {
+    "index": 2,
+    "x": 253,
+    "y": 147,
+    "identity": {
+      "sequence_id": "0005",
+      "frame_id": 10,
+      "dataset_index": 2,
+      "metadata": {
+        "manifest_path": "/mnt/why/VGGT-Depth/runs/spring_v3_1_seed42/manifests/validation.jsonl",
+        "dataset_index": 2,
+        "endpoint_manifest_index": 9,
+        "epoch": 0,
+        "seed": 10042,
+        "source_size_hw": [
+          1080,
+          1920
+        ],
+        "crop_xywh": [
+          576,
+          256,
+          768,
+          512
+        ],
+        "resize_size_hw": [
+          512,
+          768
+        ],
+        "resize_scale_xy": [
+          1.0,
+          1.0
+        ],
+        "resize_coordinate_convention": "align_corners_false_half_pixel",
+        "view_order": [
+          "left",
+          "right"
+        ],
+        "target_mode": "last",
+        "previous_disparity_gt_available": true,
+        "dynamic_mask_contract": {
+          "available": true,
+          "path": "/mnt/why/spring_dataset/spring/train/0005/maps/rigidmap_BW_left/rigidmap_BW_left_0010.png",
+          "source": "Spring/maps/rigidmap_BW_left",
+          "frame_binding": "endpoint_frame_id_backward_to_previous",
+          "semantic": "white_or_true_is_dynamic_and_excluded",
+          "expected_file_format": "single_channel_binary_png",
+          "expected_source_scale": "2x_width_and_2x_height_of_rgb",
+          "image_grid_reduction": "2x2_majority_true_when_at_least_2_of_4",
+          "post_reduction_transform": "shared_crop_then_nearest_exact_resize",
+          "observed_pillow_mode": "1",
+          "observed_size_hw": [
+            2160,
+            3840
+          ]
+        },
+        "source_paths": [
+          {
+            "left": "/mnt/why/spring_dataset/spring/train/0005/frame_left/frame_left_0003.png",
+            "right": "/mnt/why/spring_dataset/spring/train/0005/frame_right/frame_right_0003.png",
+            "gt_disparity_left": null,
+            "gt_disparity_right": null,
+            "temporal_previous_gt_disparity_left": null
+          },
+          {
+            "left": "/mnt/why/spring_dataset/spring/train/0005/frame_left/frame_left_0004.png",
+            "right": "/mnt/why/spring_dataset/spring/train/0005/frame_right/frame_right_0004.png",
+            "gt_disparity_left": null,
+            "gt_disparity_right": null,
+            "temporal_previous_gt_disparity_left": null
+          },
+          {
+            "left": "/mnt/why/spring_dataset/spring/train/0005/frame_left/frame_left_0005.png",
+            "right": "/mnt/why/spring_dataset/spring/train/0005/frame_right/frame_right_0005.png",
+            "gt_disparity_left": null,
+            "gt_disparity_right": null,
+            "temporal_previous_gt_disparity_left": null
+          },
+          {
+            "left": "/mnt/why/spring_dataset/spring/train/0005/frame_left/frame_left_0006.png",
+            "right": "/mnt/why/spring_dataset/spring/train/0005/frame_right/frame_right_0006.png",
+            "gt_disparity_left": null,
+            "gt_disparity_right": null,
+            "temporal_previous_gt_disparity_left": null
+          },
+          {
+            "left": "/mnt/why/spring_dataset/spring/train/0005/frame_left/frame_left_0007.png",
+            "right": "/mnt/why/spring_dataset/spring/train/0005/frame_right/frame_right_0007.png",
+            "gt_disparity_left": null,
+            "gt_disparity_right": null,
+            "temporal_previous_gt_disparity_left": null
+          },
+          {
+            "left": "/mnt/why/spring_dataset/spring/train/0005/frame_left/frame_left_0008.png",
+            "right": "/mnt/why/spring_dataset/spring/train/0005/frame_right/frame_right_0008.png",
+            "gt_disparity_left": null,
+            "gt_disparity_right": null,
+            "temporal_previous_gt_disparity_left": null
+          },
+          {
+            "left": "/mnt/why/spring_dataset/spring/train/0005/frame_left/frame_left_0009.png",
+            "right": "/mnt/why/spring_dataset/spring/train/0005/frame_right/frame_right_0009.png",
+            "gt_disparity_left": null,
+            "gt_disparity_right": null,
+            "temporal_previous_gt_disparity_left": "/mnt/why/spring_dataset/spring/train/0005/disp1_left/disp1_left_0009.dsp5"
+          },
+          {
+            "left": "/mnt/why/spring_dataset/spring/train/0005/frame_left/frame_left_0010.png",
+            "right": "/mnt/why/spring_dataset/spring/train/0005/frame_right/frame_right_0010.png",
+            "gt_disparity_left": "/mnt/why/spring_dataset/spring/train/0005/disp1_left/disp1_left_0010.dsp5",
+            "gt_disparity_right": "/mnt/why/spring_dataset/spring/train/0005/disp1_right/disp1_right_0010.dsp5",
+            "temporal_previous_gt_disparity_left": null
+          }
+        ]
+      }
+    },
+    "gt": 99.25,
+    "a5": 20.956871032714844,
+    "history": 99.45681762695312,
+    "v1": 97.0464096069336,
+    "v1_error": 2.2035903930664062,
+    "v1_gate": 0.9692941308021545,
+    "learned_cues": [
+      0.66650390625,
+      0.6279296875,
+      0.56103515625,
+      0.55126953125,
+      0.76171875,
+      0.73583984375,
+      0.63525390625,
+      0.6708984375,
+      0.73828125,
+      0.69873046875,
+      0.5126953125,
+      0.5673828125,
+      1.0,
+      1.0,
+      1.0,
+      1.0,
+      1.0,
+      1.0,
+      0.7060546875,
+      0.0880126953125,
+      1.1728515625,
+      -0.05401611328125,
+      1.0,
+      1.0
+    ],
+    "arms": {
+      "codd_component_capacity_control": {
+        "prediction": 89.30508422851562,
+        "error": 9.944915771484375,
+        "gate": 0.8706784844398499,
+        "reset": 0.9331015348434448,
+        "fusion": 0.9331015348434448
+      },
+      "codd_component_codd": {
+        "prediction": 55.16766357421875,
+        "error": 44.08233642578125,
+        "gate": 0.4358065724372864,
+        "reset": 0.9999946355819702,
+        "fusion": 0.4358088970184326
+      },
+      "codd_component_codd_regret": {
+        "prediction": 21.50761604309082,
+        "error": 77.74238586425781,
+        "gate": 0.0070158569142222404,
+        "reset": 0.9999995231628418,
+        "fusion": 0.007015860173851252
+      },
+      "learned_codd_capacity_control": {
+        "prediction": 87.84680938720703,
+        "error": 11.403190612792969,
+        "gate": 0.852101743221283,
+        "reset": 0.9230935573577881,
+        "fusion": 0.9230935573577881
+      },
+      "learned_codd_codd": {
+        "prediction": 37.833221435546875,
+        "error": 61.416778564453125,
+        "gate": 0.21498551964759827,
+        "reset": 0.9999942779541016,
+        "fusion": 0.21498675644397736
+      },
+      "learned_codd_codd_regret": {
+        "prediction": 20.99018096923828,
+        "error": 78.25981903076172,
+        "gate": 0.0004243393486831337,
+        "reset": 0.9999995231628418,
+        "fusion": 0.0004243395524099469
+      },
+      "learned_codd_margin01_codd": {
+        "prediction": 22.983808517456055,
+        "error": 76.26618957519531,
+        "gate": 0.025820881128311157,
+        "reset": 1.0,
+        "fusion": 0.025820881128311157
+      },
+      "learned_codd_margin01_codd_regret": {
+        "prediction": 20.95694351196289,
+        "error": 78.29306030273438,
+        "gate": 9.239424230145232e-07,
+        "reset": 1.0,
+        "fusion": 9.239424230145232e-07
+      }
+    }
+  },
+  {
+    "index": 24,
+    "x": 581,
+    "y": 200,
+    "identity": {
+      "sequence_id": "0005",
+      "frame_id": 32,
+      "dataset_index": 24,
+      "metadata": {
+        "manifest_path": "/mnt/why/VGGT-Depth/runs/spring_v3_1_seed42/manifests/validation.jsonl",
+        "dataset_index": 24,
+        "endpoint_manifest_index": 31,
+        "epoch": 0,
+        "seed": 10042,
+        "source_size_hw": [
+          1080,
+          1920
+        ],
+        "crop_xywh": [
+          576,
+          256,
+          768,
+          512
+        ],
+        "resize_size_hw": [
+          512,
+          768
+        ],
+        "resize_scale_xy": [
+          1.0,
+          1.0
+        ],
+        "resize_coordinate_convention": "align_corners_false_half_pixel",
+        "view_order": [
+          "left",
+          "right"
+        ],
+        "target_mode": "last",
+        "previous_disparity_gt_available": true,
+        "dynamic_mask_contract": {
+          "available": true,
+          "path": "/mnt/why/spring_dataset/spring/train/0005/maps/rigidmap_BW_left/rigidmap_BW_left_0032.png",
+          "source": "Spring/maps/rigidmap_BW_left",
+          "frame_binding": "endpoint_frame_id_backward_to_previous",
+          "semantic": "white_or_true_is_dynamic_and_excluded",
+          "expected_file_format": "single_channel_binary_png",
+          "expected_source_scale": "2x_width_and_2x_height_of_rgb",
+          "image_grid_reduction": "2x2_majority_true_when_at_least_2_of_4",
+          "post_reduction_transform": "shared_crop_then_nearest_exact_resize",
+          "observed_pillow_mode": "1",
+          "observed_size_hw": [
+            2160,
+            3840
+          ]
+        },
+        "source_paths": [
+          {
+            "left": "/mnt/why/spring_dataset/spring/train/0005/frame_left/frame_left_0025.png",
+            "right": "/mnt/why/spring_dataset/spring/train/0005/frame_right/frame_right_0025.png",
+            "gt_disparity_left": null,
+            "gt_disparity_right": null,
+            "temporal_previous_gt_disparity_left": null
+          },
+          {
+            "left": "/mnt/why/spring_dataset/spring/train/0005/frame_left/frame_left_0026.png",
+            "right": "/mnt/why/spring_dataset/spring/train/0005/frame_right/frame_right_0026.png",
+            "gt_disparity_left": null,
+            "gt_disparity_right": null,
+            "temporal_previous_gt_disparity_left": null
+          },
+          {
+            "left": "/mnt/why/spring_dataset/spring/train/0005/frame_left/frame_left_0027.png",
+            "right": "/mnt/why/spring_dataset/spring/train/0005/frame_right/frame_right_0027.png",
+            "gt_disparity_left": null,
+            "gt_disparity_right": null,
+            "temporal_previous_gt_disparity_left": null
+          },
+          {
+            "left": "/mnt/why/spring_dataset/spring/train/0005/frame_left/frame_left_0028.png",
+            "right": "/mnt/why/spring_dataset/spring/train/0005/frame_right/frame_right_0028.png",
+            "gt_disparity_left": null,
+            "gt_disparity_right": null,
+            "temporal_previous_gt_disparity_left": null
+          },
+          {
+            "left": "/mnt/why/spring_dataset/spring/train/0005/frame_left/frame_left_0029.png",
+            "right": "/mnt/why/spring_dataset/spring/train/0005/frame_right/frame_right_0029.png",
+            "gt_disparity_left": null,
+            "gt_disparity_right": null,
+            "temporal_previous_gt_disparity_left": null
+          },
+          {
+            "left": "/mnt/why/spring_dataset/spring/train/0005/frame_left/frame_left_0030.png",
+            "right": "/mnt/why/spring_dataset/spring/train/0005/frame_right/frame_right_0030.png",
+            "gt_disparity_left": null,
+            "gt_disparity_right": null,
+            "temporal_previous_gt_disparity_left": null
+          },
+          {
+            "left": "/mnt/why/spring_dataset/spring/train/0005/frame_left/frame_left_0031.png",
+            "right": "/mnt/why/spring_dataset/spring/train/0005/frame_right/frame_right_0031.png",
+            "gt_disparity_left": null,
+            "gt_disparity_right": null,
+            "temporal_previous_gt_disparity_left": "/mnt/why/spring_dataset/spring/train/0005/disp1_left/disp1_left_0031.dsp5"
+          },
+          {
+            "left": "/mnt/why/spring_dataset/spring/train/0005/frame_left/frame_left_0032.png",
+            "right": "/mnt/why/spring_dataset/spring/train/0005/frame_right/frame_right_0032.png",
+            "gt_disparity_left": "/mnt/why/spring_dataset/spring/train/0005/disp1_left/disp1_left_0032.dsp5",
+            "gt_disparity_right": "/mnt/why/spring_dataset/spring/train/0005/disp1_right/disp1_right_0032.dsp5",
+            "temporal_previous_gt_disparity_left": null
+          }
+        ]
+      }
+    },
+    "gt": 14.9765625,
+    "a5": 37.51909637451172,
+    "history": 117.54296112060547,
+    "v1": 114.25695037841797,
+    "v1_error": 99.28038787841797,
+    "v1_gate": 0.9589371085166931,
+    "learned_cues": [
+      0.58544921875,
+      0.59619140625,
+      0.5595703125,
+      0.68212890625,
+      0.640625,
+      0.6689453125,
+      0.703125,
+      0.69140625,
+      0.72119140625,
+      0.63525390625,
+      0.6630859375,
+      0.6298828125,
+      1.0,
+      1.0,
+      1.0,
+      1.0,
+      1.0,
+      1.0,
+      0.93896484375,
+      0.192138671875,
+      0.91357421875,
+      -0.336669921875,
+      1.0,
+      1.0
+    ],
+    "arms": {
+      "codd_component_capacity_control": {
+        "prediction": 108.62847137451172,
+        "error": 93.65190887451172,
+        "gate": 0.888602077960968,
+        "reset": 0.942656934261322,
+        "fusion": 0.942656934261322
+      },
+      "codd_component_codd": {
+        "prediction": 101.196533203125,
+        "error": 86.219970703125,
+        "gate": 0.7957305908203125,
+        "reset": 0.999962329864502,
+        "fusion": 0.7957605719566345
+      },
+      "codd_component_codd_regret": {
+        "prediction": 38.71806716918945,
+        "error": 23.741504669189453,
+        "gate": 0.0149826779961586,
+        "reset": 0.9999641180038452,
+        "fusion": 0.014983215369284153
+      },
+      "learned_codd_capacity_control": {
+        "prediction": 103.93994140625,
+        "error": 88.96337890625,
+        "gate": 0.8300129175186157,
+        "reset": 0.9110504388809204,
+        "fusion": 0.9110504388809204
+      },
+      "learned_codd_codd": {
+        "prediction": 63.67273712158203,
+        "error": 48.69617462158203,
+        "gate": 0.32682299613952637,
+        "reset": 0.9999616146087646,
+        "fusion": 0.3268355429172516
+      },
+      "learned_codd_codd_regret": {
+        "prediction": 37.52337646484375,
+        "error": 22.54681396484375,
+        "gate": 5.346439138520509e-05,
+        "reset": 0.9995630383491516,
+        "fusion": 5.348776176106185e-05
+      },
+      "learned_codd_margin01_codd": {
+        "prediction": 38.02584457397461,
+        "error": 23.04928207397461,
+        "gate": 0.006332440301775932,
+        "reset": 0.9999985694885254,
+        "fusion": 0.006332449149340391
+      },
+      "learned_codd_margin01_codd_regret": {
+        "prediction": 37.519203186035156,
+        "error": 22.542640686035156,
+        "gate": 1.3340443274501013e-06,
+        "reset": 0.9999991655349731,
+        "fusion": 1.3340454643184785e-06
+      }
+    }
+  },
+  {
+    "index": 29,
+    "x": 570,
+    "y": 20,
+    "identity": {
+      "sequence_id": "0005",
+      "frame_id": 37,
+      "dataset_index": 29,
+      "metadata": {
+        "manifest_path": "/mnt/why/VGGT-Depth/runs/spring_v3_1_seed42/manifests/validation.jsonl",
+        "dataset_index": 29,
+        "endpoint_manifest_index": 36,
+        "epoch": 0,
+        "seed": 10042,
+        "source_size_hw": [
+          1080,
+          1920
+        ],
+        "crop_xywh": [
+          576,
+          256,
+          768,
+          512
+        ],
+        "resize_size_hw": [
+          512,
+          768
+        ],
+        "resize_scale_xy": [
+          1.0,
+          1.0
+        ],
+        "resize_coordinate_convention": "align_corners_false_half_pixel",
+        "view_order": [
+          "left",
+          "right"
+        ],
+        "target_mode": "last",
+        "previous_disparity_gt_available": true,
+        "dynamic_mask_contract": {
+          "available": true,
+          "path": "/mnt/why/spring_dataset/spring/train/0005/maps/rigidmap_BW_left/rigidmap_BW_left_0037.png",
+          "source": "Spring/maps/rigidmap_BW_left",
+          "frame_binding": "endpoint_frame_id_backward_to_previous",
+          "semantic": "white_or_true_is_dynamic_and_excluded",
+          "expected_file_format": "single_channel_binary_png",
+          "expected_source_scale": "2x_width_and_2x_height_of_rgb",
+          "image_grid_reduction": "2x2_majority_true_when_at_least_2_of_4",
+          "post_reduction_transform": "shared_crop_then_nearest_exact_resize",
+          "observed_pillow_mode": "1",
+          "observed_size_hw": [
+            2160,
+            3840
+          ]
+        },
+        "source_paths": [
+          {
+            "left": "/mnt/why/spring_dataset/spring/train/0005/frame_left/frame_left_0030.png",
+            "right": "/mnt/why/spring_dataset/spring/train/0005/frame_right/frame_right_0030.png",
+            "gt_disparity_left": null,
+            "gt_disparity_right": null,
+            "temporal_previous_gt_disparity_left": null
+          },
+          {
+            "left": "/mnt/why/spring_dataset/spring/train/0005/frame_left/frame_left_0031.png",
+            "right": "/mnt/why/spring_dataset/spring/train/0005/frame_right/frame_right_0031.png",
+            "gt_disparity_left": null,
+            "gt_disparity_right": null,
+            "temporal_previous_gt_disparity_left": null
+          },
+          {
+            "left": "/mnt/why/spring_dataset/spring/train/0005/frame_left/frame_left_0032.png",
+            "right": "/mnt/why/spring_dataset/spring/train/0005/frame_right/frame_right_0032.png",
+            "gt_disparity_left": null,
+            "gt_disparity_right": null,
+            "temporal_previous_gt_disparity_left": null
+          },
+          {
+            "left": "/mnt/why/spring_dataset/spring/train/0005/frame_left/frame_left_0033.png",
+            "right": "/mnt/why/spring_dataset/spring/train/0005/frame_right/frame_right_0033.png",
+            "gt_disparity_left": null,
+            "gt_disparity_right": null,
+            "temporal_previous_gt_disparity_left": null
+          },
+          {
+            "left": "/mnt/why/spring_dataset/spring/train/0005/frame_left/frame_left_0034.png",
+            "right": "/mnt/why/spring_dataset/spring/train/0005/frame_right/frame_right_0034.png",
+            "gt_disparity_left": null,
+            "gt_disparity_right": null,
+            "temporal_previous_gt_disparity_left": null
+          },
+          {
+            "left": "/mnt/why/spring_dataset/spring/train/0005/frame_left/frame_left_0035.png",
+            "right": "/mnt/why/spring_dataset/spring/train/0005/frame_right/frame_right_0035.png",
+            "gt_disparity_left": null,
+            "gt_disparity_right": null,
+            "temporal_previous_gt_disparity_left": null
+          },
+          {
+            "left": "/mnt/why/spring_dataset/spring/train/0005/frame_left/frame_left_0036.png",
+            "right": "/mnt/why/spring_dataset/spring/train/0005/frame_right/frame_right_0036.png",
+            "gt_disparity_left": null,
+            "gt_disparity_right": null,
+            "temporal_previous_gt_disparity_left": "/mnt/why/spring_dataset/spring/train/0005/disp1_left/disp1_left_0036.dsp5"
+          },
+          {
+            "left": "/mnt/why/spring_dataset/spring/train/0005/frame_left/frame_left_0037.png",
+            "right": "/mnt/why/spring_dataset/spring/train/0005/frame_right/frame_right_0037.png",
+            "gt_disparity_left": "/mnt/why/spring_dataset/spring/train/0005/disp1_left/disp1_left_0037.dsp5",
+            "gt_disparity_right": "/mnt/why/spring_dataset/spring/train/0005/disp1_right/disp1_right_0037.dsp5",
+            "temporal_previous_gt_disparity_left": null
+          }
+        ]
+      }
+    },
+    "gt": 100.3125,
+    "a5": 35.26630401611328,
+    "history": 100.73529815673828,
+    "v1": 99.33975219726562,
+    "v1_error": 0.972747802734375,
+    "v1_gate": 0.9786838889122009,
+    "learned_cues": [
+      0.52490234375,
+      0.5341796875,
+      0.52001953125,
+      0.75439453125,
+      0.8671875,
+      0.78271484375,
+      0.734375,
+      0.73291015625,
+      0.7509765625,
+      0.5322265625,
+      0.35595703125,
+      0.5078125,
+      1.0,
+      1.0,
+      1.0,
+      1.0,
+      1.0,
+      1.0,
+      0.759765625,
+      0.09710693359375,
+      0.94873046875,
+      -0.073974609375,
+      1.0,
+      1.0
+    ],
+    "arms": {
+      "codd_component_capacity_control": {
+        "prediction": 95.05418395996094,
+        "error": 5.2583160400390625,
+        "gate": 0.9132242798805237,
+        "reset": 0.9556276798248291,
+        "fusion": 0.9556276798248291
+      },
+      "codd_component_codd": {
+        "prediction": 36.343971252441406,
+        "error": 63.968528747558594,
+        "gate": 0.01646072417497635,
+        "reset": 0.9632863998413086,
+        "fusion": 0.017088089138269424
+      },
+      "codd_component_codd_regret": {
+        "prediction": 35.266483306884766,
+        "error": 65.0460205078125,
+        "gate": 2.71867838819162e-06,
+        "reset": 0.9315651059150696,
+        "fusion": 2.9183986498537706e-06
+      },
+      "learned_codd_capacity_control": {
+        "prediction": 96.91497802734375,
+        "error": 3.39752197265625,
+        "gate": 0.941646933555603,
+        "reset": 0.970384955406189,
+        "fusion": 0.970384955406189
+      },
+      "learned_codd_codd": {
+        "prediction": 36.55267333984375,
+        "error": 63.75982666015625,
+        "gate": 0.01964850164949894,
+        "reset": 0.9994145631790161,
+        "fusion": 0.019660010933876038
+      },
+      "learned_codd_codd_regret": {
+        "prediction": 35.266319274902344,
+        "error": 65.04618072509766,
+        "gate": 2.248261949944208e-07,
+        "reset": 0.9947340488433838,
+        "fusion": 2.260163824985284e-07
+      },
+      "learned_codd_margin01_codd": {
+        "prediction": 35.53919219970703,
+        "error": 64.77330780029297,
+        "gate": 0.004168222192674875,
+        "reset": 0.999962329864502,
+        "fusion": 0.004168379120528698
+      },
+      "learned_codd_margin01_codd_regret": {
+        "prediction": 35.26630783081055,
+        "error": 65.04618835449219,
+        "gate": 5.689487636573176e-08,
+        "reset": 0.9996432065963745,
+        "fusion": 5.6915183677119785e-08
+      }
+    }
+  }
+]

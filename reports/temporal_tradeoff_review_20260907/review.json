@@ -1,0 +1,147 @@
+{
+  "status": "REVIEW_COMPLETE",
+  "new_training_performed": false,
+  "baseline_v1": {
+    "all_gt_penalized_epe_px": 0.33016213556377133,
+    "temporal_matched_penalized_delta_epe_px": 0.2582750298404227,
+    "good_current_damage_rate": 0.015482018153250244,
+    "large_degradation_5px_rate": 0.001183098433166143,
+    "fixed_opportunity_recovery_rate": 0.356738871865481
+  },
+  "original_results_sha256": "257cf69139012a63b9b94516cdc7f66485c364ec158efaeb7ccfaf5562a81a90",
+  "source_results": "reports/temporal_controlled_20260907/controlled_results.json",
+  "shortlist": {
+    "residual_matching_control": {
+      "qualification": "SHORTLIST_FOR_INTEGRATION",
+      "historical_five_way_status": "FAIL",
+      "checkpoint": "runs/metric_stereo_video/temporal_controlled_20260907/residual/residual_matching_control/final.pt",
+      "checkpoint_sha256_live_verified": "0f41e428401c62837439543e2830bf595caf8a86d6a201dacae12e857636cd7b",
+      "metrics": {
+        "all_gt_penalized_epe_px": 0.32980059856282845,
+        "temporal_matched_penalized_delta_epe_px": 0.2576233491474303,
+        "good_current_damage_rate": 0.017272207187012098,
+        "large_degradation_5px_rate": 0.0011961668074411374,
+        "fixed_opportunity_recovery_rate": 0.3801226588326204
+      },
+      "relative_change_percent": {
+        "all_gt_penalized_epe_px": -0.10950286601627557,
+        "temporal_matched_penalized_delta_epe_px": -0.2523204404990542,
+        "good_current_damage_rate": 11.56302115164507,
+        "large_degradation_5px_rate": 1.1045889258784358,
+        "fixed_opportunity_recovery_rate": 6.554874955134404
+      },
+      "rate_change_percentage_points": {
+        "good_current_damage_rate": 0.17901890337618537,
+        "large_degradation_5px_rate": 0.0013068374274994438,
+        "fixed_opportunity_recovery_rate": 2.338378696713944
+      },
+      "sequence_bootstrap": {
+        "all_gt_penalized_epe_px": {
+          "v1_minus_arm": 0.0003615370009429002,
+          "sequence_bootstrap_95pct": [
+            -0.0003104582842997171,
+            0.001022009320173853
+          ]
+        },
+        "temporal_matched_penalized_delta_epe_px": {
+          "v1_minus_arm": 0.0006516806929923931,
+          "sequence_bootstrap_95pct": [
+            -0.00048012032503950633,
+            0.001831651982077163
+          ]
+        },
+        "good_current_damage_rate": {
+          "v1_minus_arm": -0.001790189033761853,
+          "sequence_bootstrap_95pct": [
+            -0.004986752401537776,
+            -6.05479431074071e-05
+          ]
+        },
+        "large_degradation_5px_rate": {
+          "v1_minus_arm": -1.3068374274994509e-05,
+          "sequence_bootstrap_95pct": [
+            -3.830003576757774e-05,
+            2.35481534707287e-05
+          ]
+        },
+        "fixed_opportunity_recovery_rate": {
+          "v1_minus_arm": -0.023383786967139462,
+          "sequence_bootstrap_95pct": [
+            -0.04733038825971737,
+            0.004299569458453194
+          ]
+        }
+      }
+    },
+    "residual_ambiguity_control": {
+      "qualification": "SHORTLIST_FOR_INTEGRATION",
+      "historical_five_way_status": "FAIL",
+      "checkpoint": "runs/metric_stereo_video/temporal_controlled_20260907/residual/residual_ambiguity_control/final.pt",
+      "checkpoint_sha256_live_verified": "fd1082ed469f1c492aac1f4523fc6052980bedf6f4482a89d4d240cfe0ab7ca7",
+      "metrics": {
+        "all_gt_penalized_epe_px": 0.3303649108911365,
+        "temporal_matched_penalized_delta_epe_px": 0.2579809019262738,
+        "good_current_damage_rate": 0.018137554698161217,
+        "large_degradation_5px_rate": 0.00113815539338427,
+        "fixed_opportunity_recovery_rate": 0.3829491207191864
+      },
+      "relative_change_percent": {
+        "all_gt_penalized_epe_px": 0.061416893557142416,
+        "temporal_matched_penalized_delta_epe_px": -0.1138816688282418,
+        "good_current_damage_rate": 17.15239265724202,
+        "large_degradation_5px_rate": -3.7987574424892756,
+        "fixed_opportunity_recovery_rate": 7.347180506751383
+      },
+      "rate_change_percentage_points": {
+        "good_current_damage_rate": 0.26555365449109725,
+        "large_degradation_5px_rate": -0.004494303978187287,
+        "fixed_opportunity_recovery_rate": 2.6210248853705433
+      },
+      "sequence_bootstrap": {
+        "all_gt_penalized_epe_px": {
+          "v1_minus_arm": -0.00020277532736516707,
+          "sequence_bootstrap_95pct": [
+            -0.0005270546064473915,
+            7.115283294133811e-05
+          ]
+        },
+        "temporal_matched_penalized_delta_epe_px": {
+          "v1_minus_arm": 0.0002941279141488645,
+          "sequence_bootstrap_95pct": [
+            -0.0004050836885338907,
+            0.0010481668794090875
+          ]
+        },
+        "good_current_damage_rate": {
+          "v1_minus_arm": -0.002655536544910972,
+          "sequence_bootstrap_95pct": [
+            -0.005878699517973989,
+            -0.0007790662016095618
+          ]
+        },
+        "large_degradation_5px_rate": {
+          "v1_minus_arm": 4.4943039781872945e-05,
+          "sequence_bootstrap_95pct": [
+            1.3706029628973214e-05,
+            7.245810341778367e-05
+          ]
+        },
+        "fixed_opportunity_recovery_rate": {
+          "v1_minus_arm": -0.026210248853705424,
+          "sequence_bootstrap_95pct": [
+            -0.042640551494170065,
+            -0.01246218272822796
+          ]
+        }
+      }
+    }
+  },
+  "policy": "five metrics retained; component tradeoffs allowed; no automatic requirement to win all five; compensation requires budget-matched integrated training",
+  "live_A5_config_verification": {
+    "enable_vggt_dense_features": true,
+    "enable_vggt_geometry": true,
+    "enable_vggt_gauge": true,
+    "enable_temporal_memory": true
+  },
+  "claim_limit": "small temporal point gains, sequence-bootstrap intervals cross zero; not confirmed temporal improvements"
+}

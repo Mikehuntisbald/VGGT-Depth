@@ -1,0 +1,577 @@
+{
+  "original_base_commit": "2436e8a03c2063d49f658aa3e805c432a183fd92",
+  "source_run": "runs/metric_stereo_video/temporal_literature_20260907",
+  "scope": "Reports, metrics, per-sample evidence, training receipts and checks. Large JSON is losslessly gzipped. Markdown links are adapted; original report hashes are retained. Weights, caches, logs and duplicate source snapshots remain on the experiment host.",
+  "files": [
+    {
+      "source": "runs/metric_stereo_video/temporal_literature_20260907/PROTOCOL.md",
+      "source_sha256": "2dfc168a907072a0653ddb2566d8b95bd930ad628a586c523ba47a3d1df804ec",
+      "source_bytes": 10476,
+      "archive": "PROTOCOL.md",
+      "archive_sha256": "2dfc168a907072a0653ddb2566d8b95bd930ad628a586c523ba47a3d1df804ec",
+      "archive_bytes": 10476,
+      "encoding": "identity",
+      "markdown_links_adapted": true
+    },
+    {
+      "source": "runs/metric_stereo_video/temporal_literature_20260907/REPORT.md",
+      "source_sha256": "12f176730a9d712fb9855e162bfad7b492a529b02c1bca487deb6b3686494a73",
+      "source_bytes": 4319,
+      "archive": "REPORT.md",
+      "archive_sha256": "12f176730a9d712fb9855e162bfad7b492a529b02c1bca487deb6b3686494a73",
+      "archive_bytes": 4319,
+      "encoding": "identity",
+      "markdown_links_adapted": true
+    },
+    {
+      "source": "runs/metric_stereo_video/temporal_literature_20260907/REPORT_six_arms.md",
+      "source_sha256": "807d37590c0b2ec0af798bdf745ccd4f3c33a6dce00a2c4d633669961d6efb72",
+      "source_bytes": 2907,
+      "archive": "REPORT_six_arms.md",
+      "archive_sha256": "807d37590c0b2ec0af798bdf745ccd4f3c33a6dce00a2c4d633669961d6efb72",
+      "archive_bytes": 2907,
+      "encoding": "identity",
+      "markdown_links_adapted": true
+    },
+    {
+      "source": "runs/metric_stereo_video/temporal_literature_20260907/base_source_audit.json",
+      "source_sha256": "4f60c3167402398c506d2504c8095e23c736103bfacea0cbc9b602c9f02cd15b",
+      "source_bytes": 129,
+      "archive": "base_source_audit.json",
+      "archive_sha256": "4f60c3167402398c506d2504c8095e23c736103bfacea0cbc9b602c9f02cd15b",
+      "archive_bytes": 129,
+      "encoding": "identity",
+      "markdown_links_adapted": false
+    },
+    {
+      "source": "runs/metric_stereo_video/temporal_literature_20260907/cache_receipts/learned_lineage.json",
+      "source_sha256": "d14fbd846af4a5022ea6b15b62e7a4412a19698e080309ede6e60084be91e30b",
+      "source_bytes": 746,
+      "archive": "cache_receipts/learned_lineage.json",
+      "archive_sha256": "d14fbd846af4a5022ea6b15b62e7a4412a19698e080309ede6e60084be91e30b",
+      "archive_bytes": 746,
+      "encoding": "identity",
+      "markdown_links_adapted": false
+    },
+    {
+      "source": "runs/metric_stereo_video/temporal_literature_20260907/cache_receipts/train_complete.json",
+      "source_sha256": "4127dd30a93d7eb36fc3c8676c3c39ca52db3ea17c97b6e040b2641460277ab9",
+      "source_bytes": 100,
+      "archive": "cache_receipts/train_complete.json",
+      "archive_sha256": "4127dd30a93d7eb36fc3c8676c3c39ca52db3ea17c97b6e040b2641460277ab9",
+      "archive_bytes": 100,
+      "encoding": "identity",
+      "markdown_links_adapted": false
+    },
+    {
+      "source": "runs/metric_stereo_video/temporal_literature_20260907/cache_receipts/train_plan.json",
+      "source_sha256": "8307d66c6a1e11552204960a950324324c105f39cac7c88e186dcccae780eb67",
+      "source_bytes": 11240,
+      "archive": "cache_receipts/train_plan.json",
+      "archive_sha256": "8307d66c6a1e11552204960a950324324c105f39cac7c88e186dcccae780eb67",
+      "archive_bytes": 11240,
+      "encoding": "identity",
+      "markdown_links_adapted": false
+    },
+    {
+      "source": "runs/metric_stereo_video/temporal_literature_20260907/cache_receipts/v1_lineage.json",
+      "source_sha256": "4996254fdad60123c6b704dc9a856169d04ec37e0167e57214ebc14549c1d76a",
+      "source_bytes": 1053,
+      "archive": "cache_receipts/v1_lineage.json",
+      "archive_sha256": "4996254fdad60123c6b704dc9a856169d04ec37e0167e57214ebc14549c1d76a",
+      "archive_bytes": 1053,
+      "encoding": "identity",
+      "markdown_links_adapted": false
+    },
+    {
+      "source": "runs/metric_stereo_video/temporal_literature_20260907/cache_receipts/validation_complete.json",
+      "source_sha256": "918fed06071973f305d2f066bae92bd86d0380ff4750121231e847d2c7716bac",
+      "source_bytes": 98,
+      "archive": "cache_receipts/validation_complete.json",
+      "archive_sha256": "918fed06071973f305d2f066bae92bd86d0380ff4750121231e847d2c7716bac",
+      "archive_bytes": 98,
+      "encoding": "identity",
+      "markdown_links_adapted": false
+    },
+    {
+      "source": "runs/metric_stereo_video/temporal_literature_20260907/cache_receipts/validation_plan.json",
+      "source_sha256": "45488ee780bb0a45e1f63e1dc930f953e0fabbd30d6128816866dd906767d713",
+      "source_bytes": 11927,
+      "archive": "cache_receipts/validation_plan.json",
+      "archive_sha256": "45488ee780bb0a45e1f63e1dc930f953e0fabbd30d6128816866dd906767d713",
+      "archive_bytes": 11927,
+      "encoding": "identity",
+      "markdown_links_adapted": false
+    },
+    {
+      "source": "runs/metric_stereo_video/temporal_literature_20260907/evaluation_learned/metrics.csv",
+      "source_sha256": "04450fc948a2f6a6d68d6f61101da63541611d488c8f7053eb096ccf261787ae",
+      "source_bytes": 6930,
+      "archive": "evaluation_learned/metrics.csv",
+      "archive_sha256": "04450fc948a2f6a6d68d6f61101da63541611d488c8f7053eb096ccf261787ae",
+      "archive_bytes": 6930,
+      "encoding": "identity",
+      "markdown_links_adapted": false
+    },
+    {
+      "source": "runs/metric_stereo_video/temporal_literature_20260907/evaluation_learned/metrics.json",
+      "source_sha256": "e71747f0451ad08d7b93c8839bd7414411fe10aab667adda7790e64b4c4361a8",
+      "source_bytes": 18687488,
+      "archive": "evaluation_learned/metrics.json.gz",
+      "archive_sha256": "17645d9c62c9612c1cc54eea18d3c0d4974551ecf896e3cde362ffa79d304738",
+      "archive_bytes": 302531,
+      "encoding": "gzip",
+      "markdown_links_adapted": false
+    },
+    {
+      "source": "runs/metric_stereo_video/temporal_literature_20260907/evaluation_learned/per_sample.json",
+      "source_sha256": "14f96956f24fd229d5eae6c3558247cf370932fde0b550a859c298ec43e0f31b",
+      "source_bytes": 4326572,
+      "archive": "evaluation_learned/per_sample.json.gz",
+      "archive_sha256": "0c1ef8ac0c6d1958daf068ed0df8a4cfe8161b708d359095046df166f7b10233",
+      "archive_bytes": 408516,
+      "encoding": "gzip",
+      "markdown_links_adapted": false
+    },
+    {
+      "source": "runs/metric_stereo_video/temporal_literature_20260907/evaluation_metric_aligned/metrics.csv",
+      "source_sha256": "81c74a915ffc779d95e1e7853942652b74ac5ea71a6c300b791a4112c49d37db",
+      "source_bytes": 9265,
+      "archive": "evaluation_metric_aligned/metrics.csv",
+      "archive_sha256": "81c74a915ffc779d95e1e7853942652b74ac5ea71a6c300b791a4112c49d37db",
+      "archive_bytes": 9265,
+      "encoding": "identity",
+      "markdown_links_adapted": false
+    },
+    {
+      "source": "runs/metric_stereo_video/temporal_literature_20260907/evaluation_metric_aligned/metrics.json",
+      "source_sha256": "e1b4b43d0053388997ad80d45d7db1b679cad92bd4f46dd135381c4def2491b8",
+      "source_bytes": 24918945,
+      "archive": "evaluation_metric_aligned/metrics.json.gz",
+      "archive_sha256": "d4037da7ccd396dcff0f6546eb2755e5f7d5baa80471a6afd58f35feccfce52a",
+      "archive_bytes": 401982,
+      "encoding": "gzip",
+      "markdown_links_adapted": false
+    },
+    {
+      "source": "runs/metric_stereo_video/temporal_literature_20260907/evaluation_metric_aligned/per_sample.json",
+      "source_sha256": "9cb56927ebd6cdd532ddd0a61e59ee090bdfb0885606dc2f7bae633b6f982460",
+      "source_bytes": 5520089,
+      "archive": "evaluation_metric_aligned/per_sample.json.gz",
+      "archive_sha256": "750129a968ee409ddd726224d2e538275475a5a7e6048349a472feced640edba",
+      "archive_bytes": 506474,
+      "encoding": "gzip",
+      "markdown_links_adapted": false
+    },
+    {
+      "source": "runs/metric_stereo_video/temporal_literature_20260907/evaluation_supervision/metrics.csv",
+      "source_sha256": "93e58078d62df8078abf7c5b040e3f3a736c40804a16b3c83e9fe2d208a1a013",
+      "source_bytes": 6938,
+      "archive": "evaluation_supervision/metrics.csv",
+      "archive_sha256": "93e58078d62df8078abf7c5b040e3f3a736c40804a16b3c83e9fe2d208a1a013",
+      "archive_bytes": 6938,
+      "encoding": "identity",
+      "markdown_links_adapted": false
+    },
+    {
+      "source": "runs/metric_stereo_video/temporal_literature_20260907/evaluation_supervision/metrics.json",
+      "source_sha256": "457e71f78d7dc4e8ee14a4327501a4ce4753ab132ea1b911bd8884779dbe6941",
+      "source_bytes": 18687344,
+      "archive": "evaluation_supervision/metrics.json.gz",
+      "archive_sha256": "a455b380c5f714dc3e002871f62d355f6283a2990c7759a99bbd812c79465e5b",
+      "archive_bytes": 302315,
+      "encoding": "gzip",
+      "markdown_links_adapted": false
+    },
+    {
+      "source": "runs/metric_stereo_video/temporal_literature_20260907/evaluation_supervision/per_sample.json",
+      "source_sha256": "6fe64212e5165555a49dbf96f1348133fc823ec0dc1f36d4889afc635d9e1390",
+      "source_bytes": 4396467,
+      "archive": "evaluation_supervision/per_sample.json.gz",
+      "archive_sha256": "bcae29d2fa1882c179cc63cdf337e762f73d2395478f30803b7f7cded3a5ba76",
+      "archive_bytes": 407883,
+      "encoding": "gzip",
+      "markdown_links_adapted": false
+    },
+    {
+      "source": "runs/metric_stereo_video/temporal_literature_20260907/extended_results.json",
+      "source_sha256": "16f254fde17819731e3c51b6cf37eca374e4996b8a404d77401321b6cabc0410",
+      "source_bytes": 54603,
+      "archive": "extended_results.json",
+      "archive_sha256": "16f254fde17819731e3c51b6cf37eca374e4996b8a404d77401321b6cabc0410",
+      "archive_bytes": 54603,
+      "encoding": "identity",
+      "markdown_links_adapted": false
+    },
+    {
+      "source": "runs/metric_stereo_video/temporal_literature_20260907/failure_cases/fixed_case_000002.png",
+      "source_sha256": "f2d3efe4130bb95aae0a182dd619db2a9137c018191bdd52fc5855be1e3d4b4d",
+      "source_bytes": 509975,
+      "archive": "failure_cases/fixed_case_000002.png",
+      "archive_sha256": "f2d3efe4130bb95aae0a182dd619db2a9137c018191bdd52fc5855be1e3d4b4d",
+      "archive_bytes": 509975,
+      "encoding": "identity",
+      "markdown_links_adapted": false
+    },
+    {
+      "source": "runs/metric_stereo_video/temporal_literature_20260907/failure_cases/fixed_case_000024.png",
+      "source_sha256": "7d3cd5246fdd9fa213886c721f6ce376e71937b87d39086273c2b4f50b7506d7",
+      "source_bytes": 518827,
+      "archive": "failure_cases/fixed_case_000024.png",
+      "archive_sha256": "7d3cd5246fdd9fa213886c721f6ce376e71937b87d39086273c2b4f50b7506d7",
+      "archive_bytes": 518827,
+      "encoding": "identity",
+      "markdown_links_adapted": false
+    },
+    {
+      "source": "runs/metric_stereo_video/temporal_literature_20260907/fixed_failure_points.json",
+      "source_sha256": "34c855ce5590cce07ec3d270afe686c2e96682dd375fda255b27e25dea7a238a",
+      "source_bytes": 21923,
+      "archive": "fixed_failure_points.json",
+      "archive_sha256": "34c855ce5590cce07ec3d270afe686c2e96682dd375fda255b27e25dea7a238a",
+      "archive_bytes": 21923,
+      "encoding": "identity",
+      "markdown_links_adapted": false
+    },
+    {
+      "source": "runs/metric_stereo_video/temporal_literature_20260907/learned/learned_codd_capacity_control/receipt.json",
+      "source_sha256": "791e7ab9056d9c5445c799a52c5f57dd0488e21f23eeea875f5494fc82b868f0",
+      "source_bytes": 5433020,
+      "archive": "learned/learned_codd_capacity_control/receipt.json.gz",
+      "archive_sha256": "3e108f03441d765829ef7f6ad89f33243975afef9b9314f0ea2ac8f34f1ea30b",
+      "archive_bytes": 95305,
+      "encoding": "gzip",
+      "markdown_links_adapted": false
+    },
+    {
+      "source": "runs/metric_stereo_video/temporal_literature_20260907/learned/learned_codd_capacity_control/summary.json",
+      "source_sha256": "704b1d6bf7c0b19bcb46dc396327fe6bbc5b36ba2aa91d629b918c57a06526b7",
+      "source_bytes": 1041,
+      "archive": "learned/learned_codd_capacity_control/summary.json",
+      "archive_sha256": "704b1d6bf7c0b19bcb46dc396327fe6bbc5b36ba2aa91d629b918c57a06526b7",
+      "archive_bytes": 1041,
+      "encoding": "identity",
+      "markdown_links_adapted": false
+    },
+    {
+      "source": "runs/metric_stereo_video/temporal_literature_20260907/learned/learned_codd_codd/receipt.json",
+      "source_sha256": "38f87eda13fb91d0749760e9cf26cacb8355f6329d26c12bb579c977f78adaf5",
+      "source_bytes": 5432996,
+      "archive": "learned/learned_codd_codd/receipt.json.gz",
+      "archive_sha256": "c2668a367e5fb660438a8457291315816b44418779dcd07f573d10a87f8ffd3b",
+      "archive_bytes": 95290,
+      "encoding": "gzip",
+      "markdown_links_adapted": false
+    },
+    {
+      "source": "runs/metric_stereo_video/temporal_literature_20260907/learned/learned_codd_codd/summary.json",
+      "source_sha256": "a46b96df6770440783e2b18c77c98d425fee89e8d0c4b428e7dc885732f104ea",
+      "source_bytes": 1028,
+      "archive": "learned/learned_codd_codd/summary.json",
+      "archive_sha256": "a46b96df6770440783e2b18c77c98d425fee89e8d0c4b428e7dc885732f104ea",
+      "archive_bytes": 1028,
+      "encoding": "identity",
+      "markdown_links_adapted": false
+    },
+    {
+      "source": "runs/metric_stereo_video/temporal_literature_20260907/learned/learned_codd_codd_regret/receipt.json",
+      "source_sha256": "4be9684b9b91afcc81faeba2537ea2e3fb3b5288f6554e8894538f4104de9fca",
+      "source_bytes": 5433010,
+      "archive": "learned/learned_codd_codd_regret/receipt.json.gz",
+      "archive_sha256": "4a9f8f371fd5867e6c66c7c7bb2cb2a982198afa168b084277c7a3bc614c43e4",
+      "archive_bytes": 95299,
+      "encoding": "gzip",
+      "markdown_links_adapted": false
+    },
+    {
+      "source": "runs/metric_stereo_video/temporal_literature_20260907/learned/learned_codd_codd_regret/summary.json",
+      "source_sha256": "3b698f740dfbcd121c743a767d09c622e68096e871b4ef2ea5a4d3048c5b85c1",
+      "source_bytes": 1035,
+      "archive": "learned/learned_codd_codd_regret/summary.json",
+      "archive_sha256": "3b698f740dfbcd121c743a767d09c622e68096e871b4ef2ea5a4d3048c5b85c1",
+      "archive_bytes": 1035,
+      "encoding": "identity",
+      "markdown_links_adapted": false
+    },
+    {
+      "source": "runs/metric_stereo_video/temporal_literature_20260907/learned/selection.json",
+      "source_sha256": "dfd0f3830251d6d9591a3ab8f1fe016b394b5b86852d32c841aa41097f958617",
+      "source_bytes": 3740,
+      "archive": "learned/selection.json",
+      "archive_sha256": "dfd0f3830251d6d9591a3ab8f1fe016b394b5b86852d32c841aa41097f958617",
+      "archive_bytes": 3740,
+      "encoding": "identity",
+      "markdown_links_adapted": false
+    },
+    {
+      "source": "runs/metric_stereo_video/temporal_literature_20260907/learned_source/temporal_repair_literature_protocol.md",
+      "source_sha256": "437dd38bd0899e263bed348c7024ccde940851231d6ec494700bcc36802acab2",
+      "source_bytes": 9434,
+      "archive": "learned_source/temporal_repair_literature_protocol.md",
+      "archive_sha256": "437dd38bd0899e263bed348c7024ccde940851231d6ec494700bcc36802acab2",
+      "archive_bytes": 9434,
+      "encoding": "identity",
+      "markdown_links_adapted": true
+    },
+    {
+      "source": "runs/metric_stereo_video/temporal_literature_20260907/margin_source/temporal_repair_literature_protocol.md",
+      "source_sha256": "2dfc168a907072a0653ddb2566d8b95bd930ad628a586c523ba47a3d1df804ec",
+      "source_bytes": 10476,
+      "archive": "margin_source/temporal_repair_literature_protocol.md",
+      "archive_sha256": "2dfc168a907072a0653ddb2566d8b95bd930ad628a586c523ba47a3d1df804ec",
+      "archive_bytes": 10476,
+      "encoding": "identity",
+      "markdown_links_adapted": true
+    },
+    {
+      "source": "runs/metric_stereo_video/temporal_literature_20260907/metric_aligned/learned_codd_margin01_codd/receipt.json",
+      "source_sha256": "2227f0878b41305d748c5fa516a86d1a5b534554b50854e2593707d3273fa4e5",
+      "source_bytes": 5433152,
+      "archive": "metric_aligned/learned_codd_margin01_codd/receipt.json.gz",
+      "archive_sha256": "b971fae1d8dd6c1edf53c7704e5829b70acb1e418e5f92a4cd3077ab2816f06e",
+      "archive_bytes": 95386,
+      "encoding": "gzip",
+      "markdown_links_adapted": false
+    },
+    {
+      "source": "runs/metric_stereo_video/temporal_literature_20260907/metric_aligned/learned_codd_margin01_codd/summary.json",
+      "source_sha256": "c659282cae9bc1d500a788867bc7da3f1741a4100f0de1637f6a4981e1be54d7",
+      "source_bytes": 1037,
+      "archive": "metric_aligned/learned_codd_margin01_codd/summary.json",
+      "archive_sha256": "c659282cae9bc1d500a788867bc7da3f1741a4100f0de1637f6a4981e1be54d7",
+      "archive_bytes": 1037,
+      "encoding": "identity",
+      "markdown_links_adapted": false
+    },
+    {
+      "source": "runs/metric_stereo_video/temporal_literature_20260907/metric_aligned/learned_codd_margin01_codd_regret/receipt.json",
+      "source_sha256": "95d039152178841b5f55ec39f4a15a4bd5ef2339ebef3de2fdaeab64a4afa4fb",
+      "source_bytes": 5433166,
+      "archive": "metric_aligned/learned_codd_margin01_codd_regret/receipt.json.gz",
+      "archive_sha256": "15026c2d0a65a0c9582f59b4c41a558c26b9c55feeddb59bce67eb65634526a1",
+      "archive_bytes": 95394,
+      "encoding": "gzip",
+      "markdown_links_adapted": false
+    },
+    {
+      "source": "runs/metric_stereo_video/temporal_literature_20260907/metric_aligned/learned_codd_margin01_codd_regret/summary.json",
+      "source_sha256": "f941855bc670eda8cb9bbc62bdf1685662bf608df0347340568e6fa4855a2848",
+      "source_bytes": 1047,
+      "archive": "metric_aligned/learned_codd_margin01_codd_regret/summary.json",
+      "archive_sha256": "f941855bc670eda8cb9bbc62bdf1685662bf608df0347340568e6fa4855a2848",
+      "archive_bytes": 1047,
+      "encoding": "identity",
+      "markdown_links_adapted": false
+    },
+    {
+      "source": "runs/metric_stereo_video/temporal_literature_20260907/metric_aligned/selection.json",
+      "source_sha256": "bd6a1c1003cc52b35b58f05b15ee31504f7e9896c9b631c677944ac77b8c58ce",
+      "source_bytes": 2591,
+      "archive": "metric_aligned/selection.json",
+      "archive_sha256": "bd6a1c1003cc52b35b58f05b15ee31504f7e9896c9b631c677944ac77b8c58ce",
+      "archive_bytes": 2591,
+      "encoding": "identity",
+      "markdown_links_adapted": false
+    },
+    {
+      "source": "runs/metric_stereo_video/temporal_literature_20260907/opportunity_margin_breakdown.json",
+      "source_sha256": "3b9882ebef24ff6b2a2bbe40c88a9dd91bfe434dfa6314f9ac8a802402901aa5",
+      "source_bytes": 2420,
+      "archive": "opportunity_margin_breakdown.json",
+      "archive_sha256": "3b9882ebef24ff6b2a2bbe40c88a9dd91bfe434dfa6314f9ac8a802402901aa5",
+      "archive_bytes": 2420,
+      "encoding": "identity",
+      "markdown_links_adapted": false
+    },
+    {
+      "source": "runs/metric_stereo_video/temporal_literature_20260907/raw_inference/receipt.json",
+      "source_sha256": "ecf9d4e5a99abece83644b7a8b1607c045fb7fc6b834f3f760cad36059ecda5d",
+      "source_bytes": 340,
+      "archive": "raw_inference/receipt.json",
+      "archive_sha256": "ecf9d4e5a99abece83644b7a8b1607c045fb7fc6b834f3f760cad36059ecda5d",
+      "archive_bytes": 340,
+      "encoding": "identity",
+      "markdown_links_adapted": false
+    },
+    {
+      "source": "runs/metric_stereo_video/temporal_literature_20260907/raw_inference_parity.json",
+      "source_sha256": "5434ae1d485fe2e1ea4cc0db36b49dcf428637276e6826e29187b228fd9f8456",
+      "source_bytes": 1518,
+      "archive": "raw_inference_parity.json",
+      "archive_sha256": "5434ae1d485fe2e1ea4cc0db36b49dcf428637276e6826e29187b228fd9f8456",
+      "archive_bytes": 1518,
+      "encoding": "identity",
+      "markdown_links_adapted": false
+    },
+    {
+      "source": "runs/metric_stereo_video/temporal_literature_20260907/results.json",
+      "source_sha256": "fadbd3c1dbd1fc50c77e798d175466cbfb55530b9f0ca7379a8d27530034ecb6",
+      "source_bytes": 41142,
+      "archive": "results.json",
+      "archive_sha256": "fadbd3c1dbd1fc50c77e798d175466cbfb55530b9f0ca7379a8d27530034ecb6",
+      "archive_bytes": 41142,
+      "encoding": "identity",
+      "markdown_links_adapted": false
+    },
+    {
+      "source": "runs/metric_stereo_video/temporal_literature_20260907/run_summary.json",
+      "source_sha256": "6fe6e466929b3bf669af537faf010f36930288db7462109188f282ed437b2b84",
+      "source_bytes": 2903,
+      "archive": "run_summary.json",
+      "archive_sha256": "6fe6e466929b3bf669af537faf010f36930288db7462109188f282ed437b2b84",
+      "archive_bytes": 2903,
+      "encoding": "identity",
+      "markdown_links_adapted": false
+    },
+    {
+      "source": "runs/metric_stereo_video/temporal_literature_20260907/run_summary_six_arms.json",
+      "source_sha256": "b7e27e18299dc0aa4888057f329d3a7298fd7ff45b5a49599ed540a06f5f6a66",
+      "source_bytes": 2614,
+      "archive": "run_summary_six_arms.json",
+      "archive_sha256": "b7e27e18299dc0aa4888057f329d3a7298fd7ff45b5a49599ed540a06f5f6a66",
+      "archive_bytes": 2614,
+      "encoding": "identity",
+      "markdown_links_adapted": false
+    },
+    {
+      "source": "runs/metric_stereo_video/temporal_literature_20260907/runtime_sources_sha256.json",
+      "source_sha256": "85b9687efb0881794055e9f7106fafdfe4199ef990cf7ca0eba439a75f72944d",
+      "source_bytes": 1248,
+      "archive": "runtime_sources_sha256.json",
+      "archive_sha256": "85b9687efb0881794055e9f7106fafdfe4199ef990cf7ca0eba439a75f72944d",
+      "archive_bytes": 1248,
+      "encoding": "identity",
+      "markdown_links_adapted": false
+    },
+    {
+      "source": "runs/metric_stereo_video/temporal_literature_20260907/supervision/codd_component_capacity_control/receipt.json",
+      "source_sha256": "8597fc84b299e982524f921b7c3fca0b80f1e92d96836fc59c51b0c1031c3920",
+      "source_bytes": 5432920,
+      "archive": "supervision/codd_component_capacity_control/receipt.json.gz",
+      "archive_sha256": "46c2e60672407a940596a53a603f7b76513b2fdb9f5dd8d081ec46d8998261d4",
+      "archive_bytes": 95234,
+      "encoding": "gzip",
+      "markdown_links_adapted": false
+    },
+    {
+      "source": "runs/metric_stereo_video/temporal_literature_20260907/supervision/codd_component_capacity_control/summary.json",
+      "source_sha256": "ca7db5a879eb03ae8d2d3949f72dbc59d705e859ac220654adc0cea24c95ff36",
+      "source_bytes": 1040,
+      "archive": "supervision/codd_component_capacity_control/summary.json",
+      "archive_sha256": "ca7db5a879eb03ae8d2d3949f72dbc59d705e859ac220654adc0cea24c95ff36",
+      "archive_bytes": 1040,
+      "encoding": "identity",
+      "markdown_links_adapted": false
+    },
+    {
+      "source": "runs/metric_stereo_video/temporal_literature_20260907/supervision/codd_component_codd/receipt.json",
+      "source_sha256": "6ccfeb1a3c89d9f0734d9bd758f7e937dd49b2002307066640e6853f61b02e13",
+      "source_bytes": 5432896,
+      "archive": "supervision/codd_component_codd/receipt.json.gz",
+      "archive_sha256": "df2950cce36fc98fa62461738f09204e988a107145fdf3b4650e923ac1730ef9",
+      "archive_bytes": 95221,
+      "encoding": "gzip",
+      "markdown_links_adapted": false
+    },
+    {
+      "source": "runs/metric_stereo_video/temporal_literature_20260907/supervision/codd_component_codd/summary.json",
+      "source_sha256": "ea7dc8af6a546098b724727fc4ae64dbf6fae96165db78beb9d1bbd62f634797",
+      "source_bytes": 1030,
+      "archive": "supervision/codd_component_codd/summary.json",
+      "archive_sha256": "ea7dc8af6a546098b724727fc4ae64dbf6fae96165db78beb9d1bbd62f634797",
+      "archive_bytes": 1030,
+      "encoding": "identity",
+      "markdown_links_adapted": false
+    },
+    {
+      "source": "runs/metric_stereo_video/temporal_literature_20260907/supervision/codd_component_codd_regret/receipt.json",
+      "source_sha256": "3e1ea703311bdaf0b45b97eb82d6d784108b8c12aa8e94512d2b244f2c6c673c",
+      "source_bytes": 5432910,
+      "archive": "supervision/codd_component_codd_regret/receipt.json.gz",
+      "archive_sha256": "1c48188bdf71ad7dcb93521b31e280ef62294124e152348abe5870722bb1b486",
+      "archive_bytes": 95229,
+      "encoding": "gzip",
+      "markdown_links_adapted": false
+    },
+    {
+      "source": "runs/metric_stereo_video/temporal_literature_20260907/supervision/codd_component_codd_regret/summary.json",
+      "source_sha256": "6b6a535ab0a3b32649462ba4ebdfd967341b2d28f4c7f0d156107013cf33d9e9",
+      "source_bytes": 1036,
+      "archive": "supervision/codd_component_codd_regret/summary.json",
+      "archive_sha256": "6b6a535ab0a3b32649462ba4ebdfd967341b2d28f4c7f0d156107013cf33d9e9",
+      "archive_bytes": 1036,
+      "encoding": "identity",
+      "markdown_links_adapted": false
+    },
+    {
+      "source": "runs/metric_stereo_video/temporal_literature_20260907/supervision/selection.json",
+      "source_sha256": "9c8b69b07d1142db9ba48bf4d96ec2ca19203ec1dda6a9c97e7a403f26acc9e3",
+      "source_bytes": 3745,
+      "archive": "supervision/selection.json",
+      "archive_sha256": "9c8b69b07d1142db9ba48bf4d96ec2ca19203ec1dda6a9c97e7a403f26acc9e3",
+      "archive_bytes": 3745,
+      "encoding": "identity",
+      "markdown_links_adapted": false
+    },
+    {
+      "source": "runs/metric_stereo_video/temporal_literature_20260907/verified_runtime_sources_sha256.json",
+      "source_sha256": "b0cc507d66092b19e757994b290c8117cb48e68273a8816897f5790ca3443011",
+      "source_bytes": 1134,
+      "archive": "verified_runtime_sources_sha256.json",
+      "archive_sha256": "b0cc507d66092b19e757994b290c8117cb48e68273a8816897f5790ca3443011",
+      "archive_bytes": 1134,
+      "encoding": "identity",
+      "markdown_links_adapted": false
+    }
+  ],
+  "checkpoints": [
+    {
+      "path": "runs/metric_stereo_video/temporal_literature_20260907/learned/learned_codd_capacity_control/final.pt",
+      "sha256": "98d1aa62189a709b1940d8f1e6364db1eb071185f8cb2a9918c8daa1d1fb0c42",
+      "bytes": 4040833,
+      "included_in_git": false
+    },
+    {
+      "path": "runs/metric_stereo_video/temporal_literature_20260907/learned/learned_codd_codd/final.pt",
+      "sha256": "3e2e2aecb84e4b3e3142962667e32698df76735cb8d66b9e24177861447350b8",
+      "bytes": 4040769,
+      "included_in_git": false
+    },
+    {
+      "path": "runs/metric_stereo_video/temporal_literature_20260907/learned/learned_codd_codd_regret/final.pt",
+      "sha256": "93d241a93b80e27f6d2c058c1ee2cd1fc4d06801c7a48779d9a4c84ca5b16126",
+      "bytes": 4040833,
+      "included_in_git": false
+    },
+    {
+      "path": "runs/metric_stereo_video/temporal_literature_20260907/metric_aligned/learned_codd_margin01_codd/final.pt",
+      "sha256": "c649a3cedb30d820087276f61a0a3eeab93d1662155de48376d1d06ef3f20f49",
+      "bytes": 4040961,
+      "included_in_git": false
+    },
+    {
+      "path": "runs/metric_stereo_video/temporal_literature_20260907/metric_aligned/learned_codd_margin01_codd_regret/final.pt",
+      "sha256": "2b849d8a69c0809324729d7f046703258d7ab60e242194c8a0ac3231e9c6bed8",
+      "bytes": 4040961,
+      "included_in_git": false
+    },
+    {
+      "path": "runs/metric_stereo_video/temporal_literature_20260907/supervision/codd_component_capacity_control/final.pt",
+      "sha256": "f2a11c4c0480f6dab2e6747a3bcfbc8c0491a46b8152149e8eb837739c49aba3",
+      "bytes": 4022273,
+      "included_in_git": false
+    },
+    {
+      "path": "runs/metric_stereo_video/temporal_literature_20260907/supervision/codd_component_codd/final.pt",
+      "sha256": "7057349faf7291ae80eddfd1165c825c698f6581e1df355d9f7136ec05f44eca",
+      "bytes": 4022273,
+      "included_in_git": false
+    },
+    {
+      "path": "runs/metric_stereo_video/temporal_literature_20260907/supervision/codd_component_codd_regret/final.pt",
+      "sha256": "3e1db904ec819685c0ae894744c6279ae275c7d82042b723c3d1e154dbf189b5",
+      "bytes": 4022273,
+      "included_in_git": false
+    }
+  ]
+}

@@ -1,0 +1,20 @@
+{
+  "schema": 1,
+  "v1_cache_lineage_sha256": "4996254fdad60123c6b704dc9a856169d04ec37e0167e57214ebc14549c1d76a",
+  "base_checkpoint_manifest_sha256": "c01c57b387362ee2eabed75679f9be54ff798cda4216d967590d18a529981e88",
+  "feature_functions_sha256": "626f47d3640321e0cd8c23eb729941ce76be29d86723faf8368a21d0ca1141ab",
+  "script_sha256": "dbcc11b68d40744db1f382b9b8fcd37236d52385c719e1c23debf813a8eaaa7e",
+  "max_batches": null,
+  "feature_scale_hr": 8,
+  "local_offsets_feature_pixels": [
+    -1,
+    0,
+    1
+  ],
+  "channels": 24,
+  "features": "actual A5 FFS matching pyramid 0, normalized cosine/L1 and distinct-peak ambiguity",
+  "gt_used_as_input": false,
+  "preserve_v1_training_samples": true,
+  "torch": "2.8.0+cu128",
+  "cuda": "12.8"
+}

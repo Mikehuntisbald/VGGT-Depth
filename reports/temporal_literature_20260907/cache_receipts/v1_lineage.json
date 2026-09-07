@@ -1,0 +1,18 @@
+{
+  "schema": 1,
+  "base_checkpoint": "/mnt/why/VGGT-Depth/runs/metric_stereo_video/formal_a5_seed42/checkpoints/step_0006000",
+  "checkpoint_manifest_sha256": "c01c57b387362ee2eabed75679f9be54ff798cda4216d967590d18a529981e88",
+  "config_sha256": "b52e3a10c5386f4245582892f713f0816225db35a919d6fcd00fe6e5a6eac3c0",
+  "manifests": {
+    "train_manifest": "17b84701b778665c0ddc42a456d1b5784cf4063d9b13153a267f01d041546165",
+    "validation_manifest": "454eca02b469803e5fc306cd9e2e6d764b141802b9f8601ace01587ea29b1704"
+  },
+  "features_source_sha256": "cf75afdc5edb8460a8a0bf55ecd56099c5aebe9d4bf0bdc38d948f2e9e465951",
+  "cache_source_sha256": "db0b3742b48fa9be14743e6950a924591de9a579d64715796cab765d9759d54a",
+  "train_limit": 1152,
+  "validation_limit": 0,
+  "precision": "A5 BF16; feature storage FP16; disparity and GT FP32",
+  "causality": "current prefix t; independent history prefix t-1; previous repair uses prefix t-2",
+  "training_pixel_sampling": "4096 uniform + 4096 disagreement pixels per selected training frame",
+  "base_frozen": true
+}

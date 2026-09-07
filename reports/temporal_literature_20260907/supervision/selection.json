@@ -1,0 +1,109 @@
+{
+  "status": "COMPLETE",
+  "selected_arm": "codd_component_capacity_control",
+  "selected_profile": "control",
+  "development_feasible": false,
+  "selection_uses_validation": false,
+  "arms": [
+    {
+      "status": "COMPLETE",
+      "arm": "codd_component_capacity_control",
+      "steps": 12500,
+      "chosen": {
+        "shift": 0.0,
+        "metrics": {
+          "penalized_epe": 0.5948273709624055,
+          "raw_epe": 0.7420202170296311,
+          "good_damage": 0.028429484544510514,
+          "large_1px": 0.006886724876125564,
+          "large_5px": 0.001964889612223191,
+          "recovery": 0.5633578474330302,
+          "opportunity_epe": 1.89457436971681,
+          "rejection_failure": 0.23915431081823174
+        },
+        "feasible": false,
+        "violation": 0.02336686777196939,
+        "score": 1.09400522497112
+      },
+      "baseline_v1": {
+        "penalized_epe": 0.5940794488175276,
+        "raw_epe": 0.7432587293681004,
+        "good_damage": 0.0281263591842621,
+        "large_1px": 0.006980848678532747,
+        "large_5px": 0.0021264025219876297,
+        "recovery": 0.5592425633943031,
+        "opportunity_epe": 1.8827741185948323,
+        "rejection_failure": 0.2307111477210324
+      },
+      "checkpoint_sha256": "f2a11c4c0480f6dab2e6747a3bcfbc8c0491a46b8152149e8eb837739c49aba3",
+      "elapsed_s": 40.63918862200808
+    },
+    {
+      "status": "COMPLETE",
+      "arm": "codd_component_codd",
+      "steps": 12500,
+      "chosen": {
+        "shift": 0.0,
+        "metrics": {
+          "penalized_epe": 0.5922889706935153,
+          "raw_epe": 0.745633711165131,
+          "good_damage": 0.018765296922772384,
+          "large_1px": 0.00985736929716917,
+          "large_5px": 0.0029615855574316487,
+          "recovery": 0.4835774227245003,
+          "opportunity_epe": 1.8085486278231129,
+          "rejection_failure": 0.07177832692659711
+        },
+        "feasible": false,
+        "violation": 0.663366727408992,
+        "score": 1.1165107020188918
+      },
+      "baseline_v1": {
+        "penalized_epe": 0.5940794488175276,
+        "raw_epe": 0.7432587293681004,
+        "good_damage": 0.0281263591842621,
+        "large_1px": 0.006980848678532747,
+        "large_5px": 0.0021264025219876297,
+        "recovery": 0.5592425633943031,
+        "opportunity_epe": 1.8827741185948323,
+        "rejection_failure": 0.2307111477210324
+      },
+      "checkpoint_sha256": "7057349faf7291ae80eddfd1165c825c698f6581e1df355d9f7136ec05f44eca",
+      "elapsed_s": 30.299595430959016
+    },
+    {
+      "status": "COMPLETE",
+      "arm": "codd_component_codd_regret",
+      "steps": 12500,
+      "chosen": {
+        "shift": 0.0,
+        "metrics": {
+          "penalized_epe": 0.5922522198039373,
+          "raw_epe": 0.7448561190150194,
+          "good_damage": 0.017744315595753856,
+          "large_1px": 0.009512690584128783,
+          "large_5px": 0.00280294497027588,
+          "recovery": 0.4692573559825854,
+          "opportunity_epe": 1.8323266660296553,
+          "rejection_failure": 0.067888522789676
+        },
+        "feasible": false,
+        "violation": 0.6399739372029718,
+        "score": 1.1079189625042092
+      },
+      "baseline_v1": {
+        "penalized_epe": 0.5940794488175276,
+        "raw_epe": 0.7432587293681004,
+        "good_damage": 0.0281263591842621,
+        "large_1px": 0.006980848678532747,
+        "large_5px": 0.0021264025219876297,
+        "recovery": 0.5592425633943031,
+        "opportunity_epe": 1.8827741185948323,
+        "rejection_failure": 0.2307111477210324
+      },
+      "checkpoint_sha256": "3e1db904ec819685c0ae894744c6279ae275c7d82042b723c3d1e154dbf189b5",
+      "elapsed_s": 28.282417616050225
+    }
+  ],
+  "created_unix_s": 1788749457.4456298
+}

@@ -1,0 +1,76 @@
+{
+  "status": "COMPLETE",
+  "selected_arm": "learned_codd_margin01_codd_regret",
+  "selected_profile": "regret",
+  "development_feasible": false,
+  "selection_uses_validation": false,
+  "arms": [
+    {
+      "status": "COMPLETE",
+      "arm": "learned_codd_margin01_codd",
+      "steps": 12500,
+      "chosen": {
+        "shift": 0.0,
+        "metrics": {
+          "penalized_epe": 0.5917662021368763,
+          "raw_epe": 0.7438213673713722,
+          "good_damage": 0.01644914360196517,
+          "large_1px": 0.007246428045888226,
+          "large_5px": 0.002317301501517691,
+          "recovery": 0.4376068256227259,
+          "opportunity_epe": 1.8800878083735404,
+          "rejection_failure": 0.062282628592348524
+        },
+        "feasible": false,
+        "violation": 0.524777278539196,
+        "score": 1.085316825745041
+      },
+      "baseline_v1": {
+        "penalized_epe": 0.5940794488175276,
+        "raw_epe": 0.7432587293681004,
+        "good_damage": 0.0281263591842621,
+        "large_1px": 0.006980848678532747,
+        "large_5px": 0.0021264025219876297,
+        "recovery": 0.5592425633943031,
+        "opportunity_epe": 1.8827741185948323,
+        "rejection_failure": 0.2307111477210324
+      },
+      "checkpoint_sha256": "c649a3cedb30d820087276f61a0a3eeab93d1662155de48376d1d06ef3f20f49",
+      "elapsed_s": 31.660433652985375
+    },
+    {
+      "status": "COMPLETE",
+      "arm": "learned_codd_margin01_codd_regret",
+      "steps": 12500,
+      "chosen": {
+        "shift": 0.0,
+        "metrics": {
+          "penalized_epe": 0.5928519012110522,
+          "raw_epe": 0.7424040502382898,
+          "good_damage": 0.015931534085298557,
+          "large_1px": 0.0067395735794044745,
+          "large_5px": 0.0019887519846644485,
+          "recovery": 0.4306255652381186,
+          "opportunity_epe": 1.917128383713911,
+          "rejection_failure": 0.058621636463481605
+        },
+        "feasible": false,
+        "violation": 0.4599685595300478,
+        "score": 1.0711014432314765
+      },
+      "baseline_v1": {
+        "penalized_epe": 0.5940794488175276,
+        "raw_epe": 0.7432587293681004,
+        "good_damage": 0.0281263591842621,
+        "large_1px": 0.006980848678532747,
+        "large_5px": 0.0021264025219876297,
+        "recovery": 0.5592425633943031,
+        "opportunity_epe": 1.8827741185948323,
+        "rejection_failure": 0.2307111477210324
+      },
+      "checkpoint_sha256": "2b849d8a69c0809324729d7f046703258d7ab60e242194c8a0ac3231e9c6bed8",
+      "elapsed_s": 33.26499217300443
+    }
+  ],
+  "created_unix_s": 1788751433.1447473
+}
