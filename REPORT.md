@@ -908,3 +908,21 @@ health fails and invalid-region completeness regresses, yielding
 `STAGE_C_M5_GATE_FAIL`. They do not prove refined temporal improvement because
 refined TEPE is unavailable. No current artifact proves independent-GT
 accuracy, point-to-plane accuracy, or paper-level performance.
+
+
+## 2026-09-07: A5 HR temporal repair accepted
+
+Frozen A5 + a 6,273-parameter causal HR history selector completed 3,000 training updates. Full 1,294-endpoint validation: all-GT penalized EPE 0.351058 -> 0.330162 (-5.95%); GT temporal residual 0.315694 -> 0.258275 (-18.19%). Dynamic/detail regions also improve, with unchanged coverage. Independent A4 is 0.355078 / 0.319920 on the same metrics. Both successful rescues and severe remaining wrong-history failures are documented. This is a frozen-base head experiment, not a new independent end-to-end A0-A5 run.
+
+[Full report and reproducible commands](reports/temporal_repair_20260907/REPORT.md).
+
+
+## 2026-09-07: Geometry decoder architecture controls
+
+The new geometry path preserves stereo/VGGT/self-history hypotheses through per-pixel decoding, then selects surface probability mass and fuses only candidates within a 2 HR-pixel radius. It does not consume A5/v1 final predictions. Seven structural training arms were completed across the native-matching, pixel-hypothesis and surface-aggregation studies; all have full 1,294-endpoint results and raw causal-input checks.
+
+The final mode_pool candidate has all-GT penalized EPE 0.321614, GT temporal residual 0.238741 and fixed-opportunity recovery 56.1189%, versus v1 0.330162 / 0.258275 / 35.6739%. These are the existing cap-10/invalid-penalty-10 metrics. Good-current damage rises from 1.5482% to 10.2428%, and >5 px degradation from 0.1183% to 0.2823%. Uncapped valid-region EPE does not improve. Paired sequence intervals support the recovery gain and the decoder gain over equal-budget WTA, while EPE/temporal differences versus v1 still cross zero. v1 remains the retained baseline; mode_pool is a recovery-prioritized structural candidate, not an unconditional replacement.
+
+[Assessment, complete tradeoffs and fixed failure cases](reports/surface_mode_geometry_20260907/ASSESSMENT.md). [Design protocol](docs/surface_mode_geometry_protocol.md).
+
+[Staged experiment archive, comparisons and evidence policy](reports/temporal_experiments_20260907.md).
