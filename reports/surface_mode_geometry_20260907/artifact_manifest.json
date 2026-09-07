@@ -1,0 +1,151 @@
+{
+  "original_base_commit": "2436e8a03c2063d49f658aa3e805c432a183fd92",
+  "source_run": "runs/metric_stereo_video/surface_mode_geometry_20260907",
+  "scope": "Reports, metrics, per-sample evidence, training receipts and checks. Large JSON is losslessly gzipped. Markdown links are adapted; original report hashes are retained. Weights, caches, logs and duplicate source snapshots remain on the experiment host.",
+  "files": [
+    {
+      "source": "runs/metric_stereo_video/surface_mode_geometry_20260907/ASSESSMENT.md",
+      "source_sha256": "b4e711dca2f6fda514c33e1053dafd5d2550834f75383fec2720f80441cfeea1",
+      "source_bytes": 4112,
+      "archive": "ASSESSMENT.md",
+      "archive_sha256": "2520ef129eb41234e4fa1e1373fa658ebd957f02655afaba6d42cd6be52f0289",
+      "archive_bytes": 4232,
+      "encoding": "identity",
+      "markdown_links_adapted": true
+    },
+    {
+      "source": "runs/metric_stereo_video/surface_mode_geometry_20260907/REPORT.md",
+      "source_sha256": "9f15a7fb586ebaed4b73efea771779688f112d0bec5e1930e711ec0ce8cccac2",
+      "source_bytes": 2733,
+      "archive": "REPORT.md",
+      "archive_sha256": "9f15a7fb586ebaed4b73efea771779688f112d0bec5e1930e711ec0ce8cccac2",
+      "archive_bytes": 2733,
+      "encoding": "identity",
+      "markdown_links_adapted": true
+    },
+    {
+      "source": "runs/metric_stereo_video/surface_mode_geometry_20260907/evaluation/metrics.csv",
+      "source_sha256": "564fea7f7cbcf1e77cefe1163b60ab4e28f5de019c2422342e57ba1159599a1a",
+      "source_bytes": 6599,
+      "archive": "evaluation/metrics.csv",
+      "archive_sha256": "564fea7f7cbcf1e77cefe1163b60ab4e28f5de019c2422342e57ba1159599a1a",
+      "archive_bytes": 6599,
+      "encoding": "identity",
+      "markdown_links_adapted": false
+    },
+    {
+      "source": "runs/metric_stereo_video/surface_mode_geometry_20260907/evaluation/metrics.json",
+      "source_sha256": "edae68204c1bf3163bc920bd22d9b470cad175e51474299d09f97abba08be207",
+      "source_bytes": 164495,
+      "archive": "evaluation/metrics.json",
+      "archive_sha256": "edae68204c1bf3163bc920bd22d9b470cad175e51474299d09f97abba08be207",
+      "archive_bytes": 164495,
+      "encoding": "identity",
+      "markdown_links_adapted": false
+    },
+    {
+      "source": "runs/metric_stereo_video/surface_mode_geometry_20260907/evaluation/per_sample.json",
+      "source_sha256": "a9606a39990fe5d9ac3bf785d32ba22d1f6822f1c71f08b98721ceeb54d1295e",
+      "source_bytes": 27735064,
+      "archive": "evaluation/per_sample.json.gz",
+      "archive_sha256": "f7f2dd9da1d644fe7427fc1cac25f569b0c129f0396565c7a452f11e604d5976",
+      "archive_bytes": 3089340,
+      "encoding": "gzip",
+      "markdown_links_adapted": false
+    },
+    {
+      "source": "runs/metric_stereo_video/surface_mode_geometry_20260907/fixed_case_contributions.png",
+      "source_sha256": "1c908707858e5923d036bde1920c7536205b4cebf465e365c028eb276a412c1c",
+      "source_bytes": 226599,
+      "archive": "fixed_case_contributions.png",
+      "archive_sha256": "1c908707858e5923d036bde1920c7536205b4cebf465e365c028eb276a412c1c",
+      "archive_bytes": 226599,
+      "encoding": "identity",
+      "markdown_links_adapted": false
+    },
+    {
+      "source": "runs/metric_stereo_video/surface_mode_geometry_20260907/mode_pool/receipt.json",
+      "source_sha256": "9dc0af0048eab6f9e85a3abc886de69e0c3143e100ea42f61ab2a76587d07450",
+      "source_bytes": 1491,
+      "archive": "mode_pool/receipt.json",
+      "archive_sha256": "9dc0af0048eab6f9e85a3abc886de69e0c3143e100ea42f61ab2a76587d07450",
+      "archive_bytes": 1491,
+      "encoding": "identity",
+      "markdown_links_adapted": false
+    },
+    {
+      "source": "runs/metric_stereo_video/surface_mode_geometry_20260907/mode_pool/summary.json",
+      "source_sha256": "e3c8d3cc546283f9cbccfeb387688f8523858f4cc0a4b5da95efff0cfb03531b",
+      "source_bytes": 2258,
+      "archive": "mode_pool/summary.json",
+      "archive_sha256": "e3c8d3cc546283f9cbccfeb387688f8523858f4cc0a4b5da95efff0cfb03531b",
+      "archive_bytes": 2258,
+      "encoding": "identity",
+      "markdown_links_adapted": false
+    },
+    {
+      "source": "runs/metric_stereo_video/surface_mode_geometry_20260907/raw_checks.json",
+      "source_sha256": "67ca72950def15c12d822e9438dcbdb347abf6ebf0ec77946eb17c9360573479",
+      "source_bytes": 3225,
+      "archive": "raw_checks.json",
+      "archive_sha256": "67ca72950def15c12d822e9438dcbdb347abf6ebf0ec77946eb17c9360573479",
+      "archive_bytes": 3225,
+      "encoding": "identity",
+      "markdown_links_adapted": false
+    },
+    {
+      "source": "runs/metric_stereo_video/surface_mode_geometry_20260907/results.json",
+      "source_sha256": "b286fbed524efc3776b74c00d9479a60776ae9100f16192804e254db923396b4",
+      "source_bytes": 138366,
+      "archive": "results.json",
+      "archive_sha256": "b286fbed524efc3776b74c00d9479a60776ae9100f16192804e254db923396b4",
+      "archive_bytes": 138366,
+      "encoding": "identity",
+      "markdown_links_adapted": false
+    },
+    {
+      "source": "runs/metric_stereo_video/surface_mode_geometry_20260907/run_summary.json",
+      "source_sha256": "4c916e686fed4e8ff8eacdd593dd8e12272bbd1582f0d674a93f371b9e7de0a0",
+      "source_bytes": 469,
+      "archive": "run_summary.json",
+      "archive_sha256": "4c916e686fed4e8ff8eacdd593dd8e12272bbd1582f0d674a93f371b9e7de0a0",
+      "archive_bytes": 469,
+      "encoding": "identity",
+      "markdown_links_adapted": false
+    },
+    {
+      "source": "runs/metric_stereo_video/surface_mode_geometry_20260907/wta/receipt.json",
+      "source_sha256": "99e2888798ae99c37bde9a73c40d5b633b757456ae87d5aa74ba14b01f2e7b5c",
+      "source_bytes": 1485,
+      "archive": "wta/receipt.json",
+      "archive_sha256": "99e2888798ae99c37bde9a73c40d5b633b757456ae87d5aa74ba14b01f2e7b5c",
+      "archive_bytes": 1485,
+      "encoding": "identity",
+      "markdown_links_adapted": false
+    },
+    {
+      "source": "runs/metric_stereo_video/surface_mode_geometry_20260907/wta/summary.json",
+      "source_sha256": "5960ac5ea8b226e49fb12c13189be139d0df3190282c2952908bdaa95b1295e3",
+      "source_bytes": 2255,
+      "archive": "wta/summary.json",
+      "archive_sha256": "5960ac5ea8b226e49fb12c13189be139d0df3190282c2952908bdaa95b1295e3",
+      "archive_bytes": 2255,
+      "encoding": "identity",
+      "markdown_links_adapted": false
+    }
+  ],
+  "checkpoints": [
+    {
+      "path": "runs/metric_stereo_video/surface_mode_geometry_20260907/mode_pool/final.pt",
+      "sha256": "a8d61dd1bf64318fc6c38fcebac399bdbf8f2fcec29179e0080d1a9cf9c4c61f",
+      "bytes": 2594755,
+      "included_in_git": false
+    },
+    {
+      "path": "runs/metric_stereo_video/surface_mode_geometry_20260907/wta/final.pt",
+      "sha256": "e3444bec17b759b0d8aa450d5f242fdc03ff25d1a8f6666f1ebe11f83d9e0960",
+      "bytes": 2594755,
+      "included_in_git": false
+    }
+  ]
+}

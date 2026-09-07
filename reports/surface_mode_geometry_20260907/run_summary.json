@@ -1,0 +1,15 @@
+{
+  "status": "COMPLETE",
+  "trained_arms": [
+    "wta",
+    "mode_pool"
+  ],
+  "updates_per_arm": 2000,
+  "validation_endpoints_per_arm": 1294,
+  "original_A5_runtime_sources_checked": 65,
+  "original_A5_runtime_sources_changed": [],
+  "v1_checkpoint_sha256": "60fe5a02263c2d39a622e0a0f64db381154c01e01bb33c9dcc21dd295556f269",
+  "raw_input_and_independent_causal_prefix_checks": "PASS",
+  "training_sources_unchanged": true,
+  "completed_unix_s": 1788776533.820054
+}
