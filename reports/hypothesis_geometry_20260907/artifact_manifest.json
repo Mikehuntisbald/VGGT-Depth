@@ -1,0 +1,171 @@
+{
+  "original_base_commit": "2436e8a03c2063d49f658aa3e805c432a183fd92",
+  "source_run": "runs/metric_stereo_video/hypothesis_geometry_20260907",
+  "scope": "Reports, metrics, per-sample evidence, training receipts and checks. Large JSON is losslessly gzipped. Markdown links are adapted; original report hashes are retained. Weights, caches, logs and duplicate source snapshots remain on the experiment host.",
+  "files": [
+    {
+      "source": "runs/metric_stereo_video/hypothesis_geometry_20260907/REPORT.md",
+      "source_sha256": "9e7192e9d9c392a41684bc0fc8794cb113063a90d2008e5b1cf10f45c227908d",
+      "source_bytes": 2466,
+      "archive": "REPORT.md",
+      "archive_sha256": "9e7192e9d9c392a41684bc0fc8794cb113063a90d2008e5b1cf10f45c227908d",
+      "archive_bytes": 2466,
+      "encoding": "identity",
+      "markdown_links_adapted": true
+    },
+    {
+      "source": "runs/metric_stereo_video/hypothesis_geometry_20260907/eval_smoke/metrics.csv",
+      "source_sha256": "c3ac4d848d2a154c9f5275314b88fa4ddfcb915451f01f87a1bb7bcee2578bb8",
+      "source_bytes": 4847,
+      "archive": "eval_smoke/metrics.csv",
+      "archive_sha256": "c3ac4d848d2a154c9f5275314b88fa4ddfcb915451f01f87a1bb7bcee2578bb8",
+      "archive_bytes": 4847,
+      "encoding": "identity",
+      "markdown_links_adapted": false
+    },
+    {
+      "source": "runs/metric_stereo_video/hypothesis_geometry_20260907/eval_smoke/metrics.json",
+      "source_sha256": "5bba1c14c0e0e6cf0a501dc4c8a29abd3b1fcc748228d521fd5e94332f87d1f4",
+      "source_bytes": 42105,
+      "archive": "eval_smoke/metrics.json",
+      "archive_sha256": "5bba1c14c0e0e6cf0a501dc4c8a29abd3b1fcc748228d521fd5e94332f87d1f4",
+      "archive_bytes": 42105,
+      "encoding": "identity",
+      "markdown_links_adapted": false
+    },
+    {
+      "source": "runs/metric_stereo_video/hypothesis_geometry_20260907/eval_smoke/per_sample.json",
+      "source_sha256": "cc33dbbf45e161878d29fbd59326b3536b3badb92813414821f78913df81a4d8",
+      "source_bytes": 31088,
+      "archive": "eval_smoke/per_sample.json",
+      "archive_sha256": "cc33dbbf45e161878d29fbd59326b3536b3badb92813414821f78913df81a4d8",
+      "archive_bytes": 31088,
+      "encoding": "identity",
+      "markdown_links_adapted": false
+    },
+    {
+      "source": "runs/metric_stereo_video/hypothesis_geometry_20260907/evaluation/metrics.csv",
+      "source_sha256": "4331d0e09b60f236d872bc76d3cfdc459f5615408b6f4745a2e234cb774542ec",
+      "source_bytes": 6588,
+      "archive": "evaluation/metrics.csv",
+      "archive_sha256": "4331d0e09b60f236d872bc76d3cfdc459f5615408b6f4745a2e234cb774542ec",
+      "archive_bytes": 6588,
+      "encoding": "identity",
+      "markdown_links_adapted": false
+    },
+    {
+      "source": "runs/metric_stereo_video/hypothesis_geometry_20260907/evaluation/metrics.json",
+      "source_sha256": "f020a73f133d9e242fe36fa9a040ff26e5ea4a23d84657ca7909cbc8c42c72fe",
+      "source_bytes": 160321,
+      "archive": "evaluation/metrics.json",
+      "archive_sha256": "f020a73f133d9e242fe36fa9a040ff26e5ea4a23d84657ca7909cbc8c42c72fe",
+      "archive_bytes": 160321,
+      "encoding": "identity",
+      "markdown_links_adapted": false
+    },
+    {
+      "source": "runs/metric_stereo_video/hypothesis_geometry_20260907/evaluation/per_sample.json",
+      "source_sha256": "38579415d26ef5d1c3812511b9012b83bb873cbd361178f66be852da61af98d0",
+      "source_bytes": 27571460,
+      "archive": "evaluation/per_sample.json.gz",
+      "archive_sha256": "1f07b14e46a455ec7037bf1954e08b8f269940c87f133b987db027b015d129ac",
+      "archive_bytes": 3018320,
+      "encoding": "gzip",
+      "markdown_links_adapted": false
+    },
+    {
+      "source": "runs/metric_stereo_video/hypothesis_geometry_20260907/memory/receipt.json",
+      "source_sha256": "aefe0051aba5623cb69be67cb85dc39ad99e7ee646ce1be2a992485c8fb47ab4",
+      "source_bytes": 1150,
+      "archive": "memory/receipt.json",
+      "archive_sha256": "aefe0051aba5623cb69be67cb85dc39ad99e7ee646ce1be2a992485c8fb47ab4",
+      "archive_bytes": 1150,
+      "encoding": "identity",
+      "markdown_links_adapted": false
+    },
+    {
+      "source": "runs/metric_stereo_video/hypothesis_geometry_20260907/memory/summary.json",
+      "source_sha256": "6c4baad3c91108219b6a9db85147567eda5e2ff035c339325f0b5d901e6ecc1b",
+      "source_bytes": 1662,
+      "archive": "memory/summary.json",
+      "archive_sha256": "6c4baad3c91108219b6a9db85147567eda5e2ff035c339325f0b5d901e6ecc1b",
+      "archive_bytes": 1662,
+      "encoding": "identity",
+      "markdown_links_adapted": false
+    },
+    {
+      "source": "runs/metric_stereo_video/hypothesis_geometry_20260907/no_memory/receipt.json",
+      "source_sha256": "a2a26f4e63af68efb531096334b9ca33bf0f1e9a675e40e2ff57c0e8e97f811f",
+      "source_bytes": 1153,
+      "archive": "no_memory/receipt.json",
+      "archive_sha256": "a2a26f4e63af68efb531096334b9ca33bf0f1e9a675e40e2ff57c0e8e97f811f",
+      "archive_bytes": 1153,
+      "encoding": "identity",
+      "markdown_links_adapted": false
+    },
+    {
+      "source": "runs/metric_stereo_video/hypothesis_geometry_20260907/no_memory/summary.json",
+      "source_sha256": "c24799baeba6cd3b0f384885ca6a92648065318a6453e102478da3f19cab42f6",
+      "source_bytes": 1668,
+      "archive": "no_memory/summary.json",
+      "archive_sha256": "c24799baeba6cd3b0f384885ca6a92648065318a6453e102478da3f19cab42f6",
+      "archive_bytes": 1668,
+      "encoding": "identity",
+      "markdown_links_adapted": false
+    },
+    {
+      "source": "runs/metric_stereo_video/hypothesis_geometry_20260907/page_cache_receipt.json",
+      "source_sha256": "e9bdf724cbf0f915b5c6f25da2dcdce4cf27a9121cb189dc11cc9d87ea30cd45",
+      "source_bytes": 97,
+      "archive": "page_cache_receipt.json",
+      "archive_sha256": "e9bdf724cbf0f915b5c6f25da2dcdce4cf27a9121cb189dc11cc9d87ea30cd45",
+      "archive_bytes": 97,
+      "encoding": "identity",
+      "markdown_links_adapted": false
+    },
+    {
+      "source": "runs/metric_stereo_video/hypothesis_geometry_20260907/raw_checks.json",
+      "source_sha256": "c406f68990e8d9a38a3eab84d45fcc0e194d703682c8add42177b4aa56bc0ec1",
+      "source_bytes": 3249,
+      "archive": "raw_checks.json",
+      "archive_sha256": "c406f68990e8d9a38a3eab84d45fcc0e194d703682c8add42177b4aa56bc0ec1",
+      "archive_bytes": 3249,
+      "encoding": "identity",
+      "markdown_links_adapted": false
+    },
+    {
+      "source": "runs/metric_stereo_video/hypothesis_geometry_20260907/results.json",
+      "source_sha256": "f11ee4a1ab6b1059cf1526e556864e64656a5bf8d4b9407bcdc7ed101799f6a9",
+      "source_bytes": 133698,
+      "archive": "results.json",
+      "archive_sha256": "f11ee4a1ab6b1059cf1526e556864e64656a5bf8d4b9407bcdc7ed101799f6a9",
+      "archive_bytes": 133698,
+      "encoding": "identity",
+      "markdown_links_adapted": false
+    },
+    {
+      "source": "runs/metric_stereo_video/hypothesis_geometry_20260907/run_summary.json",
+      "source_sha256": "d1f8eaffa7ee85916e1a01305c26ac0d66a90777a1e5c1ab40c6259b8ab07dcf",
+      "source_bytes": 472,
+      "archive": "run_summary.json",
+      "archive_sha256": "d1f8eaffa7ee85916e1a01305c26ac0d66a90777a1e5c1ab40c6259b8ab07dcf",
+      "archive_bytes": 472,
+      "encoding": "identity",
+      "markdown_links_adapted": false
+    }
+  ],
+  "checkpoints": [
+    {
+      "path": "runs/metric_stereo_video/hypothesis_geometry_20260907/memory/final.pt",
+      "sha256": "acd2320825dbbd8442689a9fa500fed00de91c201fed206b7c15af4bdbb54eb5",
+      "bytes": 2594435,
+      "included_in_git": false
+    },
+    {
+      "path": "runs/metric_stereo_video/hypothesis_geometry_20260907/no_memory/final.pt",
+      "sha256": "2c78923a91363aa796aa47a36c8e8a8a40fc7916a17679eb4e1e4351706df161",
+      "bytes": 2594435,
+      "included_in_git": false
+    }
+  ]
+}

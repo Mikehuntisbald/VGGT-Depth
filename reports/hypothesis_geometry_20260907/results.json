@@ -1,0 +1,5440 @@
+{
+  "status": "COMPLETE",
+  "updates_per_arm": 2000,
+  "validation_endpoints": 1294,
+  "metrics": {
+    "A5": {
+      "all_gt_bad1": 0.05918682018209659,
+      "all_gt_bad3": 0.017422576453389314,
+      "all_gt_penalized_epe_px": 0.351057752607956,
+      "bad1_px": 0.05785241607670148,
+      "bad3_px": 0.01602893595602413,
+      "boundary_good_current_damage_rate": 0.0,
+      "common_valid_epe_px": 0.4572941064539003,
+      "completeness_1px": 0.9408131798179034,
+      "completeness_2px": 0.9759058027605878,
+      "dynamic_epe_px": 0.632551997225204,
+      "dynamic_penalized_epe_px": 0.4352585119044185,
+      "dynamic_pixels": 1.0,
+      "epe_px": 0.4572941064539003,
+      "error_increase_over_v1_5px_rate": 0.0017580770784126952,
+      "fg_bg_background_gt_error_px": 8.236003776291323,
+      "fg_bg_error_px": 7.7691545356844856,
+      "fg_bg_foreground_gt_error_px": 7.1046251105885085,
+      "fg_bg_spurious_mixing_rate": 0.0,
+      "fixed_opportunity_epe_px": 1.398697584381759,
+      "fixed_opportunity_recovery_rate": 0.0,
+      "good_current_damage_rate": 0.0,
+      "gt_valid_pixels": 0.9884998571129573,
+      "large_degradation_1px_rate": 0.0,
+      "large_degradation_5px_excess_mean": 0.0,
+      "large_degradation_5px_rate": 0.0,
+      "metric_depth_absrel": 0.030987669185627616,
+      "metric_depth_rmse_squared": 7.36250233030285,
+      "new_large_5px_vs_v1_rate": 0.0,
+      "non_rigid_temporal_residual_epe_px": 0.46413342103884137,
+      "prediction_coverage": 0.9985836570319075,
+      "prediction_valid_fraction": 0.9985836570319075,
+      "recoverable_to_1px_rate": 0.0,
+      "rejection_task_failure_rate": 0.0,
+      "removed_large_5px_vs_v1_rate": 0.001183098433166143,
+      "rigid_temporal_residual_epe_px": 0.26243125139724166,
+      "scale_error_log": 0.0024156059048286637,
+      "spring_boundary_bad1": 0.3344674303039284,
+      "spring_boundary_epe_px": 1.5418423407526223,
+      "spring_high_detail_bad1": 0.595623746520467,
+      "spring_high_detail_epe_px": 3.35490542740516,
+      "spring_low_detail_bad1": 0.05246641072018003,
+      "spring_low_detail_epe_px": 0.3134259540782446,
+      "spring_matched_bad1": 0.28413346270174084,
+      "spring_matched_epe_px": 1.4174239451610633,
+      "spring_unmatched_completion_1px": 0.9540800442956225,
+      "spring_unmatched_completion_2px": 0.9833666595437209,
+      "static_epe_px": 0.3954731880476778,
+      "static_penalized_epe_px": 0.3213332967506746,
+      "static_pixels": 1.0,
+      "temporal_disocclusion_completion_1px": 0.8075222143329347,
+      "temporal_disocclusion_completion_2px": 0.8862424625408557,
+      "temporal_disocclusion_current_epe_px": 1.017973024743999,
+      "temporal_large_motion_penalized_delta_epe_px": 0.30191097963558067,
+      "temporal_matched_common_valid_delta_epe_px": 0.4540002468912146,
+      "temporal_matched_penalized_delta_epe_px": 0.31569367436569595,
+      "temporal_medium_motion_penalized_delta_epe_px": 0.18704797715907268,
+      "temporal_prediction_transport_miss_rate": 0.005066429902941253,
+      "temporal_small_motion_penalized_delta_epe_px": 0.3568289999600065,
+      "uncertainty_1sigma_coverage": 0.8670720518665476,
+      "uncertainty_2sigma_coverage": 0.9671933012001017,
+      "uncertainty_brier": 0.05302855477294157,
+      "uncertainty_ece": 0.0522886514462862,
+      "uncertainty_nll": -2.8176555199763307,
+      "validity_confidence_brier_0p1_log_depth": 0.05302855477294157,
+      "validity_confidence_ece_0p1_log_depth": 0.0522886514462862,
+      "metric_depth_rmse": 2.7133931396505835
+    },
+    "v1": {
+      "all_gt_bad1": 0.055217829857616314,
+      "all_gt_bad3": 0.015434286830126228,
+      "all_gt_penalized_epe_px": 0.33016213556377133,
+      "bad1_px": 0.05387779632748857,
+      "bad3_px": 0.014037826238513946,
+      "boundary_good_current_damage_rate": 0.10900088008992602,
+      "common_valid_epe_px": 0.44487593762966493,
+      "completeness_1px": 0.9447821701423836,
+      "completeness_2px": 0.9782768885866557,
+      "dynamic_epe_px": 0.6150783528475462,
+      "dynamic_penalized_epe_px": 0.40729357963059787,
+      "dynamic_pixels": 1.0,
+      "epe_px": 0.44487593762966493,
+      "error_increase_over_v1_5px_rate": 0.0,
+      "fg_bg_background_gt_error_px": 4.658000866490277,
+      "fg_bg_error_px": 3.9367926145560843,
+      "fg_bg_foreground_gt_error_px": 2.910199737572226,
+      "fg_bg_spurious_mixing_rate": 0.1261109306737115,
+      "fixed_opportunity_epe_px": 1.0599092696347319,
+      "fixed_opportunity_recovery_rate": 0.356738871865481,
+      "good_current_damage_rate": 0.015482018153250244,
+      "gt_valid_pixels": 0.9884998571129573,
+      "large_degradation_1px_rate": 0.00280314142960865,
+      "large_degradation_5px_excess_mean": 0.01332560879584606,
+      "large_degradation_5px_rate": 0.001183098433166143,
+      "metric_depth_absrel": 0.030842524743474205,
+      "metric_depth_rmse_squared": 7.246282558952321,
+      "new_large_5px_vs_v1_rate": 0.0,
+      "non_rigid_temporal_residual_epe_px": 0.40113879589913026,
+      "prediction_coverage": 0.9985836570319075,
+      "prediction_valid_fraction": 0.9985836570319075,
+      "recoverable_to_1px_rate": 0.5053274465157805,
+      "rejection_task_failure_rate": 0.2654313649164302,
+      "removed_large_5px_vs_v1_rate": 0.0,
+      "rigid_temporal_residual_epe_px": 0.2070133529295863,
+      "scale_error_log": 0.0023643838735119284,
+      "spring_boundary_bad1": 0.31108591258294016,
+      "spring_boundary_epe_px": 1.4080418383139552,
+      "spring_high_detail_bad1": 0.5637003414815295,
+      "spring_high_detail_epe_px": 3.07545492132473,
+      "spring_low_detail_bad1": 0.04884762953292622,
+      "spring_low_detail_epe_px": 0.29576947781164303,
+      "spring_matched_bad1": 0.2579814837153132,
+      "spring_matched_epe_px": 1.279725124174975,
+      "spring_unmatched_completion_1px": 0.95674073012179,
+      "spring_unmatched_completion_2px": 0.9847693478020908,
+      "static_epe_px": 0.38483830065127045,
+      "static_penalized_epe_px": 0.30293328129298713,
+      "static_pixels": 1.0,
+      "temporal_disocclusion_completion_1px": 0.8072329404572298,
+      "temporal_disocclusion_completion_2px": 0.8861495095492925,
+      "temporal_disocclusion_current_epe_px": 1.0240037967619038,
+      "temporal_large_motion_penalized_delta_epe_px": 0.25072727392769417,
+      "temporal_matched_common_valid_delta_epe_px": 0.4068817859334396,
+      "temporal_matched_penalized_delta_epe_px": 0.2582750298404227,
+      "temporal_medium_motion_penalized_delta_epe_px": 0.1386002171986689,
+      "temporal_prediction_transport_miss_rate": 0.00498589849879773,
+      "temporal_small_motion_penalized_delta_epe_px": 0.2897734094872344,
+      "uncertainty_1sigma_coverage": 0.8745534696790634,
+      "uncertainty_2sigma_coverage": 0.9693019840499937,
+      "uncertainty_brier": 0.0490936870378639,
+      "uncertainty_ece": 0.048291030583228645,
+      "uncertainty_nll": -2.8438761131708032,
+      "validity_confidence_brier_0p1_log_depth": 0.0490936870378639,
+      "validity_confidence_ece_0p1_log_depth": 0.048291030583228645,
+      "metric_depth_rmse": 2.69189200358267
+    },
+    "no_memory": {
+      "VGGT_chosen_rate": 0.07743820752532223,
+      "all_gt_bad1": 0.058308413887378216,
+      "all_gt_bad3": 0.016712891956590394,
+      "all_gt_penalized_epe_px": 0.34790046791465323,
+      "bad1_px": 0.05830838205892321,
+      "bad3_px": 0.01671285872223858,
+      "boundary_good_current_damage_rate": 0.20945501230092686,
+      "candidate_oracle_epe_px": 0.1123110506384134,
+      "common_valid_epe_px": 0.4746936436050035,
+      "completeness_1px": 0.9416915861126218,
+      "completeness_2px": 0.975958133915204,
+      "correct_candidate_chosen_rate": 0.952972939155997,
+      "dynamic_epe_px": 0.6330529989191408,
+      "dynamic_penalized_epe_px": 0.406989188145726,
+      "dynamic_pixels": 1.0,
+      "epe_px": 0.4746936436050035,
+      "error_increase_over_v1_5px_rate": 0.003265262445561761,
+      "fg_bg_background_gt_error_px": 8.445917284849608,
+      "fg_bg_error_px": 7.894462850820699,
+      "fg_bg_foreground_gt_error_px": 7.109503454644934,
+      "fg_bg_spurious_mixing_rate": 0.12602618362989454,
+      "fixed_opportunity_candidate_recovery_rate": 0.7978721874170308,
+      "fixed_opportunity_epe_px": 1.3814692653737475,
+      "fixed_opportunity_recovery_rate": 0.18966555251571118,
+      "good_current_damage_rate": 0.0556549279100537,
+      "gt_valid_pixels": 0.9884998571129573,
+      "history_chosen_rate": 0.0,
+      "large_degradation_1px_rate": 0.00825494190921739,
+      "large_degradation_5px_excess_mean": 0.018299102076068302,
+      "large_degradation_5px_rate": 0.002113565488631624,
+      "metric_depth_absrel": 0.03369396399242649,
+      "metric_depth_rmse_squared": 8.703560843123398,
+      "new_large_5px_vs_v1_rate": 0.0019146848333597578,
+      "non_rigid_temporal_residual_epe_px": 0.4600467981460057,
+      "prediction_coverage": 0.9999999662007664,
+      "prediction_valid_fraction": 0.9999999662007664,
+      "recoverable_to_1px_rate": 0.25741836400399154,
+      "rejection_task_failure_rate": 0.15709288539834435,
+      "removed_large_5px_vs_v1_rate": 0.000984217777894277,
+      "rigid_temporal_residual_epe_px": 0.27644730475452106,
+      "scale_error_log": 0.0018433214103408281,
+      "spring_boundary_bad1": 0.33604340820030754,
+      "spring_boundary_epe_px": 1.5298155463926344,
+      "spring_high_detail_bad1": 0.56447374066333,
+      "spring_high_detail_epe_px": 3.0536692859537062,
+      "spring_low_detail_bad1": 0.05196724294193601,
+      "spring_low_detail_epe_px": 0.3140029610993999,
+      "spring_matched_bad1": 0.2715717351187211,
+      "spring_matched_epe_px": 1.3402675375056066,
+      "spring_unmatched_completion_1px": 0.9542693936724631,
+      "spring_unmatched_completion_2px": 0.9833650193986734,
+      "static_epe_px": 0.41878980234257845,
+      "static_penalized_epe_px": 0.3270410354006573,
+      "static_pixels": 1.0,
+      "temporal_disocclusion_completion_1px": 0.8201634740221558,
+      "temporal_disocclusion_completion_2px": 0.8987623886332464,
+      "temporal_disocclusion_current_epe_px": 0.9374086471068674,
+      "temporal_large_motion_penalized_delta_epe_px": 0.3180177276221979,
+      "temporal_matched_common_valid_delta_epe_px": 0.4829663777394763,
+      "temporal_matched_penalized_delta_epe_px": 0.3249294499450621,
+      "temporal_medium_motion_penalized_delta_epe_px": 0.23272350321445232,
+      "temporal_prediction_transport_miss_rate": 0.003639039913052373,
+      "temporal_small_motion_penalized_delta_epe_px": 0.35060515041393175,
+      "uncertainty_1sigma_coverage": 0.9757243457838507,
+      "uncertainty_2sigma_coverage": 0.9886481611734086,
+      "uncertainty_brier": 0.0557112099310303,
+      "uncertainty_ece": 0.047481018061437584,
+      "uncertainty_nll": -1.553565374479937,
+      "validity_confidence_brier_0p1_log_depth": 0.0557112099310303,
+      "validity_confidence_ece_0p1_log_depth": 0.047481018061437584,
+      "metric_depth_rmse": 2.9501797984399865
+    },
+    "memory": {
+      "VGGT_chosen_rate": 0.16755823345513993,
+      "all_gt_bad1": 0.06207321508871591,
+      "all_gt_bad3": 0.01676041566726972,
+      "all_gt_penalized_epe_px": 0.3515397917331326,
+      "bad1_px": 0.06206867806468096,
+      "bad3_px": 0.016755659452074672,
+      "boundary_good_current_damage_rate": 0.2961164216647351,
+      "candidate_oracle_epe_px": 0.08567196171310364,
+      "common_valid_epe_px": 0.47563866485898715,
+      "completeness_1px": 0.9379267849112841,
+      "completeness_2px": 0.9750070294453197,
+      "correct_candidate_chosen_rate": 0.945736145644308,
+      "dynamic_epe_px": 0.6404481987393207,
+      "dynamic_penalized_epe_px": 0.41896350194245696,
+      "dynamic_pixels": 1.0,
+      "epe_px": 0.47563866485898715,
+      "error_increase_over_v1_5px_rate": 0.0031377399252516826,
+      "fg_bg_background_gt_error_px": 8.489035153624979,
+      "fg_bg_error_px": 7.894549639975746,
+      "fg_bg_foreground_gt_error_px": 7.048338310383137,
+      "fg_bg_spurious_mixing_rate": 0.13954127570412195,
+      "fixed_opportunity_candidate_recovery_rate": 0.9521989929267265,
+      "fixed_opportunity_epe_px": 1.3484375866869873,
+      "fixed_opportunity_recovery_rate": 0.22000848585146962,
+      "good_current_damage_rate": 0.0666286455546399,
+      "gt_valid_pixels": 0.9884998571129573,
+      "history_chosen_rate": 0.00014264469507587951,
+      "large_degradation_1px_rate": 0.009974782113439199,
+      "large_degradation_5px_excess_mean": 0.01782619926064052,
+      "large_degradation_5px_rate": 0.001974115815229244,
+      "metric_depth_absrel": 0.032886263360806654,
+      "metric_depth_rmse_squared": 7.392705196225936,
+      "new_large_5px_vs_v1_rate": 0.0017897648540394807,
+      "non_rigid_temporal_residual_epe_px": 0.4639847503159753,
+      "prediction_coverage": 0.99999516273321,
+      "prediction_valid_fraction": 0.99999516273321,
+      "recoverable_to_1px_rate": 0.2663837740631352,
+      "rejection_task_failure_rate": 0.17551775856206062,
+      "removed_large_5px_vs_v1_rate": 0.0009987474719763793,
+      "rigid_temporal_residual_epe_px": 0.2838509758356807,
+      "scale_error_log": 0.0031197355323635103,
+      "spring_boundary_bad1": 0.3414111335351899,
+      "spring_boundary_epe_px": 1.5284206843400836,
+      "spring_high_detail_bad1": 0.5608344419578617,
+      "spring_high_detail_epe_px": 3.0266122750151925,
+      "spring_low_detail_bad1": 0.05582480170828758,
+      "spring_low_detail_epe_px": 0.3180268444595857,
+      "spring_matched_bad1": 0.27636668168285505,
+      "spring_matched_epe_px": 1.322945504496256,
+      "spring_unmatched_completion_1px": 0.9505653482075413,
+      "spring_unmatched_completion_2px": 0.9823381980646023,
+      "static_epe_px": 0.4174575396632952,
+      "static_penalized_epe_px": 0.32773795057876914,
+      "static_pixels": 1.0,
+      "temporal_disocclusion_completion_1px": 0.814519552371026,
+      "temporal_disocclusion_completion_2px": 0.8950158883654533,
+      "temporal_disocclusion_current_epe_px": 0.957772619300416,
+      "temporal_large_motion_penalized_delta_epe_px": 0.32695413662925765,
+      "temporal_matched_common_valid_delta_epe_px": 0.4875441832181896,
+      "temporal_matched_penalized_delta_epe_px": 0.33141794700074856,
+      "temporal_medium_motion_penalized_delta_epe_px": 0.22740186593242512,
+      "temporal_prediction_transport_miss_rate": 0.003858410005512872,
+      "temporal_small_motion_penalized_delta_epe_px": 0.35610446869563556,
+      "uncertainty_1sigma_coverage": 0.9770246092873693,
+      "uncertainty_2sigma_coverage": 0.9894150606944423,
+      "uncertainty_brier": 0.05203796618468548,
+      "uncertainty_ece": 0.03716300255955706,
+      "uncertainty_nll": -1.5811267091901078,
+      "validity_confidence_brier_0p1_log_depth": 0.05203796618468548,
+      "validity_confidence_ece_0p1_log_depth": 0.03716300255955706,
+      "metric_depth_rmse": 2.718952959546365
+    }
+  },
+  "training": {
+    "no_memory": {
+      "receipt": {
+        "architecture": "pixel_hypothesis_geometry",
+        "variant": "no_memory",
+        "steps": 2000,
+        "world_size": 8,
+        "seed": 42,
+        "training_endpoints": 845,
+        "development_endpoints": 307,
+        "cache_lineage_sha256": "7409b6769e94d1c898d694fa93dd21fc40d6aca784ed8179f609c4063d6e244a",
+        "training_labels_receipt_sha256": "e2e3d401f4f01b31dd549c3e5c388535e175881a95cb02b660ddd4ad69c8e25b",
+        "lr": 0.0001,
+        "optimizer": "AdamW",
+        "weight_decay": 0.01,
+        "gradient_clip": 1.0,
+        "trainable_parameters": 212984,
+        "initialization": "new decoder from scratch; frozen pretrained FFS/VGGT image observations; A5 geometry and v1 not used",
+        "full_pixel_supervision": true,
+        "pixel_labels_per_coarse_cell": 64,
+        "hypotheses_per_pixel": 23,
+        "offset_bound_px": 4,
+        "truncated_bptt_frames": 2,
+        "clip_length": 8,
+        "model_source_sha256": "4adfd63fbf59729b894c1fc49691c78d638b8e5d6793eebda876e259fa42d2f8",
+        "loss_source_sha256": "d0d8048b22b1c88e444a15ec5e52aae5bd85e15662919e925d31caac854693e4",
+        "trainer_sha256": "89ad64ed45029f10cd5a67dc6eb05ed25e52c348cbcc0a147625beaa63da9e32",
+        "checkpoint_selection": "fixed final step; no validation calibration"
+      },
+      "summary": {
+        "status": "COMPLETE",
+        "steps": 2000,
+        "variant": "no_memory",
+        "elapsed_s": 728.8172611239715,
+        "checkpoint_sha256": "2c78923a91363aa796aa47a36c8e8a8a40fc7916a17679eb4e1e4351706df161",
+        "gradient_ownership": {
+          "key.weight": 0.0,
+          "key.bias": 0.0,
+          "context.0.weight": 0.0,
+          "context.0.bias": 0.0,
+          "context.1.weight": 0.0,
+          "context.1.bias": 0.0,
+          "source.weight": 0.0,
+          "label.0.weight": 0.0,
+          "label.0.bias": 0.0,
+          "label.1.weight": 0.0,
+          "label.1.bias": 0.0,
+          "interactions.0.norm.weight": 0.0,
+          "interactions.0.norm.bias": 0.0,
+          "interactions.0.qkv.weight": 0.0,
+          "interactions.0.qkv.bias": 0.0,
+          "interactions.0.project.weight": 0.0,
+          "interactions.0.project.bias": 0.0,
+          "interactions.0.spatial.0.weight": 0.0,
+          "interactions.0.spatial.0.bias": 0.0,
+          "interactions.0.spatial.1.weight": 0.0,
+          "interactions.0.spatial.1.bias": 0.0,
+          "interactions.0.spatial.3.weight": 0.0,
+          "interactions.0.spatial.3.bias": 0.0,
+          "interactions.1.norm.weight": 0.0,
+          "interactions.1.norm.bias": 0.0,
+          "interactions.1.qkv.weight": 0.0,
+          "interactions.1.qkv.bias": 0.0,
+          "interactions.1.project.weight": 0.0,
+          "interactions.1.project.bias": 0.0,
+          "interactions.1.spatial.0.weight": 0.0,
+          "interactions.1.spatial.0.bias": 0.0,
+          "interactions.1.spatial.1.weight": 0.0,
+          "interactions.1.spatial.1.bias": 0.0,
+          "interactions.1.spatial.3.weight": 0.0,
+          "interactions.1.spatial.3.bias": 0.0,
+          "pixel_head.weight": 0.7730168700218201,
+          "pixel_head.bias": 0.0063584730960428715,
+          "quality.weight": 0.004045397043228149,
+          "quality.bias": 0.001014274312183261
+        }
+      }
+    },
+    "memory": {
+      "receipt": {
+        "architecture": "pixel_hypothesis_geometry",
+        "variant": "memory",
+        "steps": 2000,
+        "world_size": 8,
+        "seed": 42,
+        "training_endpoints": 845,
+        "development_endpoints": 307,
+        "cache_lineage_sha256": "7409b6769e94d1c898d694fa93dd21fc40d6aca784ed8179f609c4063d6e244a",
+        "training_labels_receipt_sha256": "e2e3d401f4f01b31dd549c3e5c388535e175881a95cb02b660ddd4ad69c8e25b",
+        "lr": 0.0001,
+        "optimizer": "AdamW",
+        "weight_decay": 0.01,
+        "gradient_clip": 1.0,
+        "trainable_parameters": 212984,
+        "initialization": "new decoder from scratch; frozen pretrained FFS/VGGT image observations; A5 geometry and v1 not used",
+        "full_pixel_supervision": true,
+        "pixel_labels_per_coarse_cell": 64,
+        "hypotheses_per_pixel": 23,
+        "offset_bound_px": 4,
+        "truncated_bptt_frames": 2,
+        "clip_length": 8,
+        "model_source_sha256": "4adfd63fbf59729b894c1fc49691c78d638b8e5d6793eebda876e259fa42d2f8",
+        "loss_source_sha256": "d0d8048b22b1c88e444a15ec5e52aae5bd85e15662919e925d31caac854693e4",
+        "trainer_sha256": "89ad64ed45029f10cd5a67dc6eb05ed25e52c348cbcc0a147625beaa63da9e32",
+        "checkpoint_selection": "fixed final step; no validation calibration"
+      },
+      "summary": {
+        "status": "COMPLETE",
+        "steps": 2000,
+        "variant": "memory",
+        "elapsed_s": 318.267559269967,
+        "checkpoint_sha256": "acd2320825dbbd8442689a9fa500fed00de91c201fed206b7c15af4bdbb54eb5",
+        "gradient_ownership": {
+          "key.weight": 0.0,
+          "key.bias": 0.0,
+          "context.0.weight": 0.0,
+          "context.0.bias": 0.0,
+          "context.1.weight": 0.0,
+          "context.1.bias": 0.0,
+          "source.weight": 0.0,
+          "label.0.weight": 0.0,
+          "label.0.bias": 0.0,
+          "label.1.weight": 0.0,
+          "label.1.bias": 0.0,
+          "interactions.0.norm.weight": 0.0,
+          "interactions.0.norm.bias": 0.0,
+          "interactions.0.qkv.weight": 0.0,
+          "interactions.0.qkv.bias": 0.0,
+          "interactions.0.project.weight": 0.0,
+          "interactions.0.project.bias": 0.0,
+          "interactions.0.spatial.0.weight": 0.0,
+          "interactions.0.spatial.0.bias": 0.0,
+          "interactions.0.spatial.1.weight": 0.0,
+          "interactions.0.spatial.1.bias": 0.0,
+          "interactions.0.spatial.3.weight": 0.0,
+          "interactions.0.spatial.3.bias": 0.0,
+          "interactions.1.norm.weight": 0.0,
+          "interactions.1.norm.bias": 0.0,
+          "interactions.1.qkv.weight": 0.0,
+          "interactions.1.qkv.bias": 0.0,
+          "interactions.1.project.weight": 0.0,
+          "interactions.1.project.bias": 0.0,
+          "interactions.1.spatial.0.weight": 0.0,
+          "interactions.1.spatial.0.bias": 0.0,
+          "interactions.1.spatial.1.weight": 0.0,
+          "interactions.1.spatial.1.bias": 0.0,
+          "interactions.1.spatial.3.weight": 0.0,
+          "interactions.1.spatial.3.bias": 0.0,
+          "pixel_head.weight": 0.5862739086151123,
+          "pixel_head.bias": 0.03200005739927292,
+          "quality.weight": 0.004045397043228149,
+          "quality.bias": 0.001014274312183261
+        }
+      }
+    }
+  },
+  "paired_sequence_comparisons": {
+    "no_memory": {
+      "v1": {
+        "all_gt_penalized_epe_px": {
+          "arm_minus_control": 0.017738332350881892,
+          "sequence_bootstrap_95pct": [
+            -0.026208973051755236,
+            0.038223749461588984
+          ],
+          "sequences": 8,
+          "draws": 10000
+        },
+        "temporal_matched_penalized_delta_epe_px": {
+          "arm_minus_control": 0.06665442010463941,
+          "sequence_bootstrap_95pct": [
+            0.0150026038820785,
+            0.09334658711336902
+          ],
+          "sequences": 8,
+          "draws": 10000
+        },
+        "good_current_damage_rate": {
+          "arm_minus_control": 0.04017290975680345,
+          "sequence_bootstrap_95pct": [
+            0.02219187081962205,
+            0.07513159951324044
+          ],
+          "sequences": 8,
+          "draws": 10000
+        },
+        "large_degradation_5px_rate": {
+          "arm_minus_control": 0.0009304670554654808,
+          "sequence_bootstrap_95pct": [
+            0.000372695807216026,
+            0.0016016809075427815
+          ],
+          "sequences": 8,
+          "draws": 10000
+        },
+        "fixed_opportunity_recovery_rate": {
+          "arm_minus_control": -0.16707331934976977,
+          "sequence_bootstrap_95pct": [
+            -0.21344834443763022,
+            -0.11932702812964285
+          ],
+          "sequences": 8,
+          "draws": 10000
+        }
+      }
+    },
+    "memory": {
+      "v1": {
+        "all_gt_penalized_epe_px": {
+          "arm_minus_control": 0.021377656169361277,
+          "sequence_bootstrap_95pct": [
+            -0.027726625590185506,
+            0.04495091869916875
+          ],
+          "sequences": 8,
+          "draws": 10000
+        },
+        "temporal_matched_penalized_delta_epe_px": {
+          "arm_minus_control": 0.0731429171603259,
+          "sequence_bootstrap_95pct": [
+            0.01818255092554195,
+            0.10333579885644266
+          ],
+          "sequences": 8,
+          "draws": 10000
+        },
+        "good_current_damage_rate": {
+          "arm_minus_control": 0.051146627401389665,
+          "sequence_bootstrap_95pct": [
+            0.026892678883542197,
+            0.10145070423391557
+          ],
+          "sequences": 8,
+          "draws": 10000
+        },
+        "large_degradation_5px_rate": {
+          "arm_minus_control": 0.0007910173820631014,
+          "sequence_bootstrap_95pct": [
+            0.0003100379747625109,
+            0.0013777100121665899
+          ],
+          "sequences": 8,
+          "draws": 10000
+        },
+        "fixed_opportunity_recovery_rate": {
+          "arm_minus_control": -0.13673038601401136,
+          "sequence_bootstrap_95pct": [
+            -0.16433147533048212,
+            -0.10650355325149125
+          ],
+          "sequences": 8,
+          "draws": 10000
+        }
+      },
+      "no_memory": {
+        "all_gt_penalized_epe_px": {
+          "arm_minus_control": 0.003639323818479386,
+          "sequence_bootstrap_95pct": [
+            -0.0063582767647714245,
+            0.014510768346035425
+          ],
+          "sequences": 8,
+          "draws": 10000
+        },
+        "temporal_matched_penalized_delta_epe_px": {
+          "arm_minus_control": 0.006488497055686472,
+          "sequence_bootstrap_95pct": [
+            1.7712748500014196e-05,
+            0.013206949758376734
+          ],
+          "sequences": 8,
+          "draws": 10000
+        },
+        "good_current_damage_rate": {
+          "arm_minus_control": 0.010973717644586212,
+          "sequence_bootstrap_95pct": [
+            0.0013074952840595355,
+            0.027255544155505573
+          ],
+          "sequences": 8,
+          "draws": 10000
+        },
+        "large_degradation_5px_rate": {
+          "arm_minus_control": -0.00013944967340237942,
+          "sequence_bootstrap_95pct": [
+            -0.00028031828098545137,
+            -3.7100384970911728e-06
+          ],
+          "sequences": 8,
+          "draws": 10000
+        },
+        "fixed_opportunity_recovery_rate": {
+          "arm_minus_control": 0.030342933335758417,
+          "sequence_bootstrap_95pct": [
+            -0.021638980418758752,
+            0.09507770212009892
+          ],
+          "sequences": 8,
+          "draws": 10000
+        }
+      }
+    }
+  },
+  "fixed_failure_points": [
+    {
+      "sequence_id": "0005",
+      "frame_id": 32,
+      "dataset_index": 24,
+      "A5/metric_depth_absrel": [
+        9083.24182279512,
+        393216
+      ],
+      "A5/metric_depth_rmse_squared": [
+        207335.99663383723,
+        393216
+      ],
+      "A5/epe_px": [
+        301481.39630126953,
+        393216
+      ],
+      "A5/common_valid_epe_px": [
+        301481.39630126953,
+        393216
+      ],
+      "A5/bad1_px": [
+        21534.0,
+        393216
+      ],
+      "A5/bad3_px": [
+        7612.0,
+        393216
+      ],
+      "A5/all_gt_penalized_epe_px": [
+        163404.11300468445,
+        393216
+      ],
+      "A5/all_gt_bad1": [
+        21534.0,
+        393216
+      ],
+      "A5/all_gt_bad3": [
+        7612.0,
+        393216
+      ],
+      "A5/completeness_1px": [
+        371682.0,
+        393216
+      ],
+      "A5/completeness_2px": [
+        380539.0,
+        393216
+      ],
+      "A5/prediction_coverage": [
+        393216.0,
+        393216
+      ],
+      "A5/prediction_valid_fraction": [
+        393216.0,
+        393216
+      ],
+      "A5/gt_valid_pixels": [
+        393216.0,
+        393216
+      ],
+      "A5/scale_error_log": [
+        0.0012653210433200002,
+        1
+      ],
+      "A5/dynamic_epe_px": [
+        197158.05813503265,
+        233019
+      ],
+      "A5/static_epe_px": [
+        104323.33816623688,
+        160197
+      ],
+      "A5/dynamic_penalized_epe_px": [
+        97439.2014951706,
+        233019
+      ],
+      "A5/static_penalized_epe_px": [
+        65964.91150951385,
+        160197
+      ],
+      "A5/dynamic_pixels": [
+        233019.0,
+        233019
+      ],
+      "A5/static_pixels": [
+        160197.0,
+        160197
+      ],
+      "A5/uncertainty_nll": [
+        -1274365.9785472425,
+        393216
+      ],
+      "A5/uncertainty_1sigma_coverage": [
+        336775.0,
+        393216
+      ],
+      "A5/uncertainty_2sigma_coverage": [
+        380445.0,
+        393216
+      ],
+      "A5/validity_confidence_brier_0p1_log_depth": [
+        8283.049740721308,
+        393216
+      ],
+      "A5/validity_confidence_ece_0p1_log_depth": [
+        8195.848295688615,
+        393216
+      ],
+      "A5/uncertainty_brier": [
+        8283.049740721308,
+        393216
+      ],
+      "A5/uncertainty_ece": [
+        8195.848295688615,
+        393216
+      ],
+      "A5/spring_high_detail_epe_px": [
+        29406.176515579224,
+        7718
+      ],
+      "A5/spring_high_detail_bad1": [
+        5182.0,
+        7718
+      ],
+      "A5/spring_low_detail_epe_px": [
+        133997.93648910522,
+        385498
+      ],
+      "A5/spring_low_detail_bad1": [
+        16352.0,
+        385498
+      ],
+      "A5/spring_matched_epe_px": [
+        43304.6590385437,
+        44565
+      ],
+      "A5/spring_matched_bad1": [
+        8725.0,
+        44565
+      ],
+      "A5/spring_boundary_epe_px": [
+        81786.23089408875,
+        42660
+      ],
+      "A5/spring_boundary_bad1": [
+        16032.0,
+        42660
+      ],
+      "A5/spring_unmatched_completion_1px": [
+        335842.0,
+        348651
+      ],
+      "A5/spring_unmatched_completion_2px": [
+        343307.0,
+        348651
+      ],
+      "A5/temporal_matched_common_valid_delta_epe_px": [
+        397072.40390872955,
+        393216
+      ],
+      "A5/temporal_matched_penalized_delta_epe_px": [
+        158409.21706867218,
+        393216
+      ],
+      "A5/rigid_temporal_residual_epe_px": [
+        49727.17541027069,
+        160197
+      ],
+      "A5/non_rigid_temporal_residual_epe_px": [
+        108682.04165840149,
+        233019
+      ],
+      "A5/temporal_prediction_transport_miss_rate": [
+        0.0,
+        393216
+      ],
+      "A5/temporal_disocclusion_current_epe_px": [
+        0.0,
+        0
+      ],
+      "A5/temporal_disocclusion_completion_1px": [
+        0.0,
+        0
+      ],
+      "A5/temporal_disocclusion_completion_2px": [
+        0.0,
+        0
+      ],
+      "A5/temporal_small_motion_penalized_delta_epe_px": [
+        158409.21706867218,
+        393216
+      ],
+      "A5/temporal_medium_motion_penalized_delta_epe_px": [
+        0.0,
+        0
+      ],
+      "A5/temporal_large_motion_penalized_delta_epe_px": [
+        0.0,
+        0
+      ],
+      "A5/good_current_damage_rate": [
+        0.0,
+        124255
+      ],
+      "A5/rejection_task_failure_rate": [
+        0.0,
+        1978
+      ],
+      "A5/large_degradation_1px_rate": [
+        0.0,
+        393216
+      ],
+      "A5/large_degradation_5px_rate": [
+        0.0,
+        393216
+      ],
+      "A5/large_degradation_5px_excess_mean": [
+        0.0,
+        393216
+      ],
+      "A5/new_large_5px_vs_v1_rate": [
+        0.0,
+        393216
+      ],
+      "A5/removed_large_5px_vs_v1_rate": [
+        1018.0,
+        393216
+      ],
+      "A5/error_increase_over_v1_5px_rate": [
+        1332.0,
+        393216
+      ],
+      "A5/fixed_opportunity_recovery_rate": [
+        0.0,
+        86554
+      ],
+      "A5/fixed_opportunity_epe_px": [
+        121348.63712024689,
+        86554
+      ],
+      "A5/recoverable_to_1px_rate": [
+        0.0,
+        4108
+      ],
+      "A5/fg_bg_spurious_mixing_rate": [
+        0.0,
+        3143
+      ],
+      "A5/fg_bg_error_px": [
+        27893.2465839386,
+        3143
+      ],
+      "A5/boundary_good_current_damage_rate": [
+        0.0,
+        4988
+      ],
+      "A5/fg_bg_foreground_gt_error_px": [
+        17252.70255279541,
+        1742
+      ],
+      "A5/fg_bg_background_gt_error_px": [
+        10640.544031143188,
+        1401
+      ],
+      "v1/metric_depth_absrel": [
+        9139.633982533593,
+        393216
+      ],
+      "v1/metric_depth_rmse_squared": [
+        224963.88260693464,
+        393216
+      ],
+      "v1/epe_px": [
+        295330.7030649185,
+        393216
+      ],
+      "v1/common_valid_epe_px": [
+        295330.7030649185,
+        393216
+      ],
+      "v1/bad1_px": [
+        20612.0,
+        393216
+      ],
+      "v1/bad3_px": [
+        7281.0,
+        393216
+      ],
+      "v1/all_gt_penalized_epe_px": [
+        147719.83307552338,
+        393216
+      ],
+      "v1/all_gt_bad1": [
+        20612.0,
+        393216
+      ],
+      "v1/all_gt_bad3": [
+        7281.0,
+        393216
+      ],
+      "v1/completeness_1px": [
+        372604.0,
+        393216
+      ],
+      "v1/completeness_2px": [
+        380828.0,
+        393216
+      ],
+      "v1/prediction_coverage": [
+        393216.0,
+        393216
+      ],
+      "v1/prediction_valid_fraction": [
+        393216.0,
+        393216
+      ],
+      "v1/gt_valid_pixels": [
+        393216.0,
+        393216
+      ],
+      "v1/scale_error_log": [
+        0.0007387054502032697,
+        1
+      ],
+      "v1/dynamic_epe_px": [
+        191355.1613521576,
+        233019
+      ],
+      "v1/static_epe_px": [
+        103975.54171276093,
+        160197
+      ],
+      "v1/dynamic_penalized_epe_px": [
+        89178.50764656067,
+        233019
+      ],
+      "v1/static_penalized_epe_px": [
+        58541.32542896271,
+        160197
+      ],
+      "v1/dynamic_pixels": [
+        233019.0,
+        233019
+      ],
+      "v1/static_pixels": [
+        160197.0,
+        160197
+      ],
+      "v1/uncertainty_nll": [
+        -1294359.6227261554,
+        393216
+      ],
+      "v1/uncertainty_1sigma_coverage": [
+        349447.0,
+        393216
+      ],
+      "v1/uncertainty_2sigma_coverage": [
+        381848.0,
+        393216
+      ],
+      "v1/validity_confidence_brier_0p1_log_depth": [
+        7355.506909326636,
+        393216
+      ],
+      "v1/validity_confidence_ece_0p1_log_depth": [
+        7243.848295688623,
+        393216
+      ],
+      "v1/uncertainty_brier": [
+        7355.506909326636,
+        393216
+      ],
+      "v1/uncertainty_ece": [
+        7243.848295688623,
+        393216
+      ],
+      "v1/spring_high_detail_epe_px": [
+        27338.496557235718,
+        7718
+      ],
+      "v1/spring_high_detail_bad1": [
+        4947.0,
+        7718
+      ],
+      "v1/spring_low_detail_epe_px": [
+        120381.33651828766,
+        385498
+      ],
+      "v1/spring_low_detail_bad1": [
+        15665.0,
+        385498
+      ],
+      "v1/spring_matched_epe_px": [
+        39608.987849235535,
+        44565
+      ],
+      "v1/spring_matched_bad1": [
+        8405.0,
+        44565
+      ],
+      "v1/spring_boundary_epe_px": [
+        72902.62666416168,
+        42660
+      ],
+      "v1/spring_boundary_bad1": [
+        14785.0,
+        42660
+      ],
+      "v1/spring_unmatched_completion_1px": [
+        336444.0,
+        348651
+      ],
+      "v1/spring_unmatched_completion_2px": [
+        343316.0,
+        348651
+      ],
+      "v1/temporal_matched_common_valid_delta_epe_px": [
+        385991.4446954727,
+        393216
+      ],
+      "v1/temporal_matched_penalized_delta_epe_px": [
+        132810.58087921143,
+        393216
+      ],
+      "v1/rigid_temporal_residual_epe_px": [
+        34609.2929649353,
+        160197
+      ],
+      "v1/non_rigid_temporal_residual_epe_px": [
+        98201.28791427612,
+        233019
+      ],
+      "v1/temporal_prediction_transport_miss_rate": [
+        0.0,
+        393216
+      ],
+      "v1/temporal_disocclusion_current_epe_px": [
+        0.0,
+        0
+      ],
+      "v1/temporal_disocclusion_completion_1px": [
+        0.0,
+        0
+      ],
+      "v1/temporal_disocclusion_completion_2px": [
+        0.0,
+        0
+      ],
+      "v1/temporal_small_motion_penalized_delta_epe_px": [
+        132810.58087921143,
+        393216
+      ],
+      "v1/temporal_medium_motion_penalized_delta_epe_px": [
+        0.0,
+        0
+      ],
+      "v1/temporal_large_motion_penalized_delta_epe_px": [
+        0.0,
+        0
+      ],
+      "v1/good_current_damage_rate": [
+        7007.0,
+        124255
+      ],
+      "v1/rejection_task_failure_rate": [
+        766.0,
+        1978
+      ],
+      "v1/large_degradation_1px_rate": [
+        2857.0,
+        393216
+      ],
+      "v1/large_degradation_5px_rate": [
+        1018.0,
+        393216
+      ],
+      "v1/large_degradation_5px_excess_mean": [
+        24219.96165084839,
+        393216
+      ],
+      "v1/new_large_5px_vs_v1_rate": [
+        0.0,
+        393216
+      ],
+      "v1/removed_large_5px_vs_v1_rate": [
+        0.0,
+        393216
+      ],
+      "v1/error_increase_over_v1_5px_rate": [
+        0.0,
+        393216
+      ],
+      "v1/fixed_opportunity_recovery_rate": [
+        33833.0,
+        86554
+      ],
+      "v1/fixed_opportunity_epe_px": [
+        80592.63719367981,
+        86554
+      ],
+      "v1/recoverable_to_1px_rate": [
+        2454.0,
+        4108
+      ],
+      "v1/fg_bg_spurious_mixing_rate": [
+        344.0,
+        3143
+      ],
+      "v1/fg_bg_error_px": [
+        8581.39879989624,
+        3143
+      ],
+      "v1/boundary_good_current_damage_rate": [
+        874.0,
+        4988
+      ],
+      "v1/fg_bg_foreground_gt_error_px": [
+        4561.392284393311,
+        1742
+      ],
+      "v1/fg_bg_background_gt_error_px": [
+        4020.0065155029297,
+        1401
+      ],
+      "variant": "no_memory",
+      "x": 581,
+      "y": 200,
+      "GT": 14.9765625,
+      "A5": 37.51909637451172,
+      "v1": 114.25695037841797,
+      "prediction": 35.1005859375,
+      "selected_candidate": 0,
+      "candidate_base_values": [
+        35.11865234375,
+        77.9610824584961,
+        96.04895782470703,
+        96.7517318725586,
+        16.82746696472168,
+        98.34529113769531,
+        13.26906681060791,
+        99.74910736083984,
+        99.017822265625,
+        96.08588409423828,
+        13.91169261932373,
+        96.0,
+        72.0,
+        128.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "candidate_predictions": [
+        35.1005859375,
+        77.9356918334961,
+        96.08142852783203,
+        96.82789611816406,
+        16.83918571472168,
+        98.41803741455078,
+        13.313498497009277,
+        99.78304290771484,
+        99.0615234375,
+        96.15863037109375,
+        13.948068618774414,
+        96.0257568359375,
+        71.9720458984375,
+        127.9705810546875,
+        9.999999747378752e-06,
+        9.999999747378752e-06,
+        9.999999747378752e-06,
+        9.999999747378752e-06,
+        9.999999747378752e-06,
+        9.999999747378752e-06,
+        9.999999747378752e-06,
+        9.999999747378752e-06,
+        9.999999747378752e-06
+      ],
+      "candidate_valid": [
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        false,
+        false,
+        false,
+        false,
+        false,
+        false,
+        false,
+        false,
+        false
+      ],
+      "probabilities": [
+        0.7560805082321167,
+        0.20034140348434448,
+        0.0007225439185276628,
+        0.0008447393192909658,
+        0.011105546727776527,
+        0.000972289068158716,
+        0.009224820882081985,
+        0.001505910768173635,
+        0.0009876004187390208,
+        0.0007003135397098958,
+        0.016638871282339096,
+        0.0005715792649425566,
+        0.00016376018174923956,
+        0.00014007151185069233,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "sequence_id": "0005",
+      "frame_id": 32,
+      "dataset_index": 24,
+      "A5/metric_depth_absrel": [
+        9083.24182279512,
+        393216
+      ],
+      "A5/metric_depth_rmse_squared": [
+        207335.99663383723,
+        393216
+      ],
+      "A5/epe_px": [
+        301481.39630126953,
+        393216
+      ],
+      "A5/common_valid_epe_px": [
+        301481.39630126953,
+        393216
+      ],
+      "A5/bad1_px": [
+        21534.0,
+        393216
+      ],
+      "A5/bad3_px": [
+        7612.0,
+        393216
+      ],
+      "A5/all_gt_penalized_epe_px": [
+        163404.11300468445,
+        393216
+      ],
+      "A5/all_gt_bad1": [
+        21534.0,
+        393216
+      ],
+      "A5/all_gt_bad3": [
+        7612.0,
+        393216
+      ],
+      "A5/completeness_1px": [
+        371682.0,
+        393216
+      ],
+      "A5/completeness_2px": [
+        380539.0,
+        393216
+      ],
+      "A5/prediction_coverage": [
+        393216.0,
+        393216
+      ],
+      "A5/prediction_valid_fraction": [
+        393216.0,
+        393216
+      ],
+      "A5/gt_valid_pixels": [
+        393216.0,
+        393216
+      ],
+      "A5/scale_error_log": [
+        0.0012653210433200002,
+        1
+      ],
+      "A5/dynamic_epe_px": [
+        197158.05813503265,
+        233019
+      ],
+      "A5/static_epe_px": [
+        104323.33816623688,
+        160197
+      ],
+      "A5/dynamic_penalized_epe_px": [
+        97439.2014951706,
+        233019
+      ],
+      "A5/static_penalized_epe_px": [
+        65964.91150951385,
+        160197
+      ],
+      "A5/dynamic_pixels": [
+        233019.0,
+        233019
+      ],
+      "A5/static_pixels": [
+        160197.0,
+        160197
+      ],
+      "A5/uncertainty_nll": [
+        -1274365.9785472425,
+        393216
+      ],
+      "A5/uncertainty_1sigma_coverage": [
+        336775.0,
+        393216
+      ],
+      "A5/uncertainty_2sigma_coverage": [
+        380445.0,
+        393216
+      ],
+      "A5/validity_confidence_brier_0p1_log_depth": [
+        8283.049740721308,
+        393216
+      ],
+      "A5/validity_confidence_ece_0p1_log_depth": [
+        8195.848295688615,
+        393216
+      ],
+      "A5/uncertainty_brier": [
+        8283.049740721308,
+        393216
+      ],
+      "A5/uncertainty_ece": [
+        8195.848295688615,
+        393216
+      ],
+      "A5/spring_high_detail_epe_px": [
+        29406.176515579224,
+        7718
+      ],
+      "A5/spring_high_detail_bad1": [
+        5182.0,
+        7718
+      ],
+      "A5/spring_low_detail_epe_px": [
+        133997.93648910522,
+        385498
+      ],
+      "A5/spring_low_detail_bad1": [
+        16352.0,
+        385498
+      ],
+      "A5/spring_matched_epe_px": [
+        43304.6590385437,
+        44565
+      ],
+      "A5/spring_matched_bad1": [
+        8725.0,
+        44565
+      ],
+      "A5/spring_boundary_epe_px": [
+        81786.23089408875,
+        42660
+      ],
+      "A5/spring_boundary_bad1": [
+        16032.0,
+        42660
+      ],
+      "A5/spring_unmatched_completion_1px": [
+        335842.0,
+        348651
+      ],
+      "A5/spring_unmatched_completion_2px": [
+        343307.0,
+        348651
+      ],
+      "A5/temporal_matched_common_valid_delta_epe_px": [
+        397072.40390872955,
+        393216
+      ],
+      "A5/temporal_matched_penalized_delta_epe_px": [
+        158409.21706867218,
+        393216
+      ],
+      "A5/rigid_temporal_residual_epe_px": [
+        49727.17541027069,
+        160197
+      ],
+      "A5/non_rigid_temporal_residual_epe_px": [
+        108682.04165840149,
+        233019
+      ],
+      "A5/temporal_prediction_transport_miss_rate": [
+        0.0,
+        393216
+      ],
+      "A5/temporal_disocclusion_current_epe_px": [
+        0.0,
+        0
+      ],
+      "A5/temporal_disocclusion_completion_1px": [
+        0.0,
+        0
+      ],
+      "A5/temporal_disocclusion_completion_2px": [
+        0.0,
+        0
+      ],
+      "A5/temporal_small_motion_penalized_delta_epe_px": [
+        158409.21706867218,
+        393216
+      ],
+      "A5/temporal_medium_motion_penalized_delta_epe_px": [
+        0.0,
+        0
+      ],
+      "A5/temporal_large_motion_penalized_delta_epe_px": [
+        0.0,
+        0
+      ],
+      "A5/good_current_damage_rate": [
+        0.0,
+        124255
+      ],
+      "A5/rejection_task_failure_rate": [
+        0.0,
+        1978
+      ],
+      "A5/large_degradation_1px_rate": [
+        0.0,
+        393216
+      ],
+      "A5/large_degradation_5px_rate": [
+        0.0,
+        393216
+      ],
+      "A5/large_degradation_5px_excess_mean": [
+        0.0,
+        393216
+      ],
+      "A5/new_large_5px_vs_v1_rate": [
+        0.0,
+        393216
+      ],
+      "A5/removed_large_5px_vs_v1_rate": [
+        1018.0,
+        393216
+      ],
+      "A5/error_increase_over_v1_5px_rate": [
+        1332.0,
+        393216
+      ],
+      "A5/fixed_opportunity_recovery_rate": [
+        0.0,
+        86554
+      ],
+      "A5/fixed_opportunity_epe_px": [
+        121348.63712024689,
+        86554
+      ],
+      "A5/recoverable_to_1px_rate": [
+        0.0,
+        4108
+      ],
+      "A5/fg_bg_spurious_mixing_rate": [
+        0.0,
+        3143
+      ],
+      "A5/fg_bg_error_px": [
+        27893.2465839386,
+        3143
+      ],
+      "A5/boundary_good_current_damage_rate": [
+        0.0,
+        4988
+      ],
+      "A5/fg_bg_foreground_gt_error_px": [
+        17252.70255279541,
+        1742
+      ],
+      "A5/fg_bg_background_gt_error_px": [
+        10640.544031143188,
+        1401
+      ],
+      "v1/metric_depth_absrel": [
+        9139.633982533593,
+        393216
+      ],
+      "v1/metric_depth_rmse_squared": [
+        224963.88260693464,
+        393216
+      ],
+      "v1/epe_px": [
+        295330.7030649185,
+        393216
+      ],
+      "v1/common_valid_epe_px": [
+        295330.7030649185,
+        393216
+      ],
+      "v1/bad1_px": [
+        20612.0,
+        393216
+      ],
+      "v1/bad3_px": [
+        7281.0,
+        393216
+      ],
+      "v1/all_gt_penalized_epe_px": [
+        147719.83307552338,
+        393216
+      ],
+      "v1/all_gt_bad1": [
+        20612.0,
+        393216
+      ],
+      "v1/all_gt_bad3": [
+        7281.0,
+        393216
+      ],
+      "v1/completeness_1px": [
+        372604.0,
+        393216
+      ],
+      "v1/completeness_2px": [
+        380828.0,
+        393216
+      ],
+      "v1/prediction_coverage": [
+        393216.0,
+        393216
+      ],
+      "v1/prediction_valid_fraction": [
+        393216.0,
+        393216
+      ],
+      "v1/gt_valid_pixels": [
+        393216.0,
+        393216
+      ],
+      "v1/scale_error_log": [
+        0.0007387054502032697,
+        1
+      ],
+      "v1/dynamic_epe_px": [
+        191355.1613521576,
+        233019
+      ],
+      "v1/static_epe_px": [
+        103975.54171276093,
+        160197
+      ],
+      "v1/dynamic_penalized_epe_px": [
+        89178.50764656067,
+        233019
+      ],
+      "v1/static_penalized_epe_px": [
+        58541.32542896271,
+        160197
+      ],
+      "v1/dynamic_pixels": [
+        233019.0,
+        233019
+      ],
+      "v1/static_pixels": [
+        160197.0,
+        160197
+      ],
+      "v1/uncertainty_nll": [
+        -1294359.6227261554,
+        393216
+      ],
+      "v1/uncertainty_1sigma_coverage": [
+        349447.0,
+        393216
+      ],
+      "v1/uncertainty_2sigma_coverage": [
+        381848.0,
+        393216
+      ],
+      "v1/validity_confidence_brier_0p1_log_depth": [
+        7355.506909326636,
+        393216
+      ],
+      "v1/validity_confidence_ece_0p1_log_depth": [
+        7243.848295688623,
+        393216
+      ],
+      "v1/uncertainty_brier": [
+        7355.506909326636,
+        393216
+      ],
+      "v1/uncertainty_ece": [
+        7243.848295688623,
+        393216
+      ],
+      "v1/spring_high_detail_epe_px": [
+        27338.496557235718,
+        7718
+      ],
+      "v1/spring_high_detail_bad1": [
+        4947.0,
+        7718
+      ],
+      "v1/spring_low_detail_epe_px": [
+        120381.33651828766,
+        385498
+      ],
+      "v1/spring_low_detail_bad1": [
+        15665.0,
+        385498
+      ],
+      "v1/spring_matched_epe_px": [
+        39608.987849235535,
+        44565
+      ],
+      "v1/spring_matched_bad1": [
+        8405.0,
+        44565
+      ],
+      "v1/spring_boundary_epe_px": [
+        72902.62666416168,
+        42660
+      ],
+      "v1/spring_boundary_bad1": [
+        14785.0,
+        42660
+      ],
+      "v1/spring_unmatched_completion_1px": [
+        336444.0,
+        348651
+      ],
+      "v1/spring_unmatched_completion_2px": [
+        343316.0,
+        348651
+      ],
+      "v1/temporal_matched_common_valid_delta_epe_px": [
+        385991.4446954727,
+        393216
+      ],
+      "v1/temporal_matched_penalized_delta_epe_px": [
+        132810.58087921143,
+        393216
+      ],
+      "v1/rigid_temporal_residual_epe_px": [
+        34609.2929649353,
+        160197
+      ],
+      "v1/non_rigid_temporal_residual_epe_px": [
+        98201.28791427612,
+        233019
+      ],
+      "v1/temporal_prediction_transport_miss_rate": [
+        0.0,
+        393216
+      ],
+      "v1/temporal_disocclusion_current_epe_px": [
+        0.0,
+        0
+      ],
+      "v1/temporal_disocclusion_completion_1px": [
+        0.0,
+        0
+      ],
+      "v1/temporal_disocclusion_completion_2px": [
+        0.0,
+        0
+      ],
+      "v1/temporal_small_motion_penalized_delta_epe_px": [
+        132810.58087921143,
+        393216
+      ],
+      "v1/temporal_medium_motion_penalized_delta_epe_px": [
+        0.0,
+        0
+      ],
+      "v1/temporal_large_motion_penalized_delta_epe_px": [
+        0.0,
+        0
+      ],
+      "v1/good_current_damage_rate": [
+        7007.0,
+        124255
+      ],
+      "v1/rejection_task_failure_rate": [
+        766.0,
+        1978
+      ],
+      "v1/large_degradation_1px_rate": [
+        2857.0,
+        393216
+      ],
+      "v1/large_degradation_5px_rate": [
+        1018.0,
+        393216
+      ],
+      "v1/large_degradation_5px_excess_mean": [
+        24219.96165084839,
+        393216
+      ],
+      "v1/new_large_5px_vs_v1_rate": [
+        0.0,
+        393216
+      ],
+      "v1/removed_large_5px_vs_v1_rate": [
+        0.0,
+        393216
+      ],
+      "v1/error_increase_over_v1_5px_rate": [
+        0.0,
+        393216
+      ],
+      "v1/fixed_opportunity_recovery_rate": [
+        33833.0,
+        86554
+      ],
+      "v1/fixed_opportunity_epe_px": [
+        80592.63719367981,
+        86554
+      ],
+      "v1/recoverable_to_1px_rate": [
+        2454.0,
+        4108
+      ],
+      "v1/fg_bg_spurious_mixing_rate": [
+        344.0,
+        3143
+      ],
+      "v1/fg_bg_error_px": [
+        8581.39879989624,
+        3143
+      ],
+      "v1/boundary_good_current_damage_rate": [
+        874.0,
+        4988
+      ],
+      "v1/fg_bg_foreground_gt_error_px": [
+        4561.392284393311,
+        1742
+      ],
+      "v1/fg_bg_background_gt_error_px": [
+        4020.0065155029297,
+        1401
+      ],
+      "no_memory/metric_depth_absrel": [
+        9781.18183854923,
+        393216
+      ],
+      "no_memory/metric_depth_rmse_squared": [
+        210830.21143024816,
+        393216
+      ],
+      "no_memory/epe_px": [
+        308715.6625032425,
+        393216
+      ],
+      "no_memory/common_valid_epe_px": [
+        308715.6625032425,
+        393216
+      ],
+      "no_memory/bad1_px": [
+        19895.0,
+        393216
+      ],
+      "no_memory/bad3_px": [
+        7577.0,
+        393216
+      ],
+      "no_memory/all_gt_penalized_epe_px": [
+        168972.48927783966,
+        393216
+      ],
+      "no_memory/all_gt_bad1": [
+        19895.0,
+        393216
+      ],
+      "no_memory/all_gt_bad3": [
+        7577.0,
+        393216
+      ],
+      "no_memory/completeness_1px": [
+        373321.0,
+        393216
+      ],
+      "no_memory/completeness_2px": [
+        381595.0,
+        393216
+      ],
+      "no_memory/prediction_coverage": [
+        393216.0,
+        393216
+      ],
+      "no_memory/prediction_valid_fraction": [
+        393216.0,
+        393216
+      ],
+      "no_memory/gt_valid_pixels": [
+        393216.0,
+        393216
+      ],
+      "no_memory/scale_error_log": [
+        0.0002802217786666006,
+        1
+      ],
+      "no_memory/dynamic_epe_px": [
+        196877.9414100647,
+        233019
+      ],
+      "no_memory/static_epe_px": [
+        111837.7210931778,
+        160197
+      ],
+      "no_memory/dynamic_penalized_epe_px": [
+        94782.60467910767,
+        233019
+      ],
+      "no_memory/static_penalized_epe_px": [
+        74189.884598732,
+        160197
+      ],
+      "no_memory/dynamic_pixels": [
+        233019.0,
+        233019
+      ],
+      "no_memory/static_pixels": [
+        160197.0,
+        160197
+      ],
+      "no_memory/uncertainty_nll": [
+        -671503.1390458345,
+        393216
+      ],
+      "no_memory/uncertainty_1sigma_coverage": [
+        388800.0,
+        393216
+      ],
+      "no_memory/uncertainty_2sigma_coverage": [
+        390069.0,
+        393216
+      ],
+      "no_memory/validity_confidence_brier_0p1_log_depth": [
+        7516.987873125385,
+        393216
+      ],
+      "no_memory/validity_confidence_ece_0p1_log_depth": [
+        11026.387841522694,
+        393216
+      ],
+      "no_memory/uncertainty_brier": [
+        7516.987873125385,
+        393216
+      ],
+      "no_memory/uncertainty_ece": [
+        11026.387841522694,
+        393216
+      ],
+      "no_memory/spring_high_detail_epe_px": [
+        29192.288641929626,
+        7718
+      ],
+      "no_memory/spring_high_detail_bad1": [
+        5144.0,
+        7718
+      ],
+      "no_memory/spring_low_detail_epe_px": [
+        139780.20063591003,
+        385498
+      ],
+      "no_memory/spring_low_detail_bad1": [
+        14751.0,
+        385498
+      ],
+      "no_memory/spring_matched_epe_px": [
+        45797.306946754456,
+        44565
+      ],
+      "no_memory/spring_matched_bad1": [
+        7671.0,
+        44565
+      ],
+      "no_memory/spring_boundary_epe_px": [
+        80884.04989051819,
+        42660
+      ],
+      "no_memory/spring_boundary_bad1": [
+        15584.0,
+        42660
+      ],
+      "no_memory/spring_unmatched_completion_1px": [
+        336427.0,
+        348651
+      ],
+      "no_memory/spring_unmatched_completion_2px": [
+        343265.0,
+        348651
+      ],
+      "no_memory/temporal_matched_common_valid_delta_epe_px": [
+        407309.1762294769,
+        393216
+      ],
+      "no_memory/temporal_matched_penalized_delta_epe_px": [
+        166759.4526901245,
+        393216
+      ],
+      "no_memory/rigid_temporal_residual_epe_px": [
+        57846.02439117432,
+        160197
+      ],
+      "no_memory/non_rigid_temporal_residual_epe_px": [
+        108913.4282989502,
+        233019
+      ],
+      "no_memory/temporal_prediction_transport_miss_rate": [
+        0.0,
+        393216
+      ],
+      "no_memory/temporal_disocclusion_current_epe_px": [
+        0.0,
+        0
+      ],
+      "no_memory/temporal_disocclusion_completion_1px": [
+        0.0,
+        0
+      ],
+      "no_memory/temporal_disocclusion_completion_2px": [
+        0.0,
+        0
+      ],
+      "no_memory/temporal_small_motion_penalized_delta_epe_px": [
+        166759.4526901245,
+        393216
+      ],
+      "no_memory/temporal_medium_motion_penalized_delta_epe_px": [
+        0.0,
+        0
+      ],
+      "no_memory/temporal_large_motion_penalized_delta_epe_px": [
+        0.0,
+        0
+      ],
+      "no_memory/good_current_damage_rate": [
+        20563.0,
+        124255
+      ],
+      "no_memory/rejection_task_failure_rate": [
+        543.0,
+        1978
+      ],
+      "no_memory/large_degradation_1px_rate": [
+        1434.0,
+        393216
+      ],
+      "no_memory/large_degradation_5px_rate": [
+        558.0,
+        393216
+      ],
+      "no_memory/large_degradation_5px_excess_mean": [
+        6509.180810928345,
+        393216
+      ],
+      "no_memory/new_large_5px_vs_v1_rate": [
+        400.0,
+        393216
+      ],
+      "no_memory/removed_large_5px_vs_v1_rate": [
+        860.0,
+        393216
+      ],
+      "no_memory/error_increase_over_v1_5px_rate": [
+        1489.0,
+        393216
+      ],
+      "no_memory/fixed_opportunity_recovery_rate": [
+        9611.0,
+        86554
+      ],
+      "no_memory/fixed_opportunity_epe_px": [
+        118750.48277664185,
+        86554
+      ],
+      "no_memory/recoverable_to_1px_rate": [
+        1049.0,
+        4108
+      ],
+      "no_memory/fg_bg_spurious_mixing_rate": [
+        372.0,
+        3143
+      ],
+      "no_memory/fg_bg_error_px": [
+        26761.887826919556,
+        3143
+      ],
+      "no_memory/boundary_good_current_damage_rate": [
+        974.0,
+        4988
+      ],
+      "no_memory/fg_bg_foreground_gt_error_px": [
+        16613.2857131958,
+        1742
+      ],
+      "no_memory/fg_bg_background_gt_error_px": [
+        10148.602113723755,
+        1401
+      ],
+      "no_memory/candidate_oracle_epe_px": [
+        42651.54818058014,
+        393216
+      ],
+      "no_memory/fixed_opportunity_candidate_recovery_rate": [
+        70082.0,
+        86554
+      ],
+      "no_memory/correct_candidate_chosen_rate": [
+        373321.0,
+        389929
+      ],
+      "no_memory/history_chosen_rate": [
+        0.0,
+        393216
+      ],
+      "no_memory/VGGT_chosen_rate": [
+        31790.0,
+        393216
+      ],
+      "variant": "memory",
+      "x": 581,
+      "y": 200,
+      "GT": 14.9765625,
+      "A5": 37.51909637451172,
+      "v1": 114.25695037841797,
+      "prediction": 35.1031494140625,
+      "selected_candidate": 0,
+      "candidate_base_values": [
+        35.11865234375,
+        77.9610824584961,
+        96.04895782470703,
+        96.7517318725586,
+        16.82746696472168,
+        98.34529113769531,
+        13.26906681060791,
+        99.74910736083984,
+        99.017822265625,
+        96.08588409423828,
+        13.91169261932373,
+        96.0,
+        72.0,
+        128.0,
+        98.61285400390625,
+        98.07119750976562,
+        98.5086898803711,
+        98.81581115722656,
+        87.39110565185547,
+        96.86727905273438,
+        82.7197494506836,
+        99.09296417236328,
+        65.16319274902344
+      ],
+      "candidate_predictions": [
+        35.1031494140625,
+        77.9311752319336,
+        96.08509063720703,
+        96.82740783691406,
+        16.83527946472168,
+        98.41901397705078,
+        13.309104919433594,
+        99.79256439208984,
+        99.08031463623047,
+        96.14935302734375,
+        13.942209243774414,
+        96.033935546875,
+        71.9935302734375,
+        127.99188232421875,
+        98.6024169921875,
+        98.05850219726562,
+        98.5083236694336,
+        98.81777954101562,
+        87.38274383544922,
+        96.87344360351562,
+        82.7199478149414,
+        99.10218048095703,
+        65.14927673339844
+      ],
+      "candidate_valid": [
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true
+      ],
+      "probabilities": [
+        0.4922318458557129,
+        0.22890907526016235,
+        0.006595910526812077,
+        0.0050572603940963745,
+        0.015699634328484535,
+        0.003758236300200224,
+        0.013747057877480984,
+        0.0024264997337013483,
+        0.0038174199871718884,
+        0.00555431330576539,
+        0.010706218890845776,
+        0.001128427218645811,
+        0.0006040035514160991,
+        0.000684425700455904,
+        0.02329336479306221,
+        0.02842836268246174,
+        0.017790015786886215,
+        0.01271395105868578,
+        0.04048383980989456,
+        0.02518613263964653,
+        0.018070165067911148,
+        0.010136445052921772,
+        0.032977476716041565
+      ]
+    },
+    {
+      "sequence_id": "0005",
+      "frame_id": 10,
+      "dataset_index": 2,
+      "A5/metric_depth_absrel": [
+        10826.743157175466,
+        393216
+      ],
+      "A5/metric_depth_rmse_squared": [
+        263232.477399407,
+        393216
+      ],
+      "A5/epe_px": [
+        358071.2408056259,
+        393216
+      ],
+      "A5/common_valid_epe_px": [
+        358071.2408056259,
+        393216
+      ],
+      "A5/bad1_px": [
+        18191.0,
+        393216
+      ],
+      "A5/bad3_px": [
+        7429.0,
+        393216
+      ],
+      "A5/all_gt_penalized_epe_px": [
+        169482.4513273239,
+        393216
+      ],
+      "A5/all_gt_bad1": [
+        18191.0,
+        393216
+      ],
+      "A5/all_gt_bad3": [
+        7429.0,
+        393216
+      ],
+      "A5/completeness_1px": [
+        375025.0,
+        393216
+      ],
+      "A5/completeness_2px": [
+        384015.0,
+        393216
+      ],
+      "A5/prediction_coverage": [
+        393216.0,
+        393216
+      ],
+      "A5/prediction_valid_fraction": [
+        393216.0,
+        393216
+      ],
+      "A5/gt_valid_pixels": [
+        393216.0,
+        393216
+      ],
+      "A5/scale_error_log": [
+        0.001190430368296802,
+        1
+      ],
+      "A5/dynamic_epe_px": [
+        253605.21045970917,
+        248779
+      ],
+      "A5/static_epe_px": [
+        104466.03034591675,
+        144437
+      ],
+      "A5/dynamic_penalized_epe_px": [
+        112919.43366336823,
+        248779
+      ],
+      "A5/static_penalized_epe_px": [
+        56563.01766395569,
+        144437
+      ],
+      "A5/dynamic_pixels": [
+        248779.0,
+        248779
+      ],
+      "A5/static_pixels": [
+        144437.0,
+        144437
+      ],
+      "A5/uncertainty_nll": [
+        -1274892.9821599163,
+        393216
+      ],
+      "A5/uncertainty_1sigma_coverage": [
+        357192.0,
+        393216
+      ],
+      "A5/uncertainty_2sigma_coverage": [
+        390216.0,
+        393216
+      ],
+      "A5/validity_confidence_brier_0p1_log_depth": [
+        6090.628536939506,
+        393216
+      ],
+      "A5/validity_confidence_ece_0p1_log_depth": [
+        5973.710934340968,
+        393216
+      ],
+      "A5/uncertainty_brier": [
+        6090.628536939506,
+        393216
+      ],
+      "A5/uncertainty_ece": [
+        5973.710934340968,
+        393216
+      ],
+      "A5/spring_high_detail_epe_px": [
+        32138.51301383972,
+        8150
+      ],
+      "A5/spring_high_detail_bad1": [
+        5298.0,
+        8150
+      ],
+      "A5/spring_low_detail_epe_px": [
+        137343.9383134842,
+        385066
+      ],
+      "A5/spring_low_detail_bad1": [
+        12893.0,
+        385066
+      ],
+      "A5/spring_matched_epe_px": [
+        42264.81078338623,
+        38983
+      ],
+      "A5/spring_matched_bad1": [
+        3707.0,
+        38983
+      ],
+      "A5/spring_boundary_epe_px": [
+        87329.2382888794,
+        50712
+      ],
+      "A5/spring_boundary_bad1": [
+        15469.0,
+        50712
+      ],
+      "A5/spring_unmatched_completion_1px": [
+        339749.0,
+        354233
+      ],
+      "A5/spring_unmatched_completion_2px": [
+        348171.0,
+        354233
+      ],
+      "A5/temporal_matched_common_valid_delta_epe_px": [
+        579246.4895620346,
+        393216
+      ],
+      "A5/temporal_matched_penalized_delta_epe_px": [
+        227276.7997121811,
+        393216
+      ],
+      "A5/rigid_temporal_residual_epe_px": [
+        78201.57493019104,
+        144437
+      ],
+      "A5/non_rigid_temporal_residual_epe_px": [
+        149075.22478199005,
+        248779
+      ],
+      "A5/temporal_prediction_transport_miss_rate": [
+        0.0,
+        393216
+      ],
+      "A5/temporal_disocclusion_current_epe_px": [
+        0.0,
+        0
+      ],
+      "A5/temporal_disocclusion_completion_1px": [
+        0.0,
+        0
+      ],
+      "A5/temporal_disocclusion_completion_2px": [
+        0.0,
+        0
+      ],
+      "A5/temporal_small_motion_penalized_delta_epe_px": [
+        227276.7997121811,
+        393216
+      ],
+      "A5/temporal_medium_motion_penalized_delta_epe_px": [
+        0.0,
+        0
+      ],
+      "A5/temporal_large_motion_penalized_delta_epe_px": [
+        0.0,
+        0
+      ],
+      "A5/good_current_damage_rate": [
+        0.0,
+        106403
+      ],
+      "A5/rejection_task_failure_rate": [
+        0.0,
+        17570
+      ],
+      "A5/large_degradation_1px_rate": [
+        0.0,
+        393216
+      ],
+      "A5/large_degradation_5px_rate": [
+        0.0,
+        393216
+      ],
+      "A5/large_degradation_5px_excess_mean": [
+        0.0,
+        393216
+      ],
+      "A5/new_large_5px_vs_v1_rate": [
+        0.0,
+        393216
+      ],
+      "A5/removed_large_5px_vs_v1_rate": [
+        1329.0,
+        393216
+      ],
+      "A5/error_increase_over_v1_5px_rate": [
+        1809.0,
+        393216
+      ],
+      "A5/fixed_opportunity_recovery_rate": [
+        0.0,
+        88285
+      ],
+      "A5/fixed_opportunity_epe_px": [
+        185215.95656967163,
+        88285
+      ],
+      "A5/recoverable_to_1px_rate": [
+        0.0,
+        6293
+      ],
+      "A5/fg_bg_spurious_mixing_rate": [
+        0.0,
+        5101
+      ],
+      "A5/fg_bg_error_px": [
+        65437.844413757324,
+        5101
+      ],
+      "A5/boundary_good_current_damage_rate": [
+        0.0,
+        4875
+      ],
+      "A5/fg_bg_foreground_gt_error_px": [
+        42025.94003677368,
+        2014
+      ],
+      "A5/fg_bg_background_gt_error_px": [
+        23411.904376983643,
+        3087
+      ],
+      "v1/metric_depth_absrel": [
+        10425.003775618301,
+        393216
+      ],
+      "v1/metric_depth_rmse_squared": [
+        286316.89980508876,
+        393216
+      ],
+      "v1/epe_px": [
+        349538.42282390594,
+        393216
+      ],
+      "v1/common_valid_epe_px": [
+        349538.42282390594,
+        393216
+      ],
+      "v1/bad1_px": [
+        16808.0,
+        393216
+      ],
+      "v1/bad3_px": [
+        5826.0,
+        393216
+      ],
+      "v1/all_gt_penalized_epe_px": [
+        150441.0148973465,
+        393216
+      ],
+      "v1/all_gt_bad1": [
+        16808.0,
+        393216
+      ],
+      "v1/all_gt_bad3": [
+        5826.0,
+        393216
+      ],
+      "v1/completeness_1px": [
+        376408.0,
+        393216
+      ],
+      "v1/completeness_2px": [
+        385679.0,
+        393216
+      ],
+      "v1/prediction_coverage": [
+        393216.0,
+        393216
+      ],
+      "v1/prediction_valid_fraction": [
+        393216.0,
+        393216
+      ],
+      "v1/gt_valid_pixels": [
+        393216.0,
+        393216
+      ],
+      "v1/scale_error_log": [
+        0.0014350840356200933,
+        1
+      ],
+      "v1/dynamic_epe_px": [
+        238107.05019378662,
+        248779
+      ],
+      "v1/static_epe_px": [
+        111431.37263011932,
+        144437
+      ],
+      "v1/dynamic_penalized_epe_px": [
+        103345.01644515991,
+        248779
+      ],
+      "v1/static_penalized_epe_px": [
+        47095.998452186584,
+        144437
+      ],
+      "v1/dynamic_pixels": [
+        248779.0,
+        248779
+      ],
+      "v1/static_pixels": [
+        144437.0,
+        144437
+      ],
+      "v1/uncertainty_nll": [
+        -1294245.518577111,
+        393216
+      ],
+      "v1/uncertainty_1sigma_coverage": [
+        367218.0,
+        393216
+      ],
+      "v1/uncertainty_2sigma_coverage": [
+        389821.0,
+        393216
+      ],
+      "v1/validity_confidence_brier_0p1_log_depth": [
+        4399.926529883409,
+        393216
+      ],
+      "v1/validity_confidence_ece_0p1_log_depth": [
+        4254.7109343409675,
+        393216
+      ],
+      "v1/uncertainty_brier": [
+        4399.926529883409,
+        393216
+      ],
+      "v1/uncertainty_ece": [
+        4254.7109343409675,
+        393216
+      ],
+      "v1/spring_high_detail_epe_px": [
+        27592.30626487732,
+        8150
+      ],
+      "v1/spring_high_detail_bad1": [
+        4874.0,
+        8150
+      ],
+      "v1/spring_low_detail_epe_px": [
+        122848.70863246918,
+        385066
+      ],
+      "v1/spring_low_detail_bad1": [
+        11934.0,
+        385066
+      ],
+      "v1/spring_matched_epe_px": [
+        32683.599946022034,
+        38983
+      ],
+      "v1/spring_matched_bad1": [
+        3124.0,
+        38983
+      ],
+      "v1/spring_boundary_epe_px": [
+        72602.63953304291,
+        50712
+      ],
+      "v1/spring_boundary_bad1": [
+        13976.0,
+        50712
+      ],
+      "v1/spring_unmatched_completion_1px": [
+        340549.0,
+        354233
+      ],
+      "v1/spring_unmatched_completion_2px": [
+        349338.0,
+        354233
+      ],
+      "v1/temporal_matched_common_valid_delta_epe_px": [
+        567717.0717525482,
+        393216
+      ],
+      "v1/temporal_matched_penalized_delta_epe_px": [
+        191780.65362167358,
+        393216
+      ],
+      "v1/rigid_temporal_residual_epe_px": [
+        59172.19979095459,
+        144437
+      ],
+      "v1/non_rigid_temporal_residual_epe_px": [
+        132608.453830719,
+        248779
+      ],
+      "v1/temporal_prediction_transport_miss_rate": [
+        0.0,
+        393216
+      ],
+      "v1/temporal_disocclusion_current_epe_px": [
+        0.0,
+        0
+      ],
+      "v1/temporal_disocclusion_completion_1px": [
+        0.0,
+        0
+      ],
+      "v1/temporal_disocclusion_completion_2px": [
+        0.0,
+        0
+      ],
+      "v1/temporal_small_motion_penalized_delta_epe_px": [
+        191780.65362167358,
+        393216
+      ],
+      "v1/temporal_medium_motion_penalized_delta_epe_px": [
+        0.0,
+        0
+      ],
+      "v1/temporal_large_motion_penalized_delta_epe_px": [
+        0.0,
+        0
+      ],
+      "v1/good_current_damage_rate": [
+        7442.0,
+        106403
+      ],
+      "v1/rejection_task_failure_rate": [
+        3287.0,
+        17570
+      ],
+      "v1/large_degradation_1px_rate": [
+        2043.0,
+        393216
+      ],
+      "v1/large_degradation_5px_rate": [
+        1329.0,
+        393216
+      ],
+      "v1/large_degradation_5px_excess_mean": [
+        37564.29876327515,
+        393216
+      ],
+      "v1/new_large_5px_vs_v1_rate": [
+        0.0,
+        393216
+      ],
+      "v1/removed_large_5px_vs_v1_rate": [
+        0.0,
+        393216
+      ],
+      "v1/error_increase_over_v1_5px_rate": [
+        0.0,
+        393216
+      ],
+      "v1/fixed_opportunity_recovery_rate": [
+        39975.0,
+        88285
+      ],
+      "v1/fixed_opportunity_epe_px": [
+        126457.20451641083,
+        88285
+      ],
+      "v1/recoverable_to_1px_rate": [
+        2497.0,
+        6293
+      ],
+      "v1/fg_bg_spurious_mixing_rate": [
+        164.0,
+        5101
+      ],
+      "v1/fg_bg_error_px": [
+        35790.850286483765,
+        5101
+      ],
+      "v1/boundary_good_current_damage_rate": [
+        628.0,
+        4875
+      ],
+      "v1/fg_bg_foreground_gt_error_px": [
+        21759.082847595215,
+        2014
+      ],
+      "v1/fg_bg_background_gt_error_px": [
+        14031.76743888855,
+        3087
+      ],
+      "variant": "no_memory",
+      "x": 253,
+      "y": 147,
+      "GT": 99.25,
+      "A5": 20.956871032714844,
+      "v1": 97.0464096069336,
+      "prediction": 18.13252830505371,
+      "selected_candidate": 1,
+      "candidate_base_values": [
+        99.21238708496094,
+        18.13136863708496,
+        21.028255462646484,
+        14.785449981689453,
+        80.26366424560547,
+        13.943021774291992,
+        100.4916000366211,
+        13.786933898925781,
+        13.962997436523438,
+        97.29657745361328,
+        102.5644302368164,
+        96.0,
+        24.0,
+        184.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "candidate_predictions": [
+        99.22422790527344,
+        18.13252830505371,
+        21.049983978271484,
+        14.82939338684082,
+        80.31224822998047,
+        13.962186813354492,
+        100.5294418334961,
+        13.800727844238281,
+        14.016217231750488,
+        97.34076690673828,
+        102.6166763305664,
+        96.0076904296875,
+        23.99139404296875,
+        183.99356079101562,
+        9.999999747378752e-06,
+        9.999999747378752e-06,
+        9.999999747378752e-06,
+        9.999999747378752e-06,
+        9.999999747378752e-06,
+        9.999999747378752e-06,
+        9.999999747378752e-06,
+        9.999999747378752e-06,
+        9.999999747378752e-06
+      ],
+      "candidate_valid": [
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        false,
+        false,
+        false,
+        false,
+        false,
+        false,
+        false,
+        false,
+        false
+      ],
+      "probabilities": [
+        0.2570836842060089,
+        0.7098308205604553,
+        0.0061652762815356255,
+        0.0036385641433298588,
+        0.0018583968048915267,
+        0.0047270809300243855,
+        0.0025801281444728374,
+        0.0044580623507499695,
+        0.004493026994168758,
+        0.0036385641433298588,
+        0.0009566207299940288,
+        0.00029634725069627166,
+        0.00015374291979242116,
+        0.00011973511573160067,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "sequence_id": "0005",
+      "frame_id": 10,
+      "dataset_index": 2,
+      "A5/metric_depth_absrel": [
+        10826.743157175466,
+        393216
+      ],
+      "A5/metric_depth_rmse_squared": [
+        263232.477399407,
+        393216
+      ],
+      "A5/epe_px": [
+        358071.2408056259,
+        393216
+      ],
+      "A5/common_valid_epe_px": [
+        358071.2408056259,
+        393216
+      ],
+      "A5/bad1_px": [
+        18191.0,
+        393216
+      ],
+      "A5/bad3_px": [
+        7429.0,
+        393216
+      ],
+      "A5/all_gt_penalized_epe_px": [
+        169482.4513273239,
+        393216
+      ],
+      "A5/all_gt_bad1": [
+        18191.0,
+        393216
+      ],
+      "A5/all_gt_bad3": [
+        7429.0,
+        393216
+      ],
+      "A5/completeness_1px": [
+        375025.0,
+        393216
+      ],
+      "A5/completeness_2px": [
+        384015.0,
+        393216
+      ],
+      "A5/prediction_coverage": [
+        393216.0,
+        393216
+      ],
+      "A5/prediction_valid_fraction": [
+        393216.0,
+        393216
+      ],
+      "A5/gt_valid_pixels": [
+        393216.0,
+        393216
+      ],
+      "A5/scale_error_log": [
+        0.001190430368296802,
+        1
+      ],
+      "A5/dynamic_epe_px": [
+        253605.21045970917,
+        248779
+      ],
+      "A5/static_epe_px": [
+        104466.03034591675,
+        144437
+      ],
+      "A5/dynamic_penalized_epe_px": [
+        112919.43366336823,
+        248779
+      ],
+      "A5/static_penalized_epe_px": [
+        56563.01766395569,
+        144437
+      ],
+      "A5/dynamic_pixels": [
+        248779.0,
+        248779
+      ],
+      "A5/static_pixels": [
+        144437.0,
+        144437
+      ],
+      "A5/uncertainty_nll": [
+        -1274892.9821599163,
+        393216
+      ],
+      "A5/uncertainty_1sigma_coverage": [
+        357192.0,
+        393216
+      ],
+      "A5/uncertainty_2sigma_coverage": [
+        390216.0,
+        393216
+      ],
+      "A5/validity_confidence_brier_0p1_log_depth": [
+        6090.628536939506,
+        393216
+      ],
+      "A5/validity_confidence_ece_0p1_log_depth": [
+        5973.710934340968,
+        393216
+      ],
+      "A5/uncertainty_brier": [
+        6090.628536939506,
+        393216
+      ],
+      "A5/uncertainty_ece": [
+        5973.710934340968,
+        393216
+      ],
+      "A5/spring_high_detail_epe_px": [
+        32138.51301383972,
+        8150
+      ],
+      "A5/spring_high_detail_bad1": [
+        5298.0,
+        8150
+      ],
+      "A5/spring_low_detail_epe_px": [
+        137343.9383134842,
+        385066
+      ],
+      "A5/spring_low_detail_bad1": [
+        12893.0,
+        385066
+      ],
+      "A5/spring_matched_epe_px": [
+        42264.81078338623,
+        38983
+      ],
+      "A5/spring_matched_bad1": [
+        3707.0,
+        38983
+      ],
+      "A5/spring_boundary_epe_px": [
+        87329.2382888794,
+        50712
+      ],
+      "A5/spring_boundary_bad1": [
+        15469.0,
+        50712
+      ],
+      "A5/spring_unmatched_completion_1px": [
+        339749.0,
+        354233
+      ],
+      "A5/spring_unmatched_completion_2px": [
+        348171.0,
+        354233
+      ],
+      "A5/temporal_matched_common_valid_delta_epe_px": [
+        579246.4895620346,
+        393216
+      ],
+      "A5/temporal_matched_penalized_delta_epe_px": [
+        227276.7997121811,
+        393216
+      ],
+      "A5/rigid_temporal_residual_epe_px": [
+        78201.57493019104,
+        144437
+      ],
+      "A5/non_rigid_temporal_residual_epe_px": [
+        149075.22478199005,
+        248779
+      ],
+      "A5/temporal_prediction_transport_miss_rate": [
+        0.0,
+        393216
+      ],
+      "A5/temporal_disocclusion_current_epe_px": [
+        0.0,
+        0
+      ],
+      "A5/temporal_disocclusion_completion_1px": [
+        0.0,
+        0
+      ],
+      "A5/temporal_disocclusion_completion_2px": [
+        0.0,
+        0
+      ],
+      "A5/temporal_small_motion_penalized_delta_epe_px": [
+        227276.7997121811,
+        393216
+      ],
+      "A5/temporal_medium_motion_penalized_delta_epe_px": [
+        0.0,
+        0
+      ],
+      "A5/temporal_large_motion_penalized_delta_epe_px": [
+        0.0,
+        0
+      ],
+      "A5/good_current_damage_rate": [
+        0.0,
+        106403
+      ],
+      "A5/rejection_task_failure_rate": [
+        0.0,
+        17570
+      ],
+      "A5/large_degradation_1px_rate": [
+        0.0,
+        393216
+      ],
+      "A5/large_degradation_5px_rate": [
+        0.0,
+        393216
+      ],
+      "A5/large_degradation_5px_excess_mean": [
+        0.0,
+        393216
+      ],
+      "A5/new_large_5px_vs_v1_rate": [
+        0.0,
+        393216
+      ],
+      "A5/removed_large_5px_vs_v1_rate": [
+        1329.0,
+        393216
+      ],
+      "A5/error_increase_over_v1_5px_rate": [
+        1809.0,
+        393216
+      ],
+      "A5/fixed_opportunity_recovery_rate": [
+        0.0,
+        88285
+      ],
+      "A5/fixed_opportunity_epe_px": [
+        185215.95656967163,
+        88285
+      ],
+      "A5/recoverable_to_1px_rate": [
+        0.0,
+        6293
+      ],
+      "A5/fg_bg_spurious_mixing_rate": [
+        0.0,
+        5101
+      ],
+      "A5/fg_bg_error_px": [
+        65437.844413757324,
+        5101
+      ],
+      "A5/boundary_good_current_damage_rate": [
+        0.0,
+        4875
+      ],
+      "A5/fg_bg_foreground_gt_error_px": [
+        42025.94003677368,
+        2014
+      ],
+      "A5/fg_bg_background_gt_error_px": [
+        23411.904376983643,
+        3087
+      ],
+      "v1/metric_depth_absrel": [
+        10425.003775618301,
+        393216
+      ],
+      "v1/metric_depth_rmse_squared": [
+        286316.89980508876,
+        393216
+      ],
+      "v1/epe_px": [
+        349538.42282390594,
+        393216
+      ],
+      "v1/common_valid_epe_px": [
+        349538.42282390594,
+        393216
+      ],
+      "v1/bad1_px": [
+        16808.0,
+        393216
+      ],
+      "v1/bad3_px": [
+        5826.0,
+        393216
+      ],
+      "v1/all_gt_penalized_epe_px": [
+        150441.0148973465,
+        393216
+      ],
+      "v1/all_gt_bad1": [
+        16808.0,
+        393216
+      ],
+      "v1/all_gt_bad3": [
+        5826.0,
+        393216
+      ],
+      "v1/completeness_1px": [
+        376408.0,
+        393216
+      ],
+      "v1/completeness_2px": [
+        385679.0,
+        393216
+      ],
+      "v1/prediction_coverage": [
+        393216.0,
+        393216
+      ],
+      "v1/prediction_valid_fraction": [
+        393216.0,
+        393216
+      ],
+      "v1/gt_valid_pixels": [
+        393216.0,
+        393216
+      ],
+      "v1/scale_error_log": [
+        0.0014350840356200933,
+        1
+      ],
+      "v1/dynamic_epe_px": [
+        238107.05019378662,
+        248779
+      ],
+      "v1/static_epe_px": [
+        111431.37263011932,
+        144437
+      ],
+      "v1/dynamic_penalized_epe_px": [
+        103345.01644515991,
+        248779
+      ],
+      "v1/static_penalized_epe_px": [
+        47095.998452186584,
+        144437
+      ],
+      "v1/dynamic_pixels": [
+        248779.0,
+        248779
+      ],
+      "v1/static_pixels": [
+        144437.0,
+        144437
+      ],
+      "v1/uncertainty_nll": [
+        -1294245.518577111,
+        393216
+      ],
+      "v1/uncertainty_1sigma_coverage": [
+        367218.0,
+        393216
+      ],
+      "v1/uncertainty_2sigma_coverage": [
+        389821.0,
+        393216
+      ],
+      "v1/validity_confidence_brier_0p1_log_depth": [
+        4399.926529883409,
+        393216
+      ],
+      "v1/validity_confidence_ece_0p1_log_depth": [
+        4254.7109343409675,
+        393216
+      ],
+      "v1/uncertainty_brier": [
+        4399.926529883409,
+        393216
+      ],
+      "v1/uncertainty_ece": [
+        4254.7109343409675,
+        393216
+      ],
+      "v1/spring_high_detail_epe_px": [
+        27592.30626487732,
+        8150
+      ],
+      "v1/spring_high_detail_bad1": [
+        4874.0,
+        8150
+      ],
+      "v1/spring_low_detail_epe_px": [
+        122848.70863246918,
+        385066
+      ],
+      "v1/spring_low_detail_bad1": [
+        11934.0,
+        385066
+      ],
+      "v1/spring_matched_epe_px": [
+        32683.599946022034,
+        38983
+      ],
+      "v1/spring_matched_bad1": [
+        3124.0,
+        38983
+      ],
+      "v1/spring_boundary_epe_px": [
+        72602.63953304291,
+        50712
+      ],
+      "v1/spring_boundary_bad1": [
+        13976.0,
+        50712
+      ],
+      "v1/spring_unmatched_completion_1px": [
+        340549.0,
+        354233
+      ],
+      "v1/spring_unmatched_completion_2px": [
+        349338.0,
+        354233
+      ],
+      "v1/temporal_matched_common_valid_delta_epe_px": [
+        567717.0717525482,
+        393216
+      ],
+      "v1/temporal_matched_penalized_delta_epe_px": [
+        191780.65362167358,
+        393216
+      ],
+      "v1/rigid_temporal_residual_epe_px": [
+        59172.19979095459,
+        144437
+      ],
+      "v1/non_rigid_temporal_residual_epe_px": [
+        132608.453830719,
+        248779
+      ],
+      "v1/temporal_prediction_transport_miss_rate": [
+        0.0,
+        393216
+      ],
+      "v1/temporal_disocclusion_current_epe_px": [
+        0.0,
+        0
+      ],
+      "v1/temporal_disocclusion_completion_1px": [
+        0.0,
+        0
+      ],
+      "v1/temporal_disocclusion_completion_2px": [
+        0.0,
+        0
+      ],
+      "v1/temporal_small_motion_penalized_delta_epe_px": [
+        191780.65362167358,
+        393216
+      ],
+      "v1/temporal_medium_motion_penalized_delta_epe_px": [
+        0.0,
+        0
+      ],
+      "v1/temporal_large_motion_penalized_delta_epe_px": [
+        0.0,
+        0
+      ],
+      "v1/good_current_damage_rate": [
+        7442.0,
+        106403
+      ],
+      "v1/rejection_task_failure_rate": [
+        3287.0,
+        17570
+      ],
+      "v1/large_degradation_1px_rate": [
+        2043.0,
+        393216
+      ],
+      "v1/large_degradation_5px_rate": [
+        1329.0,
+        393216
+      ],
+      "v1/large_degradation_5px_excess_mean": [
+        37564.29876327515,
+        393216
+      ],
+      "v1/new_large_5px_vs_v1_rate": [
+        0.0,
+        393216
+      ],
+      "v1/removed_large_5px_vs_v1_rate": [
+        0.0,
+        393216
+      ],
+      "v1/error_increase_over_v1_5px_rate": [
+        0.0,
+        393216
+      ],
+      "v1/fixed_opportunity_recovery_rate": [
+        39975.0,
+        88285
+      ],
+      "v1/fixed_opportunity_epe_px": [
+        126457.20451641083,
+        88285
+      ],
+      "v1/recoverable_to_1px_rate": [
+        2497.0,
+        6293
+      ],
+      "v1/fg_bg_spurious_mixing_rate": [
+        164.0,
+        5101
+      ],
+      "v1/fg_bg_error_px": [
+        35790.850286483765,
+        5101
+      ],
+      "v1/boundary_good_current_damage_rate": [
+        628.0,
+        4875
+      ],
+      "v1/fg_bg_foreground_gt_error_px": [
+        21759.082847595215,
+        2014
+      ],
+      "v1/fg_bg_background_gt_error_px": [
+        14031.76743888855,
+        3087
+      ],
+      "no_memory/metric_depth_absrel": [
+        10290.533087864751,
+        393216
+      ],
+      "no_memory/metric_depth_rmse_squared": [
+        277452.4271531529,
+        393216
+      ],
+      "no_memory/epe_px": [
+        362626.2523355484,
+        393216
+      ],
+      "no_memory/common_valid_epe_px": [
+        362626.2523355484,
+        393216
+      ],
+      "no_memory/bad1_px": [
+        17777.0,
+        393216
+      ],
+      "no_memory/bad3_px": [
+        7326.0,
+        393216
+      ],
+      "no_memory/all_gt_penalized_epe_px": [
+        163945.87449932098,
+        393216
+      ],
+      "no_memory/all_gt_bad1": [
+        17777.0,
+        393216
+      ],
+      "no_memory/all_gt_bad3": [
+        7326.0,
+        393216
+      ],
+      "no_memory/completeness_1px": [
+        375439.0,
+        393216
+      ],
+      "no_memory/completeness_2px": [
+        384138.0,
+        393216
+      ],
+      "no_memory/prediction_coverage": [
+        393216.0,
+        393216
+      ],
+      "no_memory/prediction_valid_fraction": [
+        393216.0,
+        393216
+      ],
+      "no_memory/gt_valid_pixels": [
+        393216.0,
+        393216
+      ],
+      "no_memory/scale_error_log": [
+        0.0004618293314706534,
+        1
+      ],
+      "no_memory/dynamic_epe_px": [
+        249153.89007663727,
+        248779
+      ],
+      "no_memory/static_epe_px": [
+        113472.36225891113,
+        144437
+      ],
+      "no_memory/dynamic_penalized_epe_px": [
+        109361.36244869232,
+        248779
+      ],
+      "no_memory/static_penalized_epe_px": [
+        54584.51205062866,
+        144437
+      ],
+      "no_memory/dynamic_pixels": [
+        248779.0,
+        248779
+      ],
+      "no_memory/static_pixels": [
+        144437.0,
+        144437
+      ],
+      "no_memory/uncertainty_nll": [
+        -668370.9519790411,
+        393216
+      ],
+      "no_memory/uncertainty_1sigma_coverage": [
+        388388.0,
+        393216
+      ],
+      "no_memory/uncertainty_2sigma_coverage": [
+        389225.0,
+        393216
+      ],
+      "no_memory/validity_confidence_brier_0p1_log_depth": [
+        6097.561117043602,
+        393216
+      ],
+      "no_memory/validity_confidence_ece_0p1_log_depth": [
+        13250.038186311735,
+        393216
+      ],
+      "no_memory/uncertainty_brier": [
+        6097.561117043602,
+        393216
+      ],
+      "no_memory/uncertainty_ece": [
+        13250.038186311735,
+        393216
+      ],
+      "no_memory/spring_high_detail_epe_px": [
+        31721.378197669983,
+        8150
+      ],
+      "no_memory/spring_high_detail_bad1": [
+        5279.0,
+        8150
+      ],
+      "no_memory/spring_low_detail_epe_px": [
+        132224.496301651,
+        385066
+      ],
+      "no_memory/spring_low_detail_bad1": [
+        12498.0,
+        385066
+      ],
+      "no_memory/spring_matched_epe_px": [
+        38970.91432285309,
+        38983
+      ],
+      "no_memory/spring_matched_bad1": [
+        3671.0,
+        38983
+      ],
+      "no_memory/spring_boundary_epe_px": [
+        86115.26588249207,
+        50712
+      ],
+      "no_memory/spring_boundary_bad1": [
+        15425.0,
+        50712
+      ],
+      "no_memory/spring_unmatched_completion_1px": [
+        340127.0,
+        354233
+      ],
+      "no_memory/spring_unmatched_completion_2px": [
+        348165.0,
+        354233
+      ],
+      "no_memory/temporal_matched_common_valid_delta_epe_px": [
+        600118.5338954926,
+        393216
+      ],
+      "no_memory/temporal_matched_penalized_delta_epe_px": [
+        223758.05436515808,
+        393216
+      ],
+      "no_memory/rigid_temporal_residual_epe_px": [
+        79454.10343360901,
+        144437
+      ],
+      "no_memory/non_rigid_temporal_residual_epe_px": [
+        144303.95093154907,
+        248779
+      ],
+      "no_memory/temporal_prediction_transport_miss_rate": [
+        0.0,
+        393216
+      ],
+      "no_memory/temporal_disocclusion_current_epe_px": [
+        0.0,
+        0
+      ],
+      "no_memory/temporal_disocclusion_completion_1px": [
+        0.0,
+        0
+      ],
+      "no_memory/temporal_disocclusion_completion_2px": [
+        0.0,
+        0
+      ],
+      "no_memory/temporal_small_motion_penalized_delta_epe_px": [
+        223758.05436515808,
+        393216
+      ],
+      "no_memory/temporal_medium_motion_penalized_delta_epe_px": [
+        0.0,
+        0
+      ],
+      "no_memory/temporal_large_motion_penalized_delta_epe_px": [
+        0.0,
+        0
+      ],
+      "no_memory/good_current_damage_rate": [
+        4906.0,
+        106403
+      ],
+      "no_memory/rejection_task_failure_rate": [
+        1778.0,
+        17570
+      ],
+      "no_memory/large_degradation_1px_rate": [
+        2359.0,
+        393216
+      ],
+      "no_memory/large_degradation_5px_rate": [
+        1368.0,
+        393216
+      ],
+      "no_memory/large_degradation_5px_excess_mean": [
+        28078.23905467987,
+        393216
+      ],
+      "no_memory/new_large_5px_vs_v1_rate": [
+        1038.0,
+        393216
+      ],
+      "no_memory/removed_large_5px_vs_v1_rate": [
+        999.0,
+        393216
+      ],
+      "no_memory/error_increase_over_v1_5px_rate": [
+        2181.0,
+        393216
+      ],
+      "no_memory/fixed_opportunity_recovery_rate": [
+        20265.0,
+        88285
+      ],
+      "no_memory/fixed_opportunity_epe_px": [
+        178567.01869392395,
+        88285
+      ],
+      "no_memory/recoverable_to_1px_rate": [
+        1242.0,
+        6293
+      ],
+      "no_memory/fg_bg_spurious_mixing_rate": [
+        529.0,
+        5101
+      ],
+      "no_memory/fg_bg_error_px": [
+        71227.17795562744,
+        5101
+      ],
+      "no_memory/boundary_good_current_damage_rate": [
+        943.0,
+        4875
+      ],
+      "no_memory/fg_bg_foreground_gt_error_px": [
+        39046.122131347656,
+        2014
+      ],
+      "no_memory/fg_bg_background_gt_error_px": [
+        32181.055824279785,
+        3087
+      ],
+      "no_memory/candidate_oracle_epe_px": [
+        52814.04242134094,
+        393216
+      ],
+      "no_memory/fixed_opportunity_candidate_recovery_rate": [
+        67633.0,
+        88285
+      ],
+      "no_memory/correct_candidate_chosen_rate": [
+        375439.0,
+        389607
+      ],
+      "no_memory/history_chosen_rate": [
+        0.0,
+        393216
+      ],
+      "no_memory/VGGT_chosen_rate": [
+        30463.0,
+        393216
+      ],
+      "variant": "memory",
+      "x": 253,
+      "y": 147,
+      "GT": 99.25,
+      "A5": 20.956871032714844,
+      "v1": 97.0464096069336,
+      "prediction": 18.09718894958496,
+      "selected_candidate": 1,
+      "candidate_base_values": [
+        99.21238708496094,
+        18.13136863708496,
+        21.028255462646484,
+        14.785449981689453,
+        80.26366424560547,
+        13.943021774291992,
+        100.4916000366211,
+        13.786933898925781,
+        13.962997436523438,
+        97.29657745361328,
+        102.5644302368164,
+        96.0,
+        24.0,
+        184.0,
+        99.33525085449219,
+        96.42170715332031,
+        99.26995086669922,
+        99.51170349121094,
+        99.23570251464844,
+        90.4961166381836,
+        99.03451538085938,
+        99.75797271728516,
+        98.90104675292969
+      ],
+      "candidate_predictions": [
+        99.17234802246094,
+        18.09718894958496,
+        21.08098602294922,
+        14.836228370666504,
+        80.32469177246094,
+        13.994288444519043,
+        100.54969787597656,
+        13.841130256652832,
+        14.025980949401855,
+        97.33954620361328,
+        102.62985229492188,
+        96.0096435546875,
+        24.001953125,
+        184.00064086914062,
+        99.30509948730469,
+        96.39546203613281,
+        99.23625946044922,
+        99.47947692871094,
+        99.20396423339844,
+        90.4802474975586,
+        99.00631713867188,
+        99.72757720947266,
+        98.86833190917969
+      ],
+      "candidate_valid": [
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true
+      ],
+      "probabilities": [
+        0.14110302925109863,
+        0.6731649041175842,
+        0.010817130096256733,
+        0.011718972586095333,
+        0.0028606613632291555,
+        0.010732949711382389,
+        0.0022105476818978786,
+        0.010023768059909344,
+        0.013396562077105045,
+        0.003292601089924574,
+        0.0012793667847290635,
+        0.0005766558460891247,
+        0.00022232061019167304,
+        0.0001786396314855665,
+        0.01370086707174778,
+        0.012572621926665306,
+        0.012646505609154701,
+        0.017117740586400032,
+        0.012450439855456352,
+        0.013227563351392746,
+        0.00884594488888979,
+        0.015792718157172203,
+        0.012067381292581558
+      ]
+    },
+    {
+      "sequence_id": "0005",
+      "frame_id": 37,
+      "dataset_index": 29,
+      "A5/metric_depth_absrel": [
+        9779.016463114669,
+        393216
+      ],
+      "A5/metric_depth_rmse_squared": [
+        201976.10729594476,
+        393216
+      ],
+      "A5/epe_px": [
+        302137.46238422394,
+        393216
+      ],
+      "A5/common_valid_epe_px": [
+        302137.46238422394,
+        393216
+      ],
+      "A5/bad1_px": [
+        19553.0,
+        393216
+      ],
+      "A5/bad3_px": [
+        7849.0,
+        393216
+      ],
+      "A5/all_gt_penalized_epe_px": [
+        169290.69674777985,
+        393216
+      ],
+      "A5/all_gt_bad1": [
+        19553.0,
+        393216
+      ],
+      "A5/all_gt_bad3": [
+        7849.0,
+        393216
+      ],
+      "A5/completeness_1px": [
+        373663.0,
+        393216
+      ],
+      "A5/completeness_2px": [
+        381125.0,
+        393216
+      ],
+      "A5/prediction_coverage": [
+        393216.0,
+        393216
+      ],
+      "A5/prediction_valid_fraction": [
+        393216.0,
+        393216
+      ],
+      "A5/gt_valid_pixels": [
+        393216.0,
+        393216
+      ],
+      "A5/scale_error_log": [
+        0.0020728071685880423,
+        1
+      ],
+      "A5/dynamic_epe_px": [
+        194980.82582092285,
+        230785
+      ],
+      "A5/static_epe_px": [
+        107156.63656330109,
+        162431
+      ],
+      "A5/dynamic_penalized_epe_px": [
+        98911.52507972717,
+        230785
+      ],
+      "A5/static_penalized_epe_px": [
+        70379.17166805267,
+        162431
+      ],
+      "A5/dynamic_pixels": [
+        230785.0,
+        230785
+      ],
+      "A5/static_pixels": [
+        162431.0,
+        162431
+      ],
+      "A5/uncertainty_nll": [
+        -1242933.947585048,
+        393216
+      ],
+      "A5/uncertainty_1sigma_coverage": [
+        325192.0,
+        393216
+      ],
+      "A5/uncertainty_2sigma_coverage": [
+        380361.0,
+        393216
+      ],
+      "A5/validity_confidence_brier_0p1_log_depth": [
+        7337.592857193001,
+        393216
+      ],
+      "A5/validity_confidence_ece_0p1_log_depth": [
+        7247.580347895619,
+        393216
+      ],
+      "A5/uncertainty_brier": [
+        7337.592857193001,
+        393216
+      ],
+      "A5/uncertainty_ece": [
+        7247.580347895619,
+        393216
+      ],
+      "A5/spring_high_detail_epe_px": [
+        28445.214282989502,
+        7402
+      ],
+      "A5/spring_high_detail_bad1": [
+        5128.0,
+        7402
+      ],
+      "A5/spring_low_detail_epe_px": [
+        140845.48246479034,
+        385814
+      ],
+      "A5/spring_low_detail_bad1": [
+        14425.0,
+        385814
+      ],
+      "A5/spring_matched_epe_px": [
+        41261.09939002991,
+        42398
+      ],
+      "A5/spring_matched_bad1": [
+        8022.0,
+        42398
+      ],
+      "A5/spring_boundary_epe_px": [
+        81714.14535236359,
+        41051
+      ],
+      "A5/spring_boundary_bad1": [
+        15987.0,
+        41051
+      ],
+      "A5/spring_unmatched_completion_1px": [
+        339287.0,
+        350818
+      ],
+      "A5/spring_unmatched_completion_2px": [
+        344894.0,
+        350818
+      ],
+      "A5/temporal_matched_common_valid_delta_epe_px": [
+        376874.98748111725,
+        393216
+      ],
+      "A5/temporal_matched_penalized_delta_epe_px": [
+        158536.7567653656,
+        393216
+      ],
+      "A5/rigid_temporal_residual_epe_px": [
+        49508.4986448288,
+        162431
+      ],
+      "A5/non_rigid_temporal_residual_epe_px": [
+        109028.2581205368,
+        230785
+      ],
+      "A5/temporal_prediction_transport_miss_rate": [
+        0.0,
+        393216
+      ],
+      "A5/temporal_disocclusion_current_epe_px": [
+        0.0,
+        0
+      ],
+      "A5/temporal_disocclusion_completion_1px": [
+        0.0,
+        0
+      ],
+      "A5/temporal_disocclusion_completion_2px": [
+        0.0,
+        0
+      ],
+      "A5/temporal_small_motion_penalized_delta_epe_px": [
+        158536.7567653656,
+        393216
+      ],
+      "A5/temporal_medium_motion_penalized_delta_epe_px": [
+        0.0,
+        0
+      ],
+      "A5/temporal_large_motion_penalized_delta_epe_px": [
+        0.0,
+        0
+      ],
+      "A5/good_current_damage_rate": [
+        0.0,
+        96072
+      ],
+      "A5/rejection_task_failure_rate": [
+        0.0,
+        967
+      ],
+      "A5/large_degradation_1px_rate": [
+        0.0,
+        393216
+      ],
+      "A5/large_degradation_5px_rate": [
+        0.0,
+        393216
+      ],
+      "A5/large_degradation_5px_excess_mean": [
+        0.0,
+        393216
+      ],
+      "A5/new_large_5px_vs_v1_rate": [
+        0.0,
+        393216
+      ],
+      "A5/removed_large_5px_vs_v1_rate": [
+        813.0,
+        393216
+      ],
+      "A5/error_increase_over_v1_5px_rate": [
+        1407.0,
+        393216
+      ],
+      "A5/fixed_opportunity_recovery_rate": [
+        0.0,
+        121807
+      ],
+      "A5/fixed_opportunity_epe_px": [
+        159999.0154390335,
+        121807
+      ],
+      "A5/recoverable_to_1px_rate": [
+        0.0,
+        4058
+      ],
+      "A5/fg_bg_spurious_mixing_rate": [
+        0.0,
+        2123
+      ],
+      "A5/fg_bg_error_px": [
+        20770.916758537292,
+        2123
+      ],
+      "A5/boundary_good_current_damage_rate": [
+        0.0,
+        4176
+      ],
+      "A5/fg_bg_foreground_gt_error_px": [
+        14510.890476226807,
+        963
+      ],
+      "A5/fg_bg_background_gt_error_px": [
+        6260.026282310486,
+        1160
+      ],
+      "v1/metric_depth_absrel": [
+        9347.064261050888,
+        393216
+      ],
+      "v1/metric_depth_rmse_squared": [
+        210709.3380708329,
+        393216
+      ],
+      "v1/epe_px": [
+        281671.59355831146,
+        393216
+      ],
+      "v1/common_valid_epe_px": [
+        281671.59355831146,
+        393216
+      ],
+      "v1/bad1_px": [
+        18101.0,
+        393216
+      ],
+      "v1/bad3_px": [
+        6588.0,
+        393216
+      ],
+      "v1/all_gt_penalized_epe_px": [
+        148870.1242761612,
+        393216
+      ],
+      "v1/all_gt_bad1": [
+        18101.0,
+        393216
+      ],
+      "v1/all_gt_bad3": [
+        6588.0,
+        393216
+      ],
+      "v1/completeness_1px": [
+        375115.0,
+        393216
+      ],
+      "v1/completeness_2px": [
+        382588.0,
+        393216
+      ],
+      "v1/prediction_coverage": [
+        393216.0,
+        393216
+      ],
+      "v1/prediction_valid_fraction": [
+        393216.0,
+        393216
+      ],
+      "v1/gt_valid_pixels": [
+        393216.0,
+        393216
+      ],
+      "v1/scale_error_log": [
+        0.001794277224689722,
+        1
+      ],
+      "v1/dynamic_epe_px": [
+        178277.92002868652,
+        230785
+      ],
+      "v1/static_epe_px": [
+        103393.67352962494,
+        162431
+      ],
+      "v1/dynamic_penalized_epe_px": [
+        87992.03832244873,
+        230785
+      ],
+      "v1/static_penalized_epe_px": [
+        60878.08595371246,
+        162431
+      ],
+      "v1/dynamic_pixels": [
+        230785.0,
+        230785
+      ],
+      "v1/static_pixels": [
+        162431.0,
+        162431
+      ],
+      "v1/uncertainty_nll": [
+        -1275865.1564304032,
+        393216
+      ],
+      "v1/uncertainty_1sigma_coverage": [
+        343956.0,
+        393216
+      ],
+      "v1/uncertainty_2sigma_coverage": [
+        386066.0,
+        393216
+      ],
+      "v1/validity_confidence_brier_0p1_log_depth": [
+        5998.57906823973,
+        393216
+      ],
+      "v1/validity_confidence_ece_0p1_log_depth": [
+        5882.580347895607,
+        393216
+      ],
+      "v1/uncertainty_brier": [
+        5998.57906823973,
+        393216
+      ],
+      "v1/uncertainty_ece": [
+        5882.580347895607,
+        393216
+      ],
+      "v1/spring_high_detail_epe_px": [
+        25845.146397590637,
+        7402
+      ],
+      "v1/spring_high_detail_bad1": [
+        4907.0,
+        7402
+      ],
+      "v1/spring_low_detail_epe_px": [
+        123024.97787857056,
+        385814
+      ],
+      "v1/spring_low_detail_bad1": [
+        13194.0,
+        385814
+      ],
+      "v1/spring_matched_epe_px": [
+        36819.141224861145,
+        42398
+      ],
+      "v1/spring_matched_bad1": [
+        7616.0,
+        42398
+      ],
+      "v1/spring_boundary_epe_px": [
+        70905.42024040222,
+        41051
+      ],
+      "v1/spring_boundary_bad1": [
+        14739.0,
+        41051
+      ],
+      "v1/spring_unmatched_completion_1px": [
+        340333.0,
+        350818
+      ],
+      "v1/spring_unmatched_completion_2px": [
+        345691.0,
+        350818
+      ],
+      "v1/temporal_matched_common_valid_delta_epe_px": [
+        351858.78442287445,
+        393216
+      ],
+      "v1/temporal_matched_penalized_delta_epe_px": [
+        127458.23817157745,
+        393216
+      ],
+      "v1/rigid_temporal_residual_epe_px": [
+        32407.102277755737,
+        162431
+      ],
+      "v1/non_rigid_temporal_residual_epe_px": [
+        95051.13589382172,
+        230785
+      ],
+      "v1/temporal_prediction_transport_miss_rate": [
+        0.0,
+        393216
+      ],
+      "v1/temporal_disocclusion_current_epe_px": [
+        0.0,
+        0
+      ],
+      "v1/temporal_disocclusion_completion_1px": [
+        0.0,
+        0
+      ],
+      "v1/temporal_disocclusion_completion_2px": [
+        0.0,
+        0
+      ],
+      "v1/temporal_small_motion_penalized_delta_epe_px": [
+        127458.23817157745,
+        393216
+      ],
+      "v1/temporal_medium_motion_penalized_delta_epe_px": [
+        0.0,
+        0
+      ],
+      "v1/temporal_large_motion_penalized_delta_epe_px": [
+        0.0,
+        0
+      ],
+      "v1/good_current_damage_rate": [
+        1334.0,
+        96072
+      ],
+      "v1/rejection_task_failure_rate": [
+        270.0,
+        967
+      ],
+      "v1/large_degradation_1px_rate": [
+        1687.0,
+        393216
+      ],
+      "v1/large_degradation_5px_rate": [
+        813.0,
+        393216
+      ],
+      "v1/large_degradation_5px_excess_mean": [
+        17504.074209213257,
+        393216
+      ],
+      "v1/new_large_5px_vs_v1_rate": [
+        0.0,
+        393216
+      ],
+      "v1/removed_large_5px_vs_v1_rate": [
+        0.0,
+        393216
+      ],
+      "v1/error_increase_over_v1_5px_rate": [
+        0.0,
+        393216
+      ],
+      "v1/fixed_opportunity_recovery_rate": [
+        50302.0,
+        121807
+      ],
+      "v1/fixed_opportunity_epe_px": [
+        114529.30118846893,
+        121807
+      ],
+      "v1/recoverable_to_1px_rate": [
+        2424.0,
+        4058
+      ],
+      "v1/fg_bg_spurious_mixing_rate": [
+        201.0,
+        2123
+      ],
+      "v1/fg_bg_error_px": [
+        4710.54681968689,
+        2123
+      ],
+      "v1/boundary_good_current_damage_rate": [
+        514.0,
+        4176
+      ],
+      "v1/fg_bg_foreground_gt_error_px": [
+        2810.446952819824,
+        963
+      ],
+      "v1/fg_bg_background_gt_error_px": [
+        1900.0998668670654,
+        1160
+      ],
+      "variant": "no_memory",
+      "x": 570,
+      "y": 20,
+      "GT": 100.3125,
+      "A5": 35.26630401611328,
+      "v1": 99.33975219726562,
+      "prediction": 102.73322296142578,
+      "selected_candidate": 1,
+      "candidate_base_values": [
+        35.01502990722656,
+        102.73804473876953,
+        100.10337829589844,
+        100.98091888427734,
+        12.705074310302734,
+        13.660748481750488,
+        100.0040512084961,
+        100.4984130859375,
+        14.017436981201172,
+        101.64807891845703,
+        75.19427490234375,
+        96.0,
+        128.0,
+        280.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "candidate_predictions": [
+        35.05238342285156,
+        102.73322296142578,
+        100.22296905517578,
+        101.10002136230469,
+        12.826130867004395,
+        13.806192398071289,
+        100.08558654785156,
+        100.62922668457031,
+        14.160929679870605,
+        101.7213134765625,
+        75.27824401855469,
+        95.966064453125,
+        127.960205078125,
+        279.93115234375,
+        9.999999747378752e-06,
+        9.999999747378752e-06,
+        9.999999747378752e-06,
+        9.999999747378752e-06,
+        9.999999747378752e-06,
+        9.999999747378752e-06,
+        9.999999747378752e-06,
+        9.999999747378752e-06,
+        9.999999747378752e-06
+      ],
+      "candidate_valid": [
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        false,
+        false,
+        false,
+        false,
+        false,
+        false,
+        false,
+        false,
+        false
+      ],
+      "probabilities": [
+        0.41623032093048096,
+        0.5689194202423096,
+        0.0005522462306544185,
+        0.0015129346866160631,
+        0.001796654425561428,
+        0.00372995063662529,
+        0.0015855421079322696,
+        0.0008420749800279737,
+        0.0026141167618334293,
+        0.001573203131556511,
+        0.0003795529482886195,
+        0.00011219563748454675,
+        7.711086072959006e-05,
+        7.47384037822485e-05,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "sequence_id": "0005",
+      "frame_id": 37,
+      "dataset_index": 29,
+      "A5/metric_depth_absrel": [
+        9779.016463114669,
+        393216
+      ],
+      "A5/metric_depth_rmse_squared": [
+        201976.10729594476,
+        393216
+      ],
+      "A5/epe_px": [
+        302137.46238422394,
+        393216
+      ],
+      "A5/common_valid_epe_px": [
+        302137.46238422394,
+        393216
+      ],
+      "A5/bad1_px": [
+        19553.0,
+        393216
+      ],
+      "A5/bad3_px": [
+        7849.0,
+        393216
+      ],
+      "A5/all_gt_penalized_epe_px": [
+        169290.69674777985,
+        393216
+      ],
+      "A5/all_gt_bad1": [
+        19553.0,
+        393216
+      ],
+      "A5/all_gt_bad3": [
+        7849.0,
+        393216
+      ],
+      "A5/completeness_1px": [
+        373663.0,
+        393216
+      ],
+      "A5/completeness_2px": [
+        381125.0,
+        393216
+      ],
+      "A5/prediction_coverage": [
+        393216.0,
+        393216
+      ],
+      "A5/prediction_valid_fraction": [
+        393216.0,
+        393216
+      ],
+      "A5/gt_valid_pixels": [
+        393216.0,
+        393216
+      ],
+      "A5/scale_error_log": [
+        0.0020728071685880423,
+        1
+      ],
+      "A5/dynamic_epe_px": [
+        194980.82582092285,
+        230785
+      ],
+      "A5/static_epe_px": [
+        107156.63656330109,
+        162431
+      ],
+      "A5/dynamic_penalized_epe_px": [
+        98911.52507972717,
+        230785
+      ],
+      "A5/static_penalized_epe_px": [
+        70379.17166805267,
+        162431
+      ],
+      "A5/dynamic_pixels": [
+        230785.0,
+        230785
+      ],
+      "A5/static_pixels": [
+        162431.0,
+        162431
+      ],
+      "A5/uncertainty_nll": [
+        -1242933.947585048,
+        393216
+      ],
+      "A5/uncertainty_1sigma_coverage": [
+        325192.0,
+        393216
+      ],
+      "A5/uncertainty_2sigma_coverage": [
+        380361.0,
+        393216
+      ],
+      "A5/validity_confidence_brier_0p1_log_depth": [
+        7337.592857193001,
+        393216
+      ],
+      "A5/validity_confidence_ece_0p1_log_depth": [
+        7247.580347895619,
+        393216
+      ],
+      "A5/uncertainty_brier": [
+        7337.592857193001,
+        393216
+      ],
+      "A5/uncertainty_ece": [
+        7247.580347895619,
+        393216
+      ],
+      "A5/spring_high_detail_epe_px": [
+        28445.214282989502,
+        7402
+      ],
+      "A5/spring_high_detail_bad1": [
+        5128.0,
+        7402
+      ],
+      "A5/spring_low_detail_epe_px": [
+        140845.48246479034,
+        385814
+      ],
+      "A5/spring_low_detail_bad1": [
+        14425.0,
+        385814
+      ],
+      "A5/spring_matched_epe_px": [
+        41261.09939002991,
+        42398
+      ],
+      "A5/spring_matched_bad1": [
+        8022.0,
+        42398
+      ],
+      "A5/spring_boundary_epe_px": [
+        81714.14535236359,
+        41051
+      ],
+      "A5/spring_boundary_bad1": [
+        15987.0,
+        41051
+      ],
+      "A5/spring_unmatched_completion_1px": [
+        339287.0,
+        350818
+      ],
+      "A5/spring_unmatched_completion_2px": [
+        344894.0,
+        350818
+      ],
+      "A5/temporal_matched_common_valid_delta_epe_px": [
+        376874.98748111725,
+        393216
+      ],
+      "A5/temporal_matched_penalized_delta_epe_px": [
+        158536.7567653656,
+        393216
+      ],
+      "A5/rigid_temporal_residual_epe_px": [
+        49508.4986448288,
+        162431
+      ],
+      "A5/non_rigid_temporal_residual_epe_px": [
+        109028.2581205368,
+        230785
+      ],
+      "A5/temporal_prediction_transport_miss_rate": [
+        0.0,
+        393216
+      ],
+      "A5/temporal_disocclusion_current_epe_px": [
+        0.0,
+        0
+      ],
+      "A5/temporal_disocclusion_completion_1px": [
+        0.0,
+        0
+      ],
+      "A5/temporal_disocclusion_completion_2px": [
+        0.0,
+        0
+      ],
+      "A5/temporal_small_motion_penalized_delta_epe_px": [
+        158536.7567653656,
+        393216
+      ],
+      "A5/temporal_medium_motion_penalized_delta_epe_px": [
+        0.0,
+        0
+      ],
+      "A5/temporal_large_motion_penalized_delta_epe_px": [
+        0.0,
+        0
+      ],
+      "A5/good_current_damage_rate": [
+        0.0,
+        96072
+      ],
+      "A5/rejection_task_failure_rate": [
+        0.0,
+        967
+      ],
+      "A5/large_degradation_1px_rate": [
+        0.0,
+        393216
+      ],
+      "A5/large_degradation_5px_rate": [
+        0.0,
+        393216
+      ],
+      "A5/large_degradation_5px_excess_mean": [
+        0.0,
+        393216
+      ],
+      "A5/new_large_5px_vs_v1_rate": [
+        0.0,
+        393216
+      ],
+      "A5/removed_large_5px_vs_v1_rate": [
+        813.0,
+        393216
+      ],
+      "A5/error_increase_over_v1_5px_rate": [
+        1407.0,
+        393216
+      ],
+      "A5/fixed_opportunity_recovery_rate": [
+        0.0,
+        121807
+      ],
+      "A5/fixed_opportunity_epe_px": [
+        159999.0154390335,
+        121807
+      ],
+      "A5/recoverable_to_1px_rate": [
+        0.0,
+        4058
+      ],
+      "A5/fg_bg_spurious_mixing_rate": [
+        0.0,
+        2123
+      ],
+      "A5/fg_bg_error_px": [
+        20770.916758537292,
+        2123
+      ],
+      "A5/boundary_good_current_damage_rate": [
+        0.0,
+        4176
+      ],
+      "A5/fg_bg_foreground_gt_error_px": [
+        14510.890476226807,
+        963
+      ],
+      "A5/fg_bg_background_gt_error_px": [
+        6260.026282310486,
+        1160
+      ],
+      "v1/metric_depth_absrel": [
+        9347.064261050888,
+        393216
+      ],
+      "v1/metric_depth_rmse_squared": [
+        210709.3380708329,
+        393216
+      ],
+      "v1/epe_px": [
+        281671.59355831146,
+        393216
+      ],
+      "v1/common_valid_epe_px": [
+        281671.59355831146,
+        393216
+      ],
+      "v1/bad1_px": [
+        18101.0,
+        393216
+      ],
+      "v1/bad3_px": [
+        6588.0,
+        393216
+      ],
+      "v1/all_gt_penalized_epe_px": [
+        148870.1242761612,
+        393216
+      ],
+      "v1/all_gt_bad1": [
+        18101.0,
+        393216
+      ],
+      "v1/all_gt_bad3": [
+        6588.0,
+        393216
+      ],
+      "v1/completeness_1px": [
+        375115.0,
+        393216
+      ],
+      "v1/completeness_2px": [
+        382588.0,
+        393216
+      ],
+      "v1/prediction_coverage": [
+        393216.0,
+        393216
+      ],
+      "v1/prediction_valid_fraction": [
+        393216.0,
+        393216
+      ],
+      "v1/gt_valid_pixels": [
+        393216.0,
+        393216
+      ],
+      "v1/scale_error_log": [
+        0.001794277224689722,
+        1
+      ],
+      "v1/dynamic_epe_px": [
+        178277.92002868652,
+        230785
+      ],
+      "v1/static_epe_px": [
+        103393.67352962494,
+        162431
+      ],
+      "v1/dynamic_penalized_epe_px": [
+        87992.03832244873,
+        230785
+      ],
+      "v1/static_penalized_epe_px": [
+        60878.08595371246,
+        162431
+      ],
+      "v1/dynamic_pixels": [
+        230785.0,
+        230785
+      ],
+      "v1/static_pixels": [
+        162431.0,
+        162431
+      ],
+      "v1/uncertainty_nll": [
+        -1275865.1564304032,
+        393216
+      ],
+      "v1/uncertainty_1sigma_coverage": [
+        343956.0,
+        393216
+      ],
+      "v1/uncertainty_2sigma_coverage": [
+        386066.0,
+        393216
+      ],
+      "v1/validity_confidence_brier_0p1_log_depth": [
+        5998.57906823973,
+        393216
+      ],
+      "v1/validity_confidence_ece_0p1_log_depth": [
+        5882.580347895607,
+        393216
+      ],
+      "v1/uncertainty_brier": [
+        5998.57906823973,
+        393216
+      ],
+      "v1/uncertainty_ece": [
+        5882.580347895607,
+        393216
+      ],
+      "v1/spring_high_detail_epe_px": [
+        25845.146397590637,
+        7402
+      ],
+      "v1/spring_high_detail_bad1": [
+        4907.0,
+        7402
+      ],
+      "v1/spring_low_detail_epe_px": [
+        123024.97787857056,
+        385814
+      ],
+      "v1/spring_low_detail_bad1": [
+        13194.0,
+        385814
+      ],
+      "v1/spring_matched_epe_px": [
+        36819.141224861145,
+        42398
+      ],
+      "v1/spring_matched_bad1": [
+        7616.0,
+        42398
+      ],
+      "v1/spring_boundary_epe_px": [
+        70905.42024040222,
+        41051
+      ],
+      "v1/spring_boundary_bad1": [
+        14739.0,
+        41051
+      ],
+      "v1/spring_unmatched_completion_1px": [
+        340333.0,
+        350818
+      ],
+      "v1/spring_unmatched_completion_2px": [
+        345691.0,
+        350818
+      ],
+      "v1/temporal_matched_common_valid_delta_epe_px": [
+        351858.78442287445,
+        393216
+      ],
+      "v1/temporal_matched_penalized_delta_epe_px": [
+        127458.23817157745,
+        393216
+      ],
+      "v1/rigid_temporal_residual_epe_px": [
+        32407.102277755737,
+        162431
+      ],
+      "v1/non_rigid_temporal_residual_epe_px": [
+        95051.13589382172,
+        230785
+      ],
+      "v1/temporal_prediction_transport_miss_rate": [
+        0.0,
+        393216
+      ],
+      "v1/temporal_disocclusion_current_epe_px": [
+        0.0,
+        0
+      ],
+      "v1/temporal_disocclusion_completion_1px": [
+        0.0,
+        0
+      ],
+      "v1/temporal_disocclusion_completion_2px": [
+        0.0,
+        0
+      ],
+      "v1/temporal_small_motion_penalized_delta_epe_px": [
+        127458.23817157745,
+        393216
+      ],
+      "v1/temporal_medium_motion_penalized_delta_epe_px": [
+        0.0,
+        0
+      ],
+      "v1/temporal_large_motion_penalized_delta_epe_px": [
+        0.0,
+        0
+      ],
+      "v1/good_current_damage_rate": [
+        1334.0,
+        96072
+      ],
+      "v1/rejection_task_failure_rate": [
+        270.0,
+        967
+      ],
+      "v1/large_degradation_1px_rate": [
+        1687.0,
+        393216
+      ],
+      "v1/large_degradation_5px_rate": [
+        813.0,
+        393216
+      ],
+      "v1/large_degradation_5px_excess_mean": [
+        17504.074209213257,
+        393216
+      ],
+      "v1/new_large_5px_vs_v1_rate": [
+        0.0,
+        393216
+      ],
+      "v1/removed_large_5px_vs_v1_rate": [
+        0.0,
+        393216
+      ],
+      "v1/error_increase_over_v1_5px_rate": [
+        0.0,
+        393216
+      ],
+      "v1/fixed_opportunity_recovery_rate": [
+        50302.0,
+        121807
+      ],
+      "v1/fixed_opportunity_epe_px": [
+        114529.30118846893,
+        121807
+      ],
+      "v1/recoverable_to_1px_rate": [
+        2424.0,
+        4058
+      ],
+      "v1/fg_bg_spurious_mixing_rate": [
+        201.0,
+        2123
+      ],
+      "v1/fg_bg_error_px": [
+        4710.54681968689,
+        2123
+      ],
+      "v1/boundary_good_current_damage_rate": [
+        514.0,
+        4176
+      ],
+      "v1/fg_bg_foreground_gt_error_px": [
+        2810.446952819824,
+        963
+      ],
+      "v1/fg_bg_background_gt_error_px": [
+        1900.0998668670654,
+        1160
+      ],
+      "no_memory/metric_depth_absrel": [
+        10057.10417956005,
+        393216
+      ],
+      "no_memory/metric_depth_rmse_squared": [
+        207465.6900302575,
+        393216
+      ],
+      "no_memory/epe_px": [
+        306832.80887413025,
+        393216
+      ],
+      "no_memory/common_valid_epe_px": [
+        306832.80887413025,
+        393216
+      ],
+      "no_memory/bad1_px": [
+        18962.0,
+        393216
+      ],
+      "no_memory/bad3_px": [
+        7875.0,
+        393216
+      ],
+      "no_memory/all_gt_penalized_epe_px": [
+        169467.6375389099,
+        393216
+      ],
+      "no_memory/all_gt_bad1": [
+        18962.0,
+        393216
+      ],
+      "no_memory/all_gt_bad3": [
+        7875.0,
+        393216
+      ],
+      "no_memory/completeness_1px": [
+        374254.0,
+        393216
+      ],
+      "no_memory/completeness_2px": [
+        381695.0,
+        393216
+      ],
+      "no_memory/prediction_coverage": [
+        393216.0,
+        393216
+      ],
+      "no_memory/prediction_valid_fraction": [
+        393216.0,
+        393216
+      ],
+      "no_memory/gt_valid_pixels": [
+        393216.0,
+        393216
+      ],
+      "no_memory/scale_error_log": [
+        0.001053850632160902,
+        1
+      ],
+      "no_memory/dynamic_epe_px": [
+        195568.16417312622,
+        230785
+      ],
+      "no_memory/static_epe_px": [
+        111264.64470100403,
+        162431
+      ],
+      "no_memory/dynamic_penalized_epe_px": [
+        96554.62457084656,
+        230785
+      ],
+      "no_memory/static_penalized_epe_px": [
+        72913.01296806335,
+        162431
+      ],
+      "no_memory/dynamic_pixels": [
+        230785.0,
+        230785
+      ],
+      "no_memory/static_pixels": [
+        162431.0,
+        162431
+      ],
+      "no_memory/uncertainty_nll": [
+        -670173.7645383477,
+        393216
+      ],
+      "no_memory/uncertainty_1sigma_coverage": [
+        388959.0,
+        393216
+      ],
+      "no_memory/uncertainty_2sigma_coverage": [
+        390059.0,
+        393216
+      ],
+      "no_memory/validity_confidence_brier_0p1_log_depth": [
+        6964.127130389388,
+        393216
+      ],
+      "no_memory/validity_confidence_ece_0p1_log_depth": [
+        11680.869083166133,
+        393216
+      ],
+      "no_memory/uncertainty_brier": [
+        6964.127130389388,
+        393216
+      ],
+      "no_memory/uncertainty_ece": [
+        11680.869083166133,
+        393216
+      ],
+      "no_memory/spring_high_detail_epe_px": [
+        28431.067582130432,
+        7402
+      ],
+      "no_memory/spring_high_detail_bad1": [
+        5049.0,
+        7402
+      ],
+      "no_memory/spring_low_detail_epe_px": [
+        141036.56995677948,
+        385814
+      ],
+      "no_memory/spring_low_detail_bad1": [
+        13913.0,
+        385814
+      ],
+      "no_memory/spring_matched_epe_px": [
+        41840.1352519989,
+        42398
+      ],
+      "no_memory/spring_matched_bad1": [
+        7089.0,
+        42398
+      ],
+      "no_memory/spring_boundary_epe_px": [
+        80857.12343406677,
+        41051
+      ],
+      "no_memory/spring_boundary_bad1": [
+        15526.0,
+        41051
+      ],
+      "no_memory/spring_unmatched_completion_1px": [
+        338945.0,
+        350818
+      ],
+      "no_memory/spring_unmatched_completion_2px": [
+        344718.0,
+        350818
+      ],
+      "no_memory/temporal_matched_common_valid_delta_epe_px": [
+        386455.62448596954,
+        393216
+      ],
+      "no_memory/temporal_matched_penalized_delta_epe_px": [
+        163164.24217891693,
+        393216
+      ],
+      "no_memory/rigid_temporal_residual_epe_px": [
+        54322.15941238403,
+        162431
+      ],
+      "no_memory/non_rigid_temporal_residual_epe_px": [
+        108842.0827665329,
+        230785
+      ],
+      "no_memory/temporal_prediction_transport_miss_rate": [
+        0.0,
+        393216
+      ],
+      "no_memory/temporal_disocclusion_current_epe_px": [
+        0.0,
+        0
+      ],
+      "no_memory/temporal_disocclusion_completion_1px": [
+        0.0,
+        0
+      ],
+      "no_memory/temporal_disocclusion_completion_2px": [
+        0.0,
+        0
+      ],
+      "no_memory/temporal_small_motion_penalized_delta_epe_px": [
+        163164.24217891693,
+        393216
+      ],
+      "no_memory/temporal_medium_motion_penalized_delta_epe_px": [
+        0.0,
+        0
+      ],
+      "no_memory/temporal_large_motion_penalized_delta_epe_px": [
+        0.0,
+        0
+      ],
+      "no_memory/good_current_damage_rate": [
+        9167.0,
+        96072
+      ],
+      "no_memory/rejection_task_failure_rate": [
+        309.0,
+        967
+      ],
+      "no_memory/large_degradation_1px_rate": [
+        1746.0,
+        393216
+      ],
+      "no_memory/large_degradation_5px_rate": [
+        664.0,
+        393216
+      ],
+      "no_memory/large_degradation_5px_excess_mean": [
+        10642.976316452026,
+        393216
+      ],
+      "no_memory/new_large_5px_vs_v1_rate": [
+        562.0,
+        393216
+      ],
+      "no_memory/removed_large_5px_vs_v1_rate": [
+        711.0,
+        393216
+      ],
+      "no_memory/error_increase_over_v1_5px_rate": [
+        1655.0,
+        393216
+      ],
+      "no_memory/fixed_opportunity_recovery_rate": [
+        22632.0,
+        121807
+      ],
+      "no_memory/fixed_opportunity_epe_px": [
+        158464.35040092468,
+        121807
+      ],
+      "no_memory/recoverable_to_1px_rate": [
+        753.0,
+        4058
+      ],
+      "no_memory/fg_bg_spurious_mixing_rate": [
+        146.0,
+        2123
+      ],
+      "no_memory/fg_bg_error_px": [
+        22510.279138565063,
+        2123
+      ],
+      "no_memory/boundary_good_current_damage_rate": [
+        933.0,
+        4176
+      ],
+      "no_memory/fg_bg_foreground_gt_error_px": [
+        14502.357383728027,
+        963
+      ],
+      "no_memory/fg_bg_background_gt_error_px": [
+        8007.921754837036,
+        1160
+      ],
+      "no_memory/candidate_oracle_epe_px": [
+        43567.810848236084,
+        393216
+      ],
+      "no_memory/fixed_opportunity_candidate_recovery_rate": [
+        110714.0,
+        121807
+      ],
+      "no_memory/correct_candidate_chosen_rate": [
+        374254.0,
+        390011
+      ],
+      "no_memory/history_chosen_rate": [
+        0.0,
+        393216
+      ],
+      "no_memory/VGGT_chosen_rate": [
+        35973.0,
+        393216
+      ],
+      "variant": "memory",
+      "x": 570,
+      "y": 20,
+      "GT": 100.3125,
+      "A5": 35.26630401611328,
+      "v1": 99.33975219726562,
+      "prediction": 102.72675323486328,
+      "selected_candidate": 1,
+      "candidate_base_values": [
+        35.01502990722656,
+        102.73804473876953,
+        100.10337829589844,
+        100.98091888427734,
+        12.705074310302734,
+        13.660748481750488,
+        100.0040512084961,
+        100.4984130859375,
+        14.017436981201172,
+        101.64807891845703,
+        75.19427490234375,
+        96.0,
+        128.0,
+        280.0,
+        100.79766082763672,
+        100.86506652832031,
+        81.2601318359375,
+        100.72420501708984,
+        100.86260986328125,
+        100.94759368896484,
+        42.22987365722656,
+        100.60734558105469,
+        100.9217529296875
+      ],
+      "candidate_predictions": [
+        34.99818420410156,
+        102.72675323486328,
+        100.21565246582031,
+        101.08148193359375,
+        12.790998458862305,
+        13.749113082885742,
+        100.1011962890625,
+        100.5979995727539,
+        14.10677719116211,
+        101.7218017578125,
+        75.27288055419922,
+        96.01544189453125,
+        128.00384521484375,
+        279.993896484375,
+        100.82671356201172,
+        100.86628723144531,
+        81.25808715820312,
+        100.72614288330078,
+        100.89849853515625,
+        100.9398422241211,
+        42.23524475097656,
+        100.59690856933594,
+        100.9420166015625
+      ],
+      "candidate_valid": [
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true
+      ],
+      "probabilities": [
+        0.20015312731266022,
+        0.5273332595825195,
+        0.0013486210955306888,
+        0.0015522533794865012,
+        0.0017316637095063925,
+        0.004219462163746357,
+        0.0016783862374722958,
+        0.0013071284629404545,
+        0.0012088961666449904,
+        0.0013914309674873948,
+        0.0013486210955306888,
+        0.00019127516134176403,
+        0.000174157990841195,
+        0.00016879974282346666,
+        0.012996858917176723,
+        0.05779459327459335,
+        0.011358224786818027,
+        0.020687950775027275,
+        0.012293167412281036,
+        0.04828919097781181,
+        0.005655770655721426,
+        0.0568985715508461,
+        0.03021860308945179
+      ]
+    }
+  ],
+  "raw_verification": {
+    "status": "PASS",
+    "samples": 8,
+    "rows": [
+      {
+        "variant": "no_memory",
+        "dataset_index": 0,
+        "raw_cache_max_abs_px": 0.0,
+        "future_pixel_past_max_abs_px": 0.0,
+        "independent_prefix_max_abs_px": 0.0
+      },
+      {
+        "variant": "memory",
+        "dataset_index": 0,
+        "raw_cache_max_abs_px": 0.0,
+        "future_pixel_past_max_abs_px": 0.0,
+        "independent_prefix_max_abs_px": 0.0
+      },
+      {
+        "variant": "no_memory",
+        "dataset_index": 2,
+        "raw_cache_max_abs_px": 0.0,
+        "future_pixel_past_max_abs_px": 0.0,
+        "independent_prefix_max_abs_px": 0.0
+      },
+      {
+        "variant": "memory",
+        "dataset_index": 2,
+        "raw_cache_max_abs_px": 0.0,
+        "future_pixel_past_max_abs_px": 0.0,
+        "independent_prefix_max_abs_px": 0.0
+      },
+      {
+        "variant": "no_memory",
+        "dataset_index": 24,
+        "raw_cache_max_abs_px": 0.0,
+        "future_pixel_past_max_abs_px": 0.0,
+        "independent_prefix_max_abs_px": 0.0
+      },
+      {
+        "variant": "memory",
+        "dataset_index": 24,
+        "raw_cache_max_abs_px": 0.0,
+        "future_pixel_past_max_abs_px": 0.0,
+        "independent_prefix_max_abs_px": 0.0
+      },
+      {
+        "variant": "no_memory",
+        "dataset_index": 29,
+        "raw_cache_max_abs_px": 0.0,
+        "future_pixel_past_max_abs_px": 0.0,
+        "independent_prefix_max_abs_px": 0.0
+      },
+      {
+        "variant": "memory",
+        "dataset_index": 29,
+        "raw_cache_max_abs_px": 0.0,
+        "future_pixel_past_max_abs_px": 0.0,
+        "independent_prefix_max_abs_px": 0.0
+      },
+      {
+        "variant": "no_memory",
+        "dataset_index": 300,
+        "raw_cache_max_abs_px": 0.0,
+        "future_pixel_past_max_abs_px": 0.0,
+        "independent_prefix_max_abs_px": 0.0
+      },
+      {
+        "variant": "memory",
+        "dataset_index": 300,
+        "raw_cache_max_abs_px": 0.0,
+        "future_pixel_past_max_abs_px": 0.0,
+        "independent_prefix_max_abs_px": 0.0
+      },
+      {
+        "variant": "no_memory",
+        "dataset_index": 600,
+        "raw_cache_max_abs_px": 0.0,
+        "future_pixel_past_max_abs_px": 0.0,
+        "independent_prefix_max_abs_px": 0.0
+      },
+      {
+        "variant": "memory",
+        "dataset_index": 600,
+        "raw_cache_max_abs_px": 0.0,
+        "future_pixel_past_max_abs_px": 0.0,
+        "independent_prefix_max_abs_px": 0.0
+      },
+      {
+        "variant": "no_memory",
+        "dataset_index": 900,
+        "raw_cache_max_abs_px": 0.0,
+        "future_pixel_past_max_abs_px": 0.0,
+        "independent_prefix_max_abs_px": 0.0
+      },
+      {
+        "variant": "memory",
+        "dataset_index": 900,
+        "raw_cache_max_abs_px": 0.0,
+        "future_pixel_past_max_abs_px": 0.0,
+        "independent_prefix_max_abs_px": 0.0
+      },
+      {
+        "variant": "no_memory",
+        "dataset_index": 1200,
+        "raw_cache_max_abs_px": 0.0,
+        "future_pixel_past_max_abs_px": 0.0,
+        "independent_prefix_max_abs_px": 0.0
+      },
+      {
+        "variant": "memory",
+        "dataset_index": 1200,
+        "raw_cache_max_abs_px": 0.0,
+        "future_pixel_past_max_abs_px": 0.0,
+        "independent_prefix_max_abs_px": 0.0
+      }
+    ],
+    "old_geometry_executed": false,
+    "source_sha256": "7cd971928c0561eca34c1803d73357eb69296ee1616dbf00ed19729aa6a8896d",
+    "elapsed_s": 11.585882197017781
+  },
+  "parameter_changes": {
+    "no_memory": {
+      "key.weight": 0.035982485860586166,
+      "key.bias": 0.008885597810149193,
+      "context.0.weight": 0.049307048320770264,
+      "context.0.bias": 0.006361267529428005,
+      "context.1.weight": 0.027913689613342285,
+      "context.1.bias": 0.01980123296380043,
+      "source.weight": 0.026671528816223145,
+      "label.0.weight": 0.029834795743227005,
+      "label.0.bias": 0.012408047914505005,
+      "label.1.weight": 0.03645479679107666,
+      "label.1.bias": 0.024437641724944115,
+      "interactions.0.norm.weight": 0.03216719627380371,
+      "interactions.0.norm.bias": 0.014648335985839367,
+      "interactions.0.qkv.weight": 0.05380277335643768,
+      "interactions.0.qkv.bias": 0.01783708855509758,
+      "interactions.0.project.weight": 0.031080935150384903,
+      "interactions.0.project.bias": 0.019470520317554474,
+      "interactions.0.spatial.0.weight": 0.04372170567512512,
+      "interactions.0.spatial.0.bias": 0.015595940873026848,
+      "interactions.0.spatial.1.weight": 0.04735076427459717,
+      "interactions.0.spatial.1.bias": 0.02556421235203743,
+      "interactions.0.spatial.3.weight": 0.04275292158126831,
+      "interactions.0.spatial.3.bias": 0.027164645493030548,
+      "interactions.1.norm.weight": 0.037340521812438965,
+      "interactions.1.norm.bias": 0.021827543154358864,
+      "interactions.1.qkv.weight": 0.059270814061164856,
+      "interactions.1.qkv.bias": 0.029276855289936066,
+      "interactions.1.project.weight": 0.04273827373981476,
+      "interactions.1.project.bias": 0.018112443387508392,
+      "interactions.1.spatial.0.weight": 0.031160051003098488,
+      "interactions.1.spatial.0.bias": 0.017819009721279144,
+      "interactions.1.spatial.1.weight": 0.05089712142944336,
+      "interactions.1.spatial.1.bias": 0.036606546491384506,
+      "interactions.1.spatial.3.weight": 0.04283160716295242,
+      "interactions.1.spatial.3.bias": 0.01952996850013733,
+      "pixel_head.weight": 0.025716258212924004,
+      "pixel_head.bias": 0.0068596890196204185,
+      "quality.weight": 0.12824028730392456,
+      "quality.bias": 0.06011924520134926
+    },
+    "memory": {
+      "key.weight": 0.03360063210129738,
+      "key.bias": 0.0063044242560863495,
+      "context.0.weight": 0.053278494626283646,
+      "context.0.bias": 0.008082296699285507,
+      "context.1.weight": 0.030241966247558594,
+      "context.1.bias": 0.017964597791433334,
+      "source.weight": 0.032535433769226074,
+      "label.0.weight": 0.03213612735271454,
+      "label.0.bias": 0.014176476746797562,
+      "label.1.weight": 0.03490865230560303,
+      "label.1.bias": 0.017644347622990608,
+      "interactions.0.norm.weight": 0.06051623821258545,
+      "interactions.0.norm.bias": 0.017357083037495613,
+      "interactions.0.qkv.weight": 0.06024569272994995,
+      "interactions.0.qkv.bias": 0.024636924266815186,
+      "interactions.0.project.weight": 0.042451731860637665,
+      "interactions.0.project.bias": 0.014632653445005417,
+      "interactions.0.spatial.0.weight": 0.04739965498447418,
+      "interactions.0.spatial.0.bias": 0.012727021239697933,
+      "interactions.0.spatial.1.weight": 0.04802536964416504,
+      "interactions.0.spatial.1.bias": 0.029692944139242172,
+      "interactions.0.spatial.3.weight": 0.04150381684303284,
+      "interactions.0.spatial.3.bias": 0.022650964558124542,
+      "interactions.1.norm.weight": 0.03809034824371338,
+      "interactions.1.norm.bias": 0.01599849760532379,
+      "interactions.1.qkv.weight": 0.055108800530433655,
+      "interactions.1.qkv.bias": 0.03302275389432907,
+      "interactions.1.project.weight": 0.0510479211807251,
+      "interactions.1.project.bias": 0.016942517831921577,
+      "interactions.1.spatial.0.weight": 0.02835584059357643,
+      "interactions.1.spatial.0.bias": 0.020558081567287445,
+      "interactions.1.spatial.1.weight": 0.0522991418838501,
+      "interactions.1.spatial.1.bias": 0.03685106709599495,
+      "interactions.1.spatial.3.weight": 0.044636309146881104,
+      "interactions.1.spatial.3.bias": 0.01421472430229187,
+      "pixel_head.weight": 0.026873357594013214,
+      "pixel_head.bias": 0.006990355905145407,
+      "quality.weight": 0.12233150005340576,
+      "quality.bias": 0.058158453553915024
+    }
+  },
+  "original_source_files_checked": 65,
+  "original_source_files_changed": [],
+  "claim_boundary": "new pixel-level hypothesis decoder; frozen FFS/VGGT observations; explicit-memory effect isolated within the pair; not full NMRF reproduction; reused development benchmark"
+}

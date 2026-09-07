@@ -1,0 +1,121 @@
+{
+  "status": "PASS",
+  "samples": 8,
+  "rows": [
+    {
+      "variant": "no_memory",
+      "dataset_index": 0,
+      "raw_cache_max_abs_px": 0.0,
+      "future_pixel_past_max_abs_px": 0.0,
+      "independent_prefix_max_abs_px": 0.0
+    },
+    {
+      "variant": "memory",
+      "dataset_index": 0,
+      "raw_cache_max_abs_px": 0.0,
+      "future_pixel_past_max_abs_px": 0.0,
+      "independent_prefix_max_abs_px": 0.0
+    },
+    {
+      "variant": "no_memory",
+      "dataset_index": 2,
+      "raw_cache_max_abs_px": 0.0,
+      "future_pixel_past_max_abs_px": 0.0,
+      "independent_prefix_max_abs_px": 0.0
+    },
+    {
+      "variant": "memory",
+      "dataset_index": 2,
+      "raw_cache_max_abs_px": 0.0,
+      "future_pixel_past_max_abs_px": 0.0,
+      "independent_prefix_max_abs_px": 0.0
+    },
+    {
+      "variant": "no_memory",
+      "dataset_index": 24,
+      "raw_cache_max_abs_px": 0.0,
+      "future_pixel_past_max_abs_px": 0.0,
+      "independent_prefix_max_abs_px": 0.0
+    },
+    {
+      "variant": "memory",
+      "dataset_index": 24,
+      "raw_cache_max_abs_px": 0.0,
+      "future_pixel_past_max_abs_px": 0.0,
+      "independent_prefix_max_abs_px": 0.0
+    },
+    {
+      "variant": "no_memory",
+      "dataset_index": 29,
+      "raw_cache_max_abs_px": 0.0,
+      "future_pixel_past_max_abs_px": 0.0,
+      "independent_prefix_max_abs_px": 0.0
+    },
+    {
+      "variant": "memory",
+      "dataset_index": 29,
+      "raw_cache_max_abs_px": 0.0,
+      "future_pixel_past_max_abs_px": 0.0,
+      "independent_prefix_max_abs_px": 0.0
+    },
+    {
+      "variant": "no_memory",
+      "dataset_index": 300,
+      "raw_cache_max_abs_px": 0.0,
+      "future_pixel_past_max_abs_px": 0.0,
+      "independent_prefix_max_abs_px": 0.0
+    },
+    {
+      "variant": "memory",
+      "dataset_index": 300,
+      "raw_cache_max_abs_px": 0.0,
+      "future_pixel_past_max_abs_px": 0.0,
+      "independent_prefix_max_abs_px": 0.0
+    },
+    {
+      "variant": "no_memory",
+      "dataset_index": 600,
+      "raw_cache_max_abs_px": 0.0,
+      "future_pixel_past_max_abs_px": 0.0,
+      "independent_prefix_max_abs_px": 0.0
+    },
+    {
+      "variant": "memory",
+      "dataset_index": 600,
+      "raw_cache_max_abs_px": 0.0,
+      "future_pixel_past_max_abs_px": 0.0,
+      "independent_prefix_max_abs_px": 0.0
+    },
+    {
+      "variant": "no_memory",
+      "dataset_index": 900,
+      "raw_cache_max_abs_px": 0.0,
+      "future_pixel_past_max_abs_px": 0.0,
+      "independent_prefix_max_abs_px": 0.0
+    },
+    {
+      "variant": "memory",
+      "dataset_index": 900,
+      "raw_cache_max_abs_px": 0.0,
+      "future_pixel_past_max_abs_px": 0.0,
+      "independent_prefix_max_abs_px": 0.0
+    },
+    {
+      "variant": "no_memory",
+      "dataset_index": 1200,
+      "raw_cache_max_abs_px": 0.0,
+      "future_pixel_past_max_abs_px": 0.0,
+      "independent_prefix_max_abs_px": 0.0
+    },
+    {
+      "variant": "memory",
+      "dataset_index": 1200,
+      "raw_cache_max_abs_px": 0.0,
+      "future_pixel_past_max_abs_px": 0.0,
+      "independent_prefix_max_abs_px": 0.0
+    }
+  ],
+  "old_geometry_executed": false,
+  "source_sha256": "7cd971928c0561eca34c1803d73357eb69296ee1616dbf00ed19729aa6a8896d",
+  "elapsed_s": 11.585882197017781
+}
