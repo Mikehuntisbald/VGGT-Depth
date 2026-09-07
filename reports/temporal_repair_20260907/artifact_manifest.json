@@ -1,0 +1,351 @@
+{
+  "original_base_commit": "2436e8a03c2063d49f658aa3e805c432a183fd92",
+  "source_run": "runs/metric_stereo_video/temporal_repair_20260907",
+  "scope": "Reports, metrics, per-sample evidence, training receipts and checks. Large JSON is losslessly gzipped. Markdown links are adapted; original report hashes are retained. Weights, caches, logs and duplicate source snapshots remain on the experiment host.",
+  "files": [
+    {
+      "source": "runs/metric_stereo_video/temporal_repair_20260907/REPORT.md",
+      "source_sha256": "d459700d64fde7f8e6dacf09b9249e7ab204d1c5a72d2a3a2d7efc19edf82297",
+      "source_bytes": 10232,
+      "archive": "REPORT.md",
+      "archive_sha256": "0a03069cf9a68abf7b4112c099e9b44b0f71f4e43ff17e1aeb9d6dffe6187b8a",
+      "archive_bytes": 10360,
+      "encoding": "identity",
+      "markdown_links_adapted": true
+    },
+    {
+      "source": "runs/metric_stereo_video/temporal_repair_20260907/a4_full_evaluation/ablation_matrix.json",
+      "source_sha256": "031dd4f7c230cdf136271c9bea99f69da30271548498b60700298c5724f89bf1",
+      "source_bytes": 15534,
+      "archive": "a4_full_evaluation/ablation_matrix.json",
+      "archive_sha256": "031dd4f7c230cdf136271c9bea99f69da30271548498b60700298c5724f89bf1",
+      "archive_bytes": 15534,
+      "encoding": "identity",
+      "markdown_links_adapted": false
+    },
+    {
+      "source": "runs/metric_stereo_video/temporal_repair_20260907/a4_full_evaluation/metrics.csv",
+      "source_sha256": "a3eaf0b24709917a29e608e9dddfc249aa983efb868c943a74e4d9c81848e20a",
+      "source_bytes": 5898,
+      "archive": "a4_full_evaluation/metrics.csv",
+      "archive_sha256": "a3eaf0b24709917a29e608e9dddfc249aa983efb868c943a74e4d9c81848e20a",
+      "archive_bytes": 5898,
+      "encoding": "identity",
+      "markdown_links_adapted": false
+    },
+    {
+      "source": "runs/metric_stereo_video/temporal_repair_20260907/a4_full_evaluation/metrics.json",
+      "source_sha256": "1b9fcfa8ea7a4770464d009d003359261f7c9ffc7c927f49197d4506f7c9ec6e",
+      "source_bytes": 18787,
+      "archive": "a4_full_evaluation/metrics.json",
+      "archive_sha256": "1b9fcfa8ea7a4770464d009d003359261f7c9ffc7c927f49197d4506f7c9ec6e",
+      "archive_bytes": 18787,
+      "encoding": "identity",
+      "markdown_links_adapted": false
+    },
+    {
+      "source": "runs/metric_stereo_video/temporal_repair_20260907/cache_receipts/lineage.json",
+      "source_sha256": "4996254fdad60123c6b704dc9a856169d04ec37e0167e57214ebc14549c1d76a",
+      "source_bytes": 1053,
+      "archive": "cache_receipts/lineage.json",
+      "archive_sha256": "4996254fdad60123c6b704dc9a856169d04ec37e0167e57214ebc14549c1d76a",
+      "archive_bytes": 1053,
+      "encoding": "identity",
+      "markdown_links_adapted": false
+    },
+    {
+      "source": "runs/metric_stereo_video/temporal_repair_20260907/cache_receipts/train_complete.json",
+      "source_sha256": "9c384e9a79a6ac5c952f60e41a816199d2f4ca64ea95418a5cb9ac3d23b85424",
+      "source_bytes": 73,
+      "archive": "cache_receipts/train_complete.json",
+      "archive_sha256": "9c384e9a79a6ac5c952f60e41a816199d2f4ca64ea95418a5cb9ac3d23b85424",
+      "archive_bytes": 73,
+      "encoding": "identity",
+      "markdown_links_adapted": false
+    },
+    {
+      "source": "runs/metric_stereo_video/temporal_repair_20260907/cache_receipts/train_plan.json",
+      "source_sha256": "8307d66c6a1e11552204960a950324324c105f39cac7c88e186dcccae780eb67",
+      "source_bytes": 11240,
+      "archive": "cache_receipts/train_plan.json",
+      "archive_sha256": "8307d66c6a1e11552204960a950324324c105f39cac7c88e186dcccae780eb67",
+      "archive_bytes": 11240,
+      "encoding": "identity",
+      "markdown_links_adapted": false
+    },
+    {
+      "source": "runs/metric_stereo_video/temporal_repair_20260907/cache_receipts/validation_complete.json",
+      "source_sha256": "2226a903cc0cbaa2b8ba7c19676865556563cf50031627922ed04f5cafd225e6",
+      "source_bytes": 70,
+      "archive": "cache_receipts/validation_complete.json",
+      "archive_sha256": "2226a903cc0cbaa2b8ba7c19676865556563cf50031627922ed04f5cafd225e6",
+      "archive_bytes": 70,
+      "encoding": "identity",
+      "markdown_links_adapted": false
+    },
+    {
+      "source": "runs/metric_stereo_video/temporal_repair_20260907/cache_receipts/validation_plan.json",
+      "source_sha256": "45488ee780bb0a45e1f63e1dc930f953e0fabbd30d6128816866dd906767d713",
+      "source_bytes": 11927,
+      "archive": "cache_receipts/validation_plan.json",
+      "archive_sha256": "45488ee780bb0a45e1f63e1dc930f953e0fabbd30d6128816866dd906767d713",
+      "archive_bytes": 11927,
+      "encoding": "identity",
+      "markdown_links_adapted": false
+    },
+    {
+      "source": "runs/metric_stereo_video/temporal_repair_20260907/evaluation_v1/failure_cases/cases.json",
+      "source_sha256": "5e4694ac250f1082c8095647fca613e09b61375c7477f885b48d4a92a7d17f7a",
+      "source_bytes": 2276,
+      "archive": "evaluation_v1/failure_cases/cases.json",
+      "archive_sha256": "5e4694ac250f1082c8095647fca613e09b61375c7477f885b48d4a92a7d17f7a",
+      "archive_bytes": 2276,
+      "encoding": "identity",
+      "markdown_links_adapted": false
+    },
+    {
+      "source": "runs/metric_stereo_video/temporal_repair_20260907/evaluation_v1/failure_cases/top_failures_000022.png",
+      "source_sha256": "63e5780452bffa7f130ecfea9ad0b9eaca74d6c720a0af5b7f199b96a4d65149",
+      "source_bytes": 492335,
+      "archive": "evaluation_v1/failure_cases/top_failures_000022.png",
+      "archive_sha256": "63e5780452bffa7f130ecfea9ad0b9eaca74d6c720a0af5b7f199b96a4d65149",
+      "archive_bytes": 492335,
+      "encoding": "identity",
+      "markdown_links_adapted": false
+    },
+    {
+      "source": "runs/metric_stereo_video/temporal_repair_20260907/evaluation_v1/failure_cases/top_failures_000024.png",
+      "source_sha256": "3577d50dccec7cb58898e2005ffb38e27d75f00728f060857d8bfc71e98ede7d",
+      "source_bytes": 552587,
+      "archive": "evaluation_v1/failure_cases/top_failures_000024.png",
+      "archive_sha256": "3577d50dccec7cb58898e2005ffb38e27d75f00728f060857d8bfc71e98ede7d",
+      "archive_bytes": 552587,
+      "encoding": "identity",
+      "markdown_links_adapted": false
+    },
+    {
+      "source": "runs/metric_stereo_video/temporal_repair_20260907/evaluation_v1/failure_cases/top_failures_000032.png",
+      "source_sha256": "4a77644fdcede6d677a9c37d2e81b58aadf00d4b5aab6593a892436a82dd3b03",
+      "source_bytes": 628634,
+      "archive": "evaluation_v1/failure_cases/top_failures_000032.png",
+      "archive_sha256": "4a77644fdcede6d677a9c37d2e81b58aadf00d4b5aab6593a892436a82dd3b03",
+      "archive_bytes": 628634,
+      "encoding": "identity",
+      "markdown_links_adapted": false
+    },
+    {
+      "source": "runs/metric_stereo_video/temporal_repair_20260907/evaluation_v1/failure_cases/top_rescues_000002.png",
+      "source_sha256": "f1dcbb493aa440266bd059b76a14516c7a2f542a3539aa7f14bdb103be7d9088",
+      "source_bytes": 515236,
+      "archive": "evaluation_v1/failure_cases/top_rescues_000002.png",
+      "archive_sha256": "f1dcbb493aa440266bd059b76a14516c7a2f542a3539aa7f14bdb103be7d9088",
+      "archive_bytes": 515236,
+      "encoding": "identity",
+      "markdown_links_adapted": false
+    },
+    {
+      "source": "runs/metric_stereo_video/temporal_repair_20260907/evaluation_v1/failure_cases/top_rescues_000022.png",
+      "source_sha256": "b6aa5a5e01a008ce2c1e8de715772a6319c2dfa38e33cee0a43cdd3b91edc6bd",
+      "source_bytes": 475434,
+      "archive": "evaluation_v1/failure_cases/top_rescues_000022.png",
+      "archive_sha256": "b6aa5a5e01a008ce2c1e8de715772a6319c2dfa38e33cee0a43cdd3b91edc6bd",
+      "archive_bytes": 475434,
+      "encoding": "identity",
+      "markdown_links_adapted": false
+    },
+    {
+      "source": "runs/metric_stereo_video/temporal_repair_20260907/evaluation_v1/failure_cases/top_rescues_000023.png",
+      "source_sha256": "f5fd842a0986b132d609406fe15b8496ff42563f516ae864f9b148c480cd4c1f",
+      "source_bytes": 546476,
+      "archive": "evaluation_v1/failure_cases/top_rescues_000023.png",
+      "archive_sha256": "f5fd842a0986b132d609406fe15b8496ff42563f516ae864f9b148c480cd4c1f",
+      "archive_bytes": 546476,
+      "encoding": "identity",
+      "markdown_links_adapted": false
+    },
+    {
+      "source": "runs/metric_stereo_video/temporal_repair_20260907/evaluation_v1/metrics.csv",
+      "source_sha256": "d94fac75253a2db933661977e8e08583fc2a1982effea0c2a918209310f55f3f",
+      "source_bytes": 3678,
+      "archive": "evaluation_v1/metrics.csv",
+      "archive_sha256": "d94fac75253a2db933661977e8e08583fc2a1982effea0c2a918209310f55f3f",
+      "archive_bytes": 3678,
+      "encoding": "identity",
+      "markdown_links_adapted": false
+    },
+    {
+      "source": "runs/metric_stereo_video/temporal_repair_20260907/evaluation_v1/metrics.json",
+      "source_sha256": "d416231b0314f0c8dfe317ff9e9bb2600019a968e075411fab2490a64a2cc71a",
+      "source_bytes": 41802,
+      "archive": "evaluation_v1/metrics.json",
+      "archive_sha256": "d416231b0314f0c8dfe317ff9e9bb2600019a968e075411fab2490a64a2cc71a",
+      "archive_bytes": 41802,
+      "encoding": "identity",
+      "markdown_links_adapted": false
+    },
+    {
+      "source": "runs/metric_stereo_video/temporal_repair_20260907/evaluation_v1/paired_sequence_analysis.json",
+      "source_sha256": "55308d05c48ca76c6b6371447e8346eb4629e091d97eaa8055ec69921f82cc58",
+      "source_bytes": 11032,
+      "archive": "evaluation_v1/paired_sequence_analysis.json",
+      "archive_sha256": "55308d05c48ca76c6b6371447e8346eb4629e091d97eaa8055ec69921f82cc58",
+      "archive_bytes": 11032,
+      "encoding": "identity",
+      "markdown_links_adapted": false
+    },
+    {
+      "source": "runs/metric_stereo_video/temporal_repair_20260907/evaluation_v1/per_sample.json",
+      "source_sha256": "377741cc18b19c65d7bbaa3a208bf43d609d2852e05558f6a473e46e80af779e",
+      "source_bytes": 1530260,
+      "archive": "evaluation_v1/per_sample.json.gz",
+      "archive_sha256": "3f021abb97705529482b6dd1f8ccc80dfadfed8ee7d90640b4557c60c58d937c",
+      "archive_bytes": 224494,
+      "encoding": "gzip",
+      "markdown_links_adapted": false
+    },
+    {
+      "source": "runs/metric_stereo_video/temporal_repair_20260907/evaluation_v2_raw/metrics.csv",
+      "source_sha256": "c9b508b3ad27b6e96941659c1b4e16c57a48e1b122852555524d14b8def2016f",
+      "source_bytes": 3676,
+      "archive": "evaluation_v2_raw/metrics.csv",
+      "archive_sha256": "c9b508b3ad27b6e96941659c1b4e16c57a48e1b122852555524d14b8def2016f",
+      "archive_bytes": 3676,
+      "encoding": "identity",
+      "markdown_links_adapted": false
+    },
+    {
+      "source": "runs/metric_stereo_video/temporal_repair_20260907/evaluation_v2_raw/metrics.json",
+      "source_sha256": "946807fa1a8229942838ce09498f688ec0adf7980e845582c1762c770a2811d6",
+      "source_bytes": 41821,
+      "archive": "evaluation_v2_raw/metrics.json",
+      "archive_sha256": "946807fa1a8229942838ce09498f688ec0adf7980e845582c1762c770a2811d6",
+      "archive_bytes": 41821,
+      "encoding": "identity",
+      "markdown_links_adapted": false
+    },
+    {
+      "source": "runs/metric_stereo_video/temporal_repair_20260907/evaluation_v2_raw/per_sample.json",
+      "source_sha256": "52265774dbf7a65ddebfb2bf20363acc6c71253228a1e61dec546a3b9df917bb",
+      "source_bytes": 1530300,
+      "archive": "evaluation_v2_raw/per_sample.json.gz",
+      "archive_sha256": "97945a280562ef812b61b2f47c559b7e1b048aab2e016a6d5ea77ebdf2b32819",
+      "archive_bytes": 224632,
+      "encoding": "gzip",
+      "markdown_links_adapted": false
+    },
+    {
+      "source": "runs/metric_stereo_video/temporal_repair_20260907/head_v1/training_receipt.json",
+      "source_sha256": "246990f6cb8c9f2f2f2571bb1500d79be6cb40ed5708b6dc5324c96ca6338625",
+      "source_bytes": 5433945,
+      "archive": "head_v1/training_receipt.json.gz",
+      "archive_sha256": "98bf7a3965e92159340e9cee0c13327fbc215f150d748d289a6a897f20669178",
+      "archive_bytes": 95690,
+      "encoding": "gzip",
+      "markdown_links_adapted": false
+    },
+    {
+      "source": "runs/metric_stereo_video/temporal_repair_20260907/head_v1/training_summary.json",
+      "source_sha256": "c6a7e747cedb6800ab976acfb722a37ddf7cf66dc8ef5073174c93fd0e8a57f9",
+      "source_bytes": 2056,
+      "archive": "head_v1/training_summary.json",
+      "archive_sha256": "c6a7e747cedb6800ab976acfb722a37ddf7cf66dc8ef5073174c93fd0e8a57f9",
+      "archive_bytes": 2056,
+      "encoding": "identity",
+      "markdown_links_adapted": false
+    },
+    {
+      "source": "runs/metric_stereo_video/temporal_repair_20260907/head_v2_raw/training_receipt.json",
+      "source_sha256": "00932d95c85d19e6571ae6d7104d47d1d15d9c9b6abfcfcec9540f5f767f001a",
+      "source_bytes": 5433967,
+      "archive": "head_v2_raw/training_receipt.json.gz",
+      "archive_sha256": "9690d08da4ec7e0d7e0c03abd8d624e3f9df683ee54bd626d2babac095b53e7b",
+      "archive_bytes": 95703,
+      "encoding": "gzip",
+      "markdown_links_adapted": false
+    },
+    {
+      "source": "runs/metric_stereo_video/temporal_repair_20260907/head_v2_raw/training_summary.json",
+      "source_sha256": "6b3fe7d6fd661a983ffad86d4c9ff7322994ef7c98d987fd31bf5dc961fe5de8",
+      "source_bytes": 2058,
+      "archive": "head_v2_raw/training_summary.json",
+      "archive_sha256": "6b3fe7d6fd661a983ffad86d4c9ff7322994ef7c98d987fd31bf5dc961fe5de8",
+      "archive_bytes": 2058,
+      "encoding": "identity",
+      "markdown_links_adapted": false
+    },
+    {
+      "source": "runs/metric_stereo_video/temporal_repair_20260907/model_selection.json",
+      "source_sha256": "eca641307f0f8c455047d80c0785b6f6db40fecf09970936eb4f576cd3fb6322",
+      "source_bytes": 683,
+      "archive": "model_selection.json",
+      "archive_sha256": "eca641307f0f8c455047d80c0785b6f6db40fecf09970936eb4f576cd3fb6322",
+      "archive_bytes": 683,
+      "encoding": "identity",
+      "markdown_links_adapted": false
+    },
+    {
+      "source": "runs/metric_stereo_video/temporal_repair_20260907/original_failure_points_v1.json",
+      "source_sha256": "3012db6884967527ac83486ec97ff1c93826973b0856d7fa1f5ac13a84e5ef4e",
+      "source_bytes": 2180,
+      "archive": "original_failure_points_v1.json",
+      "archive_sha256": "3012db6884967527ac83486ec97ff1c93826973b0856d7fa1f5ac13a84e5ef4e",
+      "archive_bytes": 2180,
+      "encoding": "identity",
+      "markdown_links_adapted": false
+    },
+    {
+      "source": "runs/metric_stereo_video/temporal_repair_20260907/raw_inference_check/receipt.json",
+      "source_sha256": "467a6d286f108988ae396376f63b03a44d1c515cbcb56b525a32a5df79ea17e4",
+      "source_bytes": 418,
+      "archive": "raw_inference_check/receipt.json",
+      "archive_sha256": "467a6d286f108988ae396376f63b03a44d1c515cbcb56b525a32a5df79ea17e4",
+      "archive_bytes": 418,
+      "encoding": "identity",
+      "markdown_links_adapted": false
+    },
+    {
+      "source": "runs/metric_stereo_video/temporal_repair_20260907/raw_inference_parity.json",
+      "source_sha256": "f60feacc58385fd954f6842bc65c132076888afc5f63528f9b1f6ccf8b312a46",
+      "source_bytes": 1378,
+      "archive": "raw_inference_parity.json",
+      "archive_sha256": "f60feacc58385fd954f6842bc65c132076888afc5f63528f9b1f6ccf8b312a46",
+      "archive_bytes": 1378,
+      "encoding": "identity",
+      "markdown_links_adapted": false
+    },
+    {
+      "source": "runs/metric_stereo_video/temporal_repair_20260907/run_summary.json",
+      "source_sha256": "bd488903c16ca44a7d9b7f004474a6576e92031fa66125c257d478a0e0797e41",
+      "source_bytes": 934,
+      "archive": "run_summary.json",
+      "archive_sha256": "bd488903c16ca44a7d9b7f004474a6576e92031fa66125c257d478a0e0797e41",
+      "archive_bytes": 934,
+      "encoding": "identity",
+      "markdown_links_adapted": false
+    },
+    {
+      "source": "runs/metric_stereo_video/temporal_repair_20260907/verification_receipt.json",
+      "source_sha256": "353c8bb61cf9a8325c60ff3e507f4bec52b4db09910cffa7757a60f7fe8740d8",
+      "source_bytes": 2627,
+      "archive": "verification_receipt.json",
+      "archive_sha256": "353c8bb61cf9a8325c60ff3e507f4bec52b4db09910cffa7757a60f7fe8740d8",
+      "archive_bytes": 2627,
+      "encoding": "identity",
+      "markdown_links_adapted": false
+    }
+  ],
+  "checkpoints": [
+    {
+      "path": "runs/metric_stereo_video/temporal_repair_20260907/head_v1/final.pt",
+      "sha256": "60fe5a02263c2d39a622e0a0f64db381154c01e01bb33c9dcc21dd295556f269",
+      "bytes": 3996319,
+      "included_in_git": false
+    },
+    {
+      "path": "runs/metric_stereo_video/temporal_repair_20260907/head_v2_raw/final.pt",
+      "sha256": "60953ceb24b19c077905dc4ef5140ef4e2f774b76605d77b2dc79704bcf01303",
+      "bytes": 3996319,
+      "included_in_git": false
+    }
+  ]
+}

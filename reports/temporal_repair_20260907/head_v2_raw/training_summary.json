@@ -1,0 +1,72 @@
+{
+  "status": "COMPLETE",
+  "steps": 3000,
+  "elapsed_s": 5.226094412035309,
+  "chosen_development_calibration": {
+    "shift": 0.0,
+    "penalized_epe": 0.5287382798880634,
+    "base_penalized_epe": 0.5590381124620356,
+    "raw_epe": 0.7427700144475066,
+    "base_raw_epe": 0.7701640391554742
+  },
+  "calibration": [
+    {
+      "shift": -12.0,
+      "penalized_epe": 0.5585115120722338,
+      "base_penalized_epe": 0.5590381124620356,
+      "raw_epe": 0.7692025498760869,
+      "base_raw_epe": 0.7701640391554742
+    },
+    {
+      "shift": -6.0,
+      "penalized_epe": 0.5528335292508221,
+      "base_penalized_epe": 0.5590381124620356,
+      "raw_epe": 0.7634082634498163,
+      "base_raw_epe": 0.7701640391554742
+    },
+    {
+      "shift": -4.0,
+      "penalized_epe": 0.5464614640844229,
+      "base_penalized_epe": 0.5590381124620356,
+      "raw_epe": 0.7575354382468314,
+      "base_raw_epe": 0.7701640391554742
+    },
+    {
+      "shift": -3.0,
+      "penalized_epe": 0.5419115022490286,
+      "base_penalized_epe": 0.5590381124620356,
+      "raw_epe": 0.7533395760491877,
+      "base_raw_epe": 0.7701640391554742
+    },
+    {
+      "shift": -2.0,
+      "penalized_epe": 0.5365415315788947,
+      "base_penalized_epe": 0.5590381124620356,
+      "raw_epe": 0.7484178767200241,
+      "base_raw_epe": 0.7701640391554742
+    },
+    {
+      "shift": -1.0,
+      "penalized_epe": 0.531203501688539,
+      "base_penalized_epe": 0.5590381124620356,
+      "raw_epe": 0.7438511392432402,
+      "base_raw_epe": 0.7701640391554742
+    },
+    {
+      "shift": 0.0,
+      "penalized_epe": 0.5287382798880634,
+      "base_penalized_epe": 0.5590381124620356,
+      "raw_epe": 0.7427700144475066,
+      "base_raw_epe": 0.7701640391554742
+    },
+    {
+      "shift": 1.0,
+      "penalized_epe": 0.5343820757699648,
+      "base_penalized_epe": 0.5590381124620356,
+      "raw_epe": 0.7507389895726956,
+      "base_raw_epe": 0.7701640391554742
+    }
+  ],
+  "parameters": 6273,
+  "checkpoint_sha256": "60953ceb24b19c077905dc4ef5140ef4e2f774b76605d77b2dc79704bcf01303"
+}

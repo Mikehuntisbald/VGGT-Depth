@@ -1,0 +1,96 @@
+{
+  "training_checkpoint_sha256": "60fe5a02263c2d39a622e0a0f64db381154c01e01bb33c9dcc21dd295556f269",
+  "new_unit_tests": {
+    "command": "PYTHONPATH=src python -m pytest -q tests/test_temporal_candidate_repair.py",
+    "exit_code": 0,
+    "passed": 4
+  },
+  "existing_geometry_tests_log": "runs/metric_stereo_video/temporal_repair_20260907/geometry_tests.log",
+  "cache_location": "/tmp/vggt_temporal_repair_20260907",
+  "cache_persistence": "temporary local disk; regenerate using exact lineage and protocol",
+  "original_A0_A5_files_modified": false,
+  "split_audit": {
+    "validation_sequences": [
+      "0005",
+      "0010",
+      "0015",
+      "0021",
+      "0023",
+      "0030",
+      "0032",
+      "0047"
+    ],
+    "train_dev_intersection": [],
+    "train_validation_intersection": [],
+    "development_validation_intersection": []
+  },
+  "raw_inference_parity": {
+    "status": "PASS",
+    "samples": 8,
+    "results": [
+      {
+        "index": 0,
+        "maximum_abs_difference_px": 0.0,
+        "mean_abs_difference_px": 0.0,
+        "pixels": 393216,
+        "validity_identical": true
+      },
+      {
+        "index": 1,
+        "maximum_abs_difference_px": 0.0,
+        "mean_abs_difference_px": 0.0,
+        "pixels": 393216,
+        "validity_identical": true
+      },
+      {
+        "index": 2,
+        "maximum_abs_difference_px": 0.0,
+        "mean_abs_difference_px": 0.0,
+        "pixels": 393216,
+        "validity_identical": true
+      },
+      {
+        "index": 3,
+        "maximum_abs_difference_px": 0.0,
+        "mean_abs_difference_px": 0.0,
+        "pixels": 393216,
+        "validity_identical": true
+      },
+      {
+        "index": 4,
+        "maximum_abs_difference_px": 0.0,
+        "mean_abs_difference_px": 0.0,
+        "pixels": 393216,
+        "validity_identical": true
+      },
+      {
+        "index": 5,
+        "maximum_abs_difference_px": 0.0,
+        "mean_abs_difference_px": 0.0,
+        "pixels": 393216,
+        "validity_identical": true
+      },
+      {
+        "index": 6,
+        "maximum_abs_difference_px": 0.0,
+        "mean_abs_difference_px": 0.0,
+        "pixels": 393216,
+        "validity_identical": true
+      },
+      {
+        "index": 7,
+        "maximum_abs_difference_px": 0.0,
+        "mean_abs_difference_px": 0.0,
+        "pixels": 393216,
+        "validity_identical": true
+      }
+    ]
+  },
+  "final_evaluation_status": "PASS",
+  "training_source_snapshot_verified": true,
+  "base_runtime_source_audit": {
+    "files_checked": 65,
+    "changed_since_A5_training": [],
+    "current_git_commit": "2436e8a03c2063d49f658aa3e805c432a183fd92"
+  }
+}

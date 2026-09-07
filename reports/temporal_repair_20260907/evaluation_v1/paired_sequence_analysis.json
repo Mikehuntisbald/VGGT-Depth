@@ -1,0 +1,446 @@
+{
+  "per_sequence": {
+    "0005": {
+      "A5_frozen/all_gt_penalized_epe_px": [
+        16171237.466899872,
+        42860544
+      ],
+      "A5_frozen/epe_px": [
+        31155958.933122635,
+        42860544
+      ],
+      "A5_frozen/temporal_matched_penalized_delta_epe_px": [
+        16870586.548422813,
+        42860544
+      ],
+      "A5_frozen/dynamic_penalized_epe_px": [
+        9821391.252502441,
+        22488980
+      ],
+      "A5_frozen/spring_high_detail_epe_px": [
+        2865646.8740415573,
+        697890
+      ],
+      "A5_frozen/opportunity_epe_px": [
+        13736719.884438515,
+        6565907
+      ],
+      "A5_temporal_repair/all_gt_penalized_epe_px": [
+        14888843.174302101,
+        42860544
+      ],
+      "A5_temporal_repair/epe_px": [
+        30501944.433861732,
+        42860544
+      ],
+      "A5_temporal_repair/temporal_matched_penalized_delta_epe_px": [
+        14057461.55833435,
+        42860544
+      ],
+      "A5_temporal_repair/dynamic_penalized_epe_px": [
+        9132696.475725174,
+        22488980
+      ],
+      "A5_temporal_repair/spring_high_detail_epe_px": [
+        2525116.159543991,
+        697890
+      ],
+      "A5_temporal_repair/opportunity_epe_px": [
+        9918500.638717651,
+        6565907
+      ]
+    },
+    "0010": {
+      "A5_frozen/all_gt_penalized_epe_px": [
+        11984167.296729803,
+        45219793
+      ],
+      "A5_frozen/epe_px": [
+        15135021.292176962,
+        45219793
+      ],
+      "A5_frozen/temporal_matched_penalized_delta_epe_px": [
+        11346605.389120817,
+        44239734
+      ],
+      "A5_frozen/dynamic_penalized_epe_px": [
+        39837.41000914574,
+        248604
+      ],
+      "A5_frozen/spring_high_detail_epe_px": [
+        1645891.856746912,
+        378817
+      ],
+      "A5_frozen/opportunity_epe_px": [
+        4559936.853124857,
+        1430590
+      ],
+      "A5_temporal_repair/all_gt_penalized_epe_px": [
+        11439515.784289837,
+        45219793
+      ],
+      "A5_temporal_repair/epe_px": [
+        15020210.720330715,
+        45219793
+      ],
+      "A5_temporal_repair/temporal_matched_penalized_delta_epe_px": [
+        9608979.860877752,
+        44239734
+      ],
+      "A5_temporal_repair/dynamic_penalized_epe_px": [
+        37168.91552758217,
+        248604
+      ],
+      "A5_temporal_repair/spring_high_detail_epe_px": [
+        1628426.369197607,
+        378817
+      ],
+      "A5_temporal_repair/opportunity_epe_px": [
+        3564211.362390995,
+        1430590
+      ]
+    },
+    "0015": {
+      "A5_frozen/all_gt_penalized_epe_px": [
+        45296399.23880291,
+        100663296
+      ],
+      "A5_frozen/epe_px": [
+        70152711.22581673,
+        100663296
+      ],
+      "A5_frozen/temporal_matched_penalized_delta_epe_px": [
+        38639637.26779652,
+        100663296
+      ],
+      "A5_frozen/dynamic_penalized_epe_px": [
+        15411690.140602112,
+        40658137
+      ],
+      "A5_frozen/spring_high_detail_epe_px": [
+        5684114.480661392,
+        1158379
+      ],
+      "A5_frozen/opportunity_epe_px": [
+        29614774.6307621,
+        16887006
+      ],
+      "A5_temporal_repair/all_gt_penalized_epe_px": [
+        41522685.52643967,
+        100663296
+      ],
+      "A5_temporal_repair/epe_px": [
+        68636980.43426132,
+        100663296
+      ],
+      "A5_temporal_repair/temporal_matched_penalized_delta_epe_px": [
+        29695583.839743614,
+        100663296
+      ],
+      "A5_temporal_repair/dynamic_penalized_epe_px": [
+        13636119.782022476,
+        40658137
+      ],
+      "A5_temporal_repair/spring_high_detail_epe_px": [
+        4956541.894973755,
+        1158379
+      ],
+      "A5_temporal_repair/opportunity_epe_px": [
+        21870361.252204895,
+        16887006
+      ]
+    },
+    "0021": {
+      "A5_frozen/all_gt_penalized_epe_px": [
+        27480925.82496667,
+        114819072
+      ],
+      "A5_frozen/epe_px": [
+        34206893.66031575,
+        114792496
+      ],
+      "A5_frozen/temporal_matched_penalized_delta_epe_px": [
+        29086636.42169726,
+        112769650
+      ],
+      "A5_frozen/dynamic_penalized_epe_px": [
+        8920107.583313465,
+        16038721
+      ],
+      "A5_frozen/spring_high_detail_epe_px": [
+        3978837.0852760077,
+        761481
+      ],
+      "A5_frozen/opportunity_epe_px": [
+        12160561.214923501,
+        7367995
+      ],
+      "A5_temporal_repair/all_gt_penalized_epe_px": [
+        24681849.82037735,
+        114819072
+      ],
+      "A5_temporal_repair/epe_px": [
+        31986113.663445473,
+        114792496
+      ],
+      "A5_temporal_repair/temporal_matched_penalized_delta_epe_px": [
+        23487518.305581093,
+        112769650
+      ],
+      "A5_temporal_repair/dynamic_penalized_epe_px": [
+        8073769.765025139,
+        16038721
+      ],
+      "A5_temporal_repair/spring_high_detail_epe_px": [
+        3433188.044609785,
+        761481
+      ],
+      "A5_temporal_repair/opportunity_epe_px": [
+        8504063.496875167,
+        7367995
+      ]
+    },
+    "0023": {
+      "A5_frozen/all_gt_penalized_epe_px": [
+        13894566.042593002,
+        24339009
+      ],
+      "A5_frozen/epe_px": [
+        7308196.042593002,
+        23680372
+      ],
+      "A5_frozen/temporal_matched_penalized_delta_epe_px": [
+        11179407.2872926,
+        24040471
+      ],
+      "A5_frozen/dynamic_penalized_epe_px": [
+        7441602.345561862,
+        19729884
+      ],
+      "A5_frozen/spring_high_detail_epe_px": [
+        2978449.160599351,
+        1080211
+      ],
+      "A5_frozen/opportunity_epe_px": [
+        1566372.9241844416,
+        1731339
+      ],
+      "A5_temporal_repair/all_gt_penalized_epe_px": [
+        13805748.291480422,
+        24339009
+      ],
+      "A5_temporal_repair/epe_px": [
+        7219378.291480422,
+        23680372
+      ],
+      "A5_temporal_repair/temporal_matched_penalized_delta_epe_px": [
+        10692303.30324769,
+        24040471
+      ],
+      "A5_temporal_repair/dynamic_penalized_epe_px": [
+        7362854.055495381,
+        19729884
+      ],
+      "A5_temporal_repair/spring_high_detail_epe_px": [
+        2977218.1556065083,
+        1080211
+      ],
+      "A5_temporal_repair/opportunity_epe_px": [
+        1302692.67450428,
+        1731339
+      ]
+    },
+    "0030": {
+      "A5_frozen/all_gt_penalized_epe_px": [
+        27272026.34105003,
+        46559240
+      ],
+      "A5_frozen/epe_px": [
+        32481045.323256373,
+        46533569
+      ],
+      "A5_frozen/temporal_matched_penalized_delta_epe_px": [
+        21359292.811787963,
+        40598278
+      ],
+      "A5_frozen/dynamic_penalized_epe_px": [
+        6242139.277724266,
+        5557498
+      ],
+      "A5_frozen/spring_high_detail_epe_px": [
+        1717283.4525057077,
+        745789
+      ],
+      "A5_frozen/opportunity_epe_px": [
+        12231613.665159464,
+        10215163
+      ],
+      "A5_temporal_repair/all_gt_penalized_epe_px": [
+        26562196.791008115,
+        46559240
+      ],
+      "A5_temporal_repair/epe_px": [
+        31995369.96857369,
+        46533569
+      ],
+      "A5_temporal_repair/temporal_matched_penalized_delta_epe_px": [
+        18411183.400270343,
+        40598278
+      ],
+      "A5_temporal_repair/dynamic_penalized_epe_px": [
+        6337822.363992691,
+        5557498
+      ],
+      "A5_temporal_repair/spring_high_detail_epe_px": [
+        1658251.6826167107,
+        745789
+      ],
+      "A5_temporal_repair/opportunity_epe_px": [
+        10193179.408289552,
+        10215163
+      ]
+    },
+    "0032": {
+      "A5_frozen/all_gt_penalized_epe_px": [
+        5353298.285547733,
+        25952256
+      ],
+      "A5_frozen/epe_px": [
+        9763058.225594997,
+        25952256
+      ],
+      "A5_frozen/temporal_matched_penalized_delta_epe_px": [
+        8106095.7242228985,
+        24727362
+      ],
+      "A5_frozen/dynamic_penalized_epe_px": [
+        170484.88181734085,
+        914320
+      ],
+      "A5_frozen/spring_high_detail_epe_px": [
+        324153.7222778797,
+        135211
+      ],
+      "A5_frozen/opportunity_epe_px": [
+        3398632.0895199776,
+        1380779
+      ],
+      "A5_temporal_repair/all_gt_penalized_epe_px": [
+        5066016.508264542,
+        25952256
+      ],
+      "A5_temporal_repair/epe_px": [
+        9556663.242682457,
+        25952256
+      ],
+      "A5_temporal_repair/temporal_matched_penalized_delta_epe_px": [
+        7422007.645545006,
+        24727362
+      ],
+      "A5_temporal_repair/dynamic_penalized_epe_px": [
+        157739.3291428089,
+        914320
+      ],
+      "A5_temporal_repair/spring_high_detail_epe_px": [
+        312383.36787104607,
+        135211
+      ],
+      "A5_temporal_repair/opportunity_epe_px": [
+        2928291.520863056,
+        1380779
+      ]
+    },
+    "0047": {
+      "A5_frozen/all_gt_penalized_epe_px": [
+        29118891.715709567,
+        102556774
+      ],
+      "A5_frozen/epe_px": [
+        29476558.44256866,
+        102555280
+      ],
+      "A5_frozen/temporal_matched_penalized_delta_epe_px": [
+        18558773.21583557,
+        101548696
+      ],
+      "A5_frozen/dynamic_penalized_epe_px": [
+        9072115.534639478,
+        25594761
+      ],
+      "A5_frozen/spring_high_detail_epe_px": [
+        1683793.6608941555,
+        1265399
+      ],
+      "A5_frozen/opportunity_epe_px": [
+        9476551.241004467,
+        16439747
+      ],
+      "A5_temporal_repair/all_gt_penalized_epe_px": [
+        28094788.14575386,
+        102556774
+      ],
+      "A5_temporal_repair/epe_px": [
+        28525662.646245003,
+        102555280
+      ],
+      "A5_temporal_repair/temporal_matched_penalized_delta_epe_px": [
+        13553716.957942128,
+        101548696
+      ],
+      "A5_temporal_repair/dynamic_penalized_epe_px": [
+        8711334.36868167,
+        25594761
+      ],
+      "A5_temporal_repair/spring_high_detail_epe_px": [
+        1647974.6565054655,
+        1265399
+      ],
+      "A5_temporal_repair/opportunity_epe_px": [
+        7452710.242637038,
+        16439747
+      ]
+    }
+  },
+  "paired_gain_confidence_intervals": {
+    "all_gt_penalized_epe_px": {
+      "gain_px": 0.02089561704418467,
+      "sequence_bootstrap_95pct": [
+        0.012089471673942186,
+        0.028993289207549157
+      ],
+      "sequences": 8,
+      "bootstrap_draws": 10000,
+      "seed": 42
+    },
+    "epe_px": {
+      "gain_px": 0.012418168824235376,
+      "sequence_bootstrap_95pct": [
+        0.007662379244063583,
+        0.01599596103702515
+      ],
+      "sequences": 8,
+      "bootstrap_draws": 10000,
+      "seed": 42
+    },
+    "temporal_matched_penalized_delta_epe_px": {
+      "gain_px": 0.05741864452527323,
+      "sequence_bootstrap_95pct": [
+        0.04333664719640336,
+        0.07263770840744102
+      ],
+      "sequences": 8,
+      "bootstrap_draws": 10000,
+      "seed": 42
+    },
+    "opportunity_epe_px": {
+      "gain_px": 0.3387883147470272,
+      "sequence_bootstrap_95pct": [
+        0.19636147954097644,
+        0.4999665008866654
+      ],
+      "sequences": 8,
+      "bootstrap_draws": 10000,
+      "seed": 42
+    }
+  }
+}

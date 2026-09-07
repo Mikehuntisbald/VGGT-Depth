@@ -1,0 +1,72 @@
+{
+  "status": "COMPLETE",
+  "steps": 3000,
+  "elapsed_s": 4.910786881984677,
+  "chosen_development_calibration": {
+    "shift": 0.0,
+    "penalized_epe": 0.5249281543045953,
+    "base_penalized_epe": 0.5590381124620356,
+    "raw_epe": 0.743258731767518,
+    "base_raw_epe": 0.7701640391554742
+  },
+  "calibration": [
+    {
+      "shift": -12.0,
+      "penalized_epe": 0.558301902862634,
+      "base_penalized_epe": 0.5590381124620356,
+      "raw_epe": 0.7687115462632298,
+      "base_raw_epe": 0.7701640391554742
+    },
+    {
+      "shift": -6.0,
+      "penalized_epe": 0.5498695426112097,
+      "base_penalized_epe": 0.5590381124620356,
+      "raw_epe": 0.7605963454921604,
+      "base_raw_epe": 0.7701640391554742
+    },
+    {
+      "shift": -4.0,
+      "penalized_epe": 0.5425237479973836,
+      "base_penalized_epe": 0.5590381124620356,
+      "raw_epe": 0.7543731327486426,
+      "base_raw_epe": 0.7701640391554742
+    },
+    {
+      "shift": -3.0,
+      "penalized_epe": 0.5377758492152981,
+      "base_penalized_epe": 0.5590381124620356,
+      "raw_epe": 0.7504898479518075,
+      "base_raw_epe": 0.7701640391554742
+    },
+    {
+      "shift": -2.0,
+      "penalized_epe": 0.5324542251375345,
+      "base_penalized_epe": 0.5590381124620356,
+      "raw_epe": 0.7464273895176299,
+      "base_raw_epe": 0.7701640391554742
+    },
+    {
+      "shift": -1.0,
+      "penalized_epe": 0.5273730243012026,
+      "base_penalized_epe": 0.5590381124620356,
+      "raw_epe": 0.7431405013416784,
+      "base_raw_epe": 0.7701640391554742
+    },
+    {
+      "shift": 0.0,
+      "penalized_epe": 0.5249281543045953,
+      "base_penalized_epe": 0.5590381124620356,
+      "raw_epe": 0.743258731767518,
+      "base_raw_epe": 0.7701640391554742
+    },
+    {
+      "shift": 1.0,
+      "penalized_epe": 0.5295740899494615,
+      "base_penalized_epe": 0.5590381124620356,
+      "raw_epe": 0.7512206697886236,
+      "base_raw_epe": 0.7701640391554742
+    }
+  ],
+  "parameters": 6273,
+  "checkpoint_sha256": "60fe5a02263c2d39a622e0a0f64db381154c01e01bb33c9dcc21dd295556f269"
+}

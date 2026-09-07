@@ -1,0 +1,22 @@
+{
+  "selected": "head_v1",
+  "criterion": "minimum internal TRAIN-development penalized EPE after same fixed 3000 optimizer steps",
+  "validation_metrics_read_for_selection": false,
+  "development_results": {
+    "head_v1": {
+      "shift": 0.0,
+      "penalized_epe": 0.5249281543045953,
+      "base_penalized_epe": 0.5590381124620356,
+      "raw_epe": 0.743258731767518,
+      "base_raw_epe": 0.7701640391554742
+    },
+    "head_v2_raw": {
+      "shift": 0.0,
+      "penalized_epe": 0.5287382798880634,
+      "base_penalized_epe": 0.5590381124620356,
+      "raw_epe": 0.7427700144475066,
+      "base_raw_epe": 0.7701640391554742
+    }
+  },
+  "created_unix_s": 1788722448.7079341
+}

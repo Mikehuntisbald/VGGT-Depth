@@ -1,0 +1,9 @@
+{
+  "status": "COMPLETE",
+  "base_checkpoint": "runs/metric_stereo_video/formal_a5_seed42/checkpoints/step_0006000",
+  "repair_checkpoint": "runs/metric_stereo_video/temporal_repair_20260907/head_v1/final.pt",
+  "repair_sha256": "60fe5a02263c2d39a622e0a0f64db381154c01e01bb33c9dcc21dd295556f269",
+  "base_history_owner": "unmodified A5 predictions",
+  "feature_dtype": "FP16 cast then FP32 MLP",
+  "output_files": 8
+}

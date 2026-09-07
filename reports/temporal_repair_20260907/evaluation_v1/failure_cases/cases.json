@@ -1,0 +1,98 @@
+[
+  [
+    "top_rescues",
+    {
+      "dataset_index": 2,
+      "sequence_id": "0005",
+      "frame_id": 10,
+      "x": 253,
+      "y": 147,
+      "change_px": 76.08953857421875,
+      "base_error_px": 78.29312896728516,
+      "repair_error_px": 2.2035903930664062,
+      "history_error_px": 0.206817626953125,
+      "gate": 0.9692941308021545,
+      "old_valid": false
+    }
+  ],
+  [
+    "top_rescues",
+    {
+      "dataset_index": 23,
+      "sequence_id": "0005",
+      "frame_id": 31,
+      "x": 629,
+      "y": 132,
+      "change_px": 73.03550720214844,
+      "base_error_px": 74.14751434326172,
+      "repair_error_px": 1.1120071411132812,
+      "history_error_px": 0.32903289794921875,
+      "gate": 0.9806510806083679,
+      "old_valid": false
+    }
+  ],
+  [
+    "top_rescues",
+    {
+      "dataset_index": 22,
+      "sequence_id": "0005",
+      "frame_id": 30,
+      "x": 149,
+      "y": 287,
+      "change_px": 72.50729370117188,
+      "base_error_px": 74.66168212890625,
+      "repair_error_px": 2.154388427734375,
+      "history_error_px": 1.2292861938476562,
+      "gate": 0.9554140567779541,
+      "old_valid": false
+    }
+  ],
+  [
+    "top_failures",
+    {
+      "dataset_index": 24,
+      "sequence_id": "0005",
+      "frame_id": 32,
+      "x": 581,
+      "y": 200,
+      "change_px": 76.73785400390625,
+      "base_error_px": 22.54253387451172,
+      "repair_error_px": 99.28038787841797,
+      "history_error_px": 102.56639862060547,
+      "gate": 0.9589371085166931,
+      "old_valid": false
+    }
+  ],
+  [
+    "top_failures",
+    {
+      "dataset_index": 22,
+      "sequence_id": "0005",
+      "frame_id": 30,
+      "x": 597,
+      "y": 43,
+      "change_px": 75.3678207397461,
+      "base_error_px": 13.654685974121094,
+      "repair_error_px": 89.02250671386719,
+      "history_error_px": 89.3979721069336,
+      "gate": 0.9950429201126099,
+      "old_valid": false
+    }
+  ],
+  [
+    "top_failures",
+    {
+      "dataset_index": 32,
+      "sequence_id": "0005",
+      "frame_id": 40,
+      "x": 147,
+      "y": 67,
+      "change_px": 73.03056335449219,
+      "base_error_px": 17.11632537841797,
+      "repair_error_px": 90.14688873291016,
+      "history_error_px": 92.00142669677734,
+      "gate": 0.9752349257469177,
+      "old_valid": false
+    }
+  ]
+]

@@ -1,0 +1,26 @@
+{
+  "status": "COMPLETE_AND_ACCEPTED",
+  "selected_model": "A5-HRRepair-v1",
+  "selected_checkpoint": "runs/metric_stereo_video/temporal_repair_20260907/head_v1/final.pt",
+  "checkpoint_sha256": "60fe5a02263c2d39a622e0a0f64db381154c01e01bb33c9dcc21dd295556f269",
+  "validation_samples": 1294,
+  "training_steps_per_head": 3000,
+  "heads_actually_trained": [
+    "v1",
+    "v2_raw"
+  ],
+  "acceptance_checks": {
+    "all_gt_penalized_epe_improves_1pct": true,
+    "temporal_delta_improves_1pct": true,
+    "opportunity_epe_improves_5pct": true,
+    "dynamic_penalized_within_2pct": true,
+    "high_detail_within_2pct": true,
+    "coverage_unchanged": true
+  },
+  "raw_inference_parity": "PASS",
+  "base_training_source_files_unchanged": 65,
+  "all_evaluation_contracts_aligned": true,
+  "scope": "frozen A5 plus HR candidate head, known camera pose",
+  "remaining_failures_documented": true,
+  "completed_unix_s": 1788723347.5784118
+}
